@@ -9,9 +9,9 @@
 //!
 //! - `{"extension", "view", "tag", "displayed": bool, "origin"}` for a view
 //!   declared `"displayed": true`;
-//! - `{"extension", "view", "tag", "bound": prop, "origin"}` for each binding
-//!   prop whose value changed; the value itself reaches the view as its props
-//!   do.
+//! - `{"extension", "view", "tag", "bound": prop, "value", "origin"}` for
+//!   each binding prop whose value changed; the value reaches the view as its
+//!   props do too, and an implementation pairs the two by it.
 //!
 //! `view` is the node's id, which the host also gives the view's factory, so
 //! an implementation keys its views' state by it. A view that leaves the tree
@@ -138,7 +138,7 @@ impl<D: DataSource> Runner<D> {
                     continue;
                 }
                 viewed.bound.insert(prop.to_owned(), (value, origin));
-                said.push(json!({ "extension": viewed.extension, "view": id.to_string(), "tag": tag, "bound": prop, "origin": origin.word() }));
+                said.push(json!({ "extension": viewed.extension, "view": id.to_string(), "tag": tag, "bound": prop, "value": props[prop], "origin": origin.word() }));
             }
             now.insert(id, viewed);
         }
@@ -164,8 +164,9 @@ impl<D: DataSource> Runner<D> {
             if v.shown {
                 said.push(json!({ "extension": v.extension, "view": id.to_string(), "tag": v.tag, "displayed": true, "origin": v.shown_by.word() }));
             }
-            for (prop, (_, by)) in &v.bound {
-                said.push(json!({ "extension": v.extension, "view": id.to_string(), "tag": v.tag, "bound": prop, "origin": by.word() }));
+            for (prop, (value, by)) in &v.bound {
+                let value: Json = serde_json::from_str(value).unwrap_or_default();
+                said.push(json!({ "extension": v.extension, "view": id.to_string(), "tag": v.tag, "bound": prop, "value": value, "origin": by.word() }));
             }
         }
         for body in said {

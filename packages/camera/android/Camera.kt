@@ -396,6 +396,8 @@ class CameraModule(context: ExtensionContext) : ExactExtension(context) {
             disclose(path, null, bytes, cause, if (shot === VIDEO) videos else photos)
             return reply(if (shot === VIDEO) video(path, file) else photo(path, file))
         }
+        // The camera app opens for the app's own call alone, as admission says: any other cause, or none, fails closed.
+        if (!cause.app) return reply(error("NotAllowedError"))
         val request = cause.request
         val camera = android.Manifest.permission.CAMERA
         if (!declares(camera) || held(camera)) return openCameraApp(shot, request, path, args, reply)

@@ -295,8 +295,9 @@ internal class VideoTracks(private val context: ExtensionContext, private val ne
 
     private fun settle(t: Track) { t.platformMute?.let { mute(t, it) } ?: unmute(t) }
 
+    /** The camera for [t], under [cause]: only the app's own opens it (§14), here as at every other start. */
     private fun lease(t: Track, cause: Cause) {
-        if (t.leased || t.readyState != "live") return
+        if (t.leased || t.readyState != "live" || !cause.app) return
         if (!context.agent && !CameraCapture.lease(context.application, t, this)) {
             t.waiting = cause
             CameraCapture.wait(t, this)
@@ -317,11 +318,13 @@ internal class VideoTracks(private val context: ExtensionContext, private val ne
         if (!context.agent) CameraCapture.unlease(t)
     }
 
-    /** Another lease ended: a track of this session waiting for the camera takes it, with its kept origin. */
+    /** Another lease ended: a track of this session waiting for the camera takes it, under a consumer's that still
+     * stays. */
     fun retry(t: Track) {
-        val cause = t.waiting ?: return
+        t.waiting ?: return
         t.waiting = null
-        if (t.consumers.isNotEmpty() && t.readyState == "live" && t.enabled) lease(t, cause)
+        val cause = t.consumers.values.firstOrNull { it.app } ?: return
+        if (t.readyState == "live" && t.enabled) lease(t, cause)
     }
 
     fun interrupted(t: Track, reason: String?) { t.platformMute = reason ?: overlay; settle(t) }

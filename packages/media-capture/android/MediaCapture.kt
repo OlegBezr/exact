@@ -253,7 +253,10 @@ class MediaCaptureModule internal constructor(
      */
     private fun starts(cause: Cause) = cause.app || (cause.origin == "press" && context.visible && cause.pressLive())
 
+    /** The microphone for [t] under [cause], which [starts] admits at every acquisition, a return to the front's
+     * included: a track a press opened stays idle once the press has ended. */
     private fun activate(t: Track, cause: Cause) {
+        if (!starts(cause)) return
         t.active = true; t.used = true; t.cause = cause
         if (!context.agent && !t.leased) {
             try {
@@ -330,6 +333,7 @@ class MediaCaptureModule internal constructor(
         for (t in tracks.values) {
             if (t.readyState != "live" || !t.active) continue
             if (shown) {
+                if (!starts(t.cause)) continue
                 t.platformMute = overlay
                 activate(t, t.cause)
             } else {

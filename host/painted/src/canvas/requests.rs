@@ -276,8 +276,8 @@ impl<D: DataSource + Default> CanvasHost<D> {
     }
 
     /// Whether press `id` still runs (`Native.pressLive`).
-    pub fn press_live(&self, id: u64) -> bool {
-        self.p.host().runner().press_live(id)
+    pub fn press_live(&mut self, id: u64) -> bool {
+        self.p.host_mut().runner_mut().press_live(id)
     }
 
     /// A line the reader journals (`Native.journal`).

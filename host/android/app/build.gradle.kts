@@ -160,7 +160,11 @@ android {
         val kotlin = dir.resolve("java/dev/exact/app").apply { mkdirs() }
         val values = dir.resolve("res/values").apply { mkdirs() }
         val attr = { v: String -> v.replace("&", "&amp;").replace("<", "&lt;").replace("\"", "&quot;") }
-        val text = { v: String -> attr(v).replace("\\", "\\\\").replace("'", "\\'").replace(Regex("^([@?])"), "\\\\$1") }
+        // A string resource's own escapes first, so a quotation mark stays one, then the XML's.
+        val text = { v: String ->
+            v.replace("\\", "\\\\").replace("\"", "\\\"").replace("'", "\\'").replace(Regex("^([@?])"), "\\\\$1")
+                .replace("&", "&amp;").replace("<", "&lt;")
+        }
         val literal = { v: String? ->
             v?.let { "\"" + it.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$").replace("\n", "\\n").replace("\r", "\\r") + "\"" } ?: "null"
         }

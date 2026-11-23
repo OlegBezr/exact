@@ -113,6 +113,10 @@ abstract class ExactExtension(val context: ExtensionContext) {
     /** Prop [prop] of view [id], which binds a device, changed, by [cause], the commit that changed it. */
     open fun bound(session: String, id: String, prop: String, cause: Cause) {}
 
+    /** [bound], with the value the commit set ([value], as JSON), by which an implementation pairs the report with the
+     * prop its view is given, which reaches it separately. */
+    open fun bound(session: String, id: String, prop: String, value: Any?, cause: Cause) = bound(session, id, prop, cause)
+
     /**
      * A text field whose `autocomplete` ends in `webauthn` was made ([present]) or went (LLP 1133.011 D10 item 4):
      * the real view, on which a conditional credential request is set. Every live one is told to an extension when it
@@ -663,7 +667,7 @@ internal object Extensions {
                 request.has("view") -> {
                     val (view, cause) = request.getString("view") to Cause.of(request)
                     if (request.has("displayed")) extension.displayed(extension.context.session, view, request.getBoolean("displayed"), cause)
-                    if (request.has("bound")) extension.bound(extension.context.session, view, request.getString("bound"), cause)
+                    if (request.has("bound")) extension.bound(extension.context.session, view, request.getString("bound"), request.opt("value"), cause)
                     reply(JSONObject())
                 }
                 request.has("surface") && request.has("displayed") -> {

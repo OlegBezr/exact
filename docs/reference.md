@@ -2422,9 +2422,10 @@ two captures below:
   (`grant-needs`); `device.microphone-background` keeps a take the person
   leaves running. The press runs at once or not at all (`busy` with other
   work running), and pressing another tile, leaving the app or the screen
-  turning off ends it. `always` does not record on a Lock Screen that holds
-  a credential: the press is refused there. The press is dropped if the app
-  is not ready within 20 seconds of the click.
+  turning off ends it. On a Lock Screen that holds a credential, `required`
+  and `local` ask for it first from Android 14; `always`, and every press
+  before Android 14, whose launch asks for nothing, is refused there. The
+  press is dropped if the app is not ready within 20 seconds of the click.
 - any other tool: `"intent": "tool"`. The press runs where it is, in a
   session booted with no view if none shows. On a Lock Screen that holds a
   credential, `required` and `local` ask for it and then press, leaving the

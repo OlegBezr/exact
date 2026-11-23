@@ -208,6 +208,9 @@ class SpeechRecognitionModule(context: ExtensionContext) : ExactExtension(contex
         )
         if (given.size != 1) return reply(error("TypeError"))
         val input = given[0]
+        // The microphone opens for the app's own call alone (LLP 1133.012 D12 item 5), as admission says: a call of any
+        // other cause, or none, fails closed here too.
+        if (input == "microphone" && !cause.app) return reply(error("NotAllowedError"))
         val s = status(args)
         val local = local(args)
         // `processLocally` where the recognizer cannot keep audio on the device (D9) opens nothing.

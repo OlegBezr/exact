@@ -26,7 +26,8 @@ import org.json.JSONArray
  * - `foreground`, a tool whose reach starts a capture: a tile click grants no while-in-use microphone, so the press
  *   opens the app and is pressed from it in front ([Controls.handoff]), still as origin `action`: the app in front is
  *   what Android needs to hand the press the microphone, not a grant of the app's authority. `always` refuses on a
- *   Lock Screen that holds a credential, since the app cannot come to the front there.
+ *   Lock Screen that holds a credential, since the app cannot come to the front there; so does every press before
+ *   API 34, whose launch asks for no credential.
  *
  * [Tile service](https://developer.android.com/reference/android/service/quicksettings/TileService)
  */
@@ -50,17 +51,22 @@ abstract class ControlTile(
         super.onClick()
         // A press is the person's last only until they press another tile.
         Controls.superseded()
-        // `required` and `local` ask for the device's credential where the Lock Screen holds one ([isSecure]); a
-        // keyguard with none to ask (a swipe, or Smart Lock's trust) is no lock to them.
+        // `required` and `local` ask for the device's credential where unlocking needs it now
+        // ([KeyguardManager.isDeviceLocked]); a keyguard with none to ask (a swipe, or Smart Lock's trust) is no lock to
+        // them.
+        val locked = getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true
         when (intent) {
             // Each launch its own `PendingIntent`: a one-shot one another tile or a notification made never matches.
             // Starting the app asks the person to unlock first, as any activity a tile starts on the Lock Screen does.
             "open" -> launch(Activations.intent(this, "", "", JSONArray(), url).setIdentifier(java.util.UUID.randomUUID().toString()))
+            // Before API 34 the `Intent` overload starts the activity at once, behind a keyguard that holds a
+            // credential and with nothing asking for it, so a locked press is refused there too.
             "foreground" ->
-                if (isSecure && authentication == "always") Controls.refuse(kind, "the app records only in front, and the phone is locked")
+                if (locked && (authentication == "always" || Build.VERSION.SDK_INT < 34)) Controls.refuse(kind, "the app records only in front, and the phone is locked")
                 else launch(Controls.handoff(this, kind, digest))
             else -> when {
-                authentication == "always" || !isSecure -> Controls.press(this, kind, digest, SystemClock.elapsedRealtime())
+                authentication == "always" -> Controls.press(this, kind, digest, SystemClock.elapsedRealtime(), unlocked = false)
+                !locked -> Controls.press(this, kind, digest, SystemClock.elapsedRealtime(), unlocked = true)
                 // `unlockAndRun`'s continuation waits for SystemUI to bind the tile again, by when the process may be
                 // frozen; an activity the tile starts runs once the person unlocks, and presses where it is.
                 else -> launch(ControlPress.intent(this, kind, digest))
@@ -139,7 +145,7 @@ internal object Controls {
     fun unlocked(token: String): (Context) -> Unit = { context ->
         val record = unlocking.remove(token)?.takeUnless { it.late() }
         if (record == null) journal("control: a locked press already taken, superseded or late was dropped")
-        else press(context, record.kind, record.digest, record.at, record.cold)
+        else press(context, record.kind, record.digest, record.at, unlocked = true, cold = record.cold)
     }
 
     /** The runner's call of the press now running, and the activity a press that opened the app reached; null for
@@ -153,10 +159,9 @@ internal object Controls {
         val id = running ?: return
         running = null
         runningIn = null
-        if (Exact.pressLive(id)) {
-            journal("control: press $id ended: $why")
-            Exact.cancelPress(id)
-        }
+        if (Exact.pressLive(id)) journal("control: press $id ended: $why")
+        // A press still queued behind other work is not yet live; the runner's cancel removes it too.
+        Exact.cancelPress(id)
     }
 
     /** A press began as call [id], in [activity] where it opened the app: the screen turning off ends it. */
@@ -172,8 +177,12 @@ internal object Controls {
         main.postDelayed({ app.unregisterReceiver(off) }, BOUND_MS)
     }
 
+    /** Counts tile presses, so a press still waiting for its session knows a later one superseded it. */
+    private var pressed = 0
+
     /** A tile was pressed: the press before it ends, and one still waiting for the app is dropped. */
     fun superseded() {
+        pressed += 1
         end("another tile was pressed")
         drop("superseded by another press before the app was ready")
         unlocking.values.forEach { journal("control:${it.kind}: superseded by another press before the unlock") }
@@ -212,25 +221,10 @@ internal object Controls {
                 pending = record
                 receiver = java.lang.ref.WeakReference(activity)
                 main.postDelayed({ expire(record) }, record.at + BOUND_MS - SystemClock.elapsedRealtime())
-                unlock(activity, record)
                 ready(activity)
             }
         }
         return true
-    }
-
-    /**
-     * Ask the person to unlock where [activity] arrived behind the keyguard, as the `Intent` overload starts it before
-     * API 34 ([KeyguardManager.requestDismissKeyguard], which asks for the credential where the keyguard holds one);
-     * from 34 the system asks before it starts the activity. Turning the request down drops the press.
-     */
-    private fun unlock(activity: ExactActivity, record: Record) {
-        val keyguard = activity.getSystemService(KeyguardManager::class.java) ?: return
-        if (!keyguard.isKeyguardLocked) return
-        keyguard.requestDismissKeyguard(activity, object : KeyguardManager.KeyguardDismissCallback() {
-            override fun onDismissCancelled() { if (pending === record) drop("the phone stayed locked, so the press was dropped") }
-            override fun onDismissError() { if (pending === record) drop("the phone stayed locked, so the press was dropped") }
-        })
     }
 
     /** Whether [activity] can run a handoff now: resumed, drawn since its start, and unlocked. */
@@ -263,13 +257,18 @@ internal object Controls {
     }
 
     /** A tile's press of a tool that runs where it is pressed: in the host that runs, or one booted for it. A session
-     * not ready within [BOUND_MS] of the click at [at] ([SystemClock.elapsedRealtime]) drops it. */
-    fun press(context: Context, kind: String, digest: String, at: Long, cold: Boolean = !Exact.live) {
-        val live = { SystemClock.elapsedRealtime() - at <= BOUND_MS }
+     * not ready within [BOUND_MS] of the click at [at] ([SystemClock.elapsedRealtime]), a later tile press, or, with
+     * [unlocked], a phone locked again meanwhile, drops it. */
+    fun press(context: Context, kind: String, digest: String, at: Long, unlocked: Boolean, cold: Boolean = !Exact.live) {
+        val turn = pressed
+        val live = { SystemClock.elapsedRealtime() - at <= BOUND_MS && pressed == turn }
         Headless.session(context, live) { ok ->
-            if (!ok) {
-                android.util.Log.w("exact", "control:$kind: no session ready for the press, or it lapsed")
+            if (!ok || pressed != turn) {
+                android.util.Log.w("exact", "control:$kind: no session ready for the press, or it lapsed or was superseded")
                 return@session
+            }
+            if (unlocked && context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true) {
+                return@session journal("control:$kind: the phone locked again before the press ran, so it was dropped")
             }
             val hidden = Exact.reader?.get()?.resumedAndDrawn() != true
             began(context, Exact.press(kind, digest, foreground = false, cold = cold, hidden = hidden), null)

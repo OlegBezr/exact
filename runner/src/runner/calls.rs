@@ -138,8 +138,10 @@ pub(in crate::runner) struct Calls {
 
 impl<D: DataSource> Runner<D> {
     /// Whether press `id` still runs uncancelled within its bound: what a
-    /// host asks where it acquires a device for the press's capture.
-    pub fn press_live(&self, id: u64) -> bool {
+    /// host asks where it acquires a device for the press's capture, on the
+    /// host's clock as it reads now.
+    pub fn press_live(&mut self, id: u64) -> bool {
+        self.sample();
         self.live_press(id).is_some()
     }
 

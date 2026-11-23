@@ -188,14 +188,14 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
         return Waveform(context, id).also { waveforms[id] = it; update(it, props) }
     }
 
-    /** Each waveform by its node, and the commit that last bound each node's `track` (`bound`), which a report can
-     * name before the view is made. */
+    /** Each waveform by its node, and the track each node's `track` was last bound to with the commit that bound it
+     * (`bound`), which can come before the view is made or its props reach it. */
     private val waveforms = HashMap<String, Waveform>()
-    private val boundBy = HashMap<String, Cause>()
+    private val boundBy = HashMap<String, Pair<String, Cause>>()
 
-    override fun bound(session: String, id: String, prop: String, cause: Cause) {
+    override fun bound(session: String, id: String, prop: String, value: Any?, cause: Cause) {
         if (prop != "track") return
-        boundBy[id] = cause
+        boundBy[id] = (value as? String ?: "") to cause
         waveforms[id]?.let(::listen)
     }
 
@@ -209,19 +209,21 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
         w.bars = WaveformBars(this.context.now())
     }
 
-    /** [w]'s meter on its track, under the commit that bound the track: before its report, no call's, which starts no
-     * capture. */
+    /** [w]'s meter on its track, under the commit that bound that track: until its report comes, none, so a track is
+     * never read under the cause of another. */
     private fun listen(w: Waveform) {
-        val cause = boundBy[w.id] ?: Cause.none
-        if (w.meter != null && w.cause === cause && w.listened == w.track) return
-        w.meter?.stop()
+        val cause = boundBy[w.id]?.takeIf { it.first == w.track }?.second
+        if (w.listened == w.track && w.cause?.origin == cause?.origin && (w.meter != null) == (cause != null && w.track.isNotEmpty())) return
+        val old = w.meter
         w.meter = null
         w.cause = cause
         w.listened = w.track
-        if (w.track.isEmpty()) return
-        val m = Meter(WaveformBars.STEP, WaveformBars.HISTORY, this.context.now(), this.context.agent)
-        try { m.leave = this.context.tracks.subscribe(w.track, m, false, cause) } catch (e: TrackError) { return }
-        w.meter = m
+        // The new meter joins before the old one leaves, so a track it shares does not go idle between them.
+        if (cause != null && w.track.isNotEmpty()) {
+            val m = Meter(WaveformBars.STEP, WaveformBars.HISTORY, this.context.now(), this.context.agent)
+            try { m.leave = this.context.tracks.subscribe(w.track, m, false, cause); w.meter = m } catch (e: TrackError) {}
+        }
+        old?.stop()
     }
 
     override fun destroyView(view: View) {
@@ -236,7 +238,7 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
         var track = ""
         var meter: Meter? = null
         /** What [meter] was subscribed under, and to. */
-        var cause = Cause.none
+        var cause: Cause? = null
         var listened = ""
         var bars = WaveformBars(0.0)
         var gone = false

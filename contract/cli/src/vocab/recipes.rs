@@ -107,6 +107,7 @@ pub const RECIPES: &[(&str, &str)] = &[
     recipe!("supabase"),
     recipe!("suspending-feed"),
     recipe!("symbols"),
+    recipe!("system-controls"),
     recipe!("tabs"),
     recipe!("forma"),
     recipe!("tests"),
