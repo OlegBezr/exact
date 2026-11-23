@@ -403,6 +403,9 @@ fn merged(mut a: CommitReceipt, b: CommitReceipt) -> CommitReceipt {
         into.retain(|k| seen.insert(*k));
     }
     a.touched.retain(live);
+    // shortcut: a node placed in one render may have changed in the other, so
+    // none is named placed; fine while only a boot merges, before any paint.
+    a.placed.clear();
     a.display_changed.retain(|k| !gone.contains(k));
     a.timelines.retain(|k| !gone.contains(k));
     a.renewed.retain(|k| !gone.contains(k));

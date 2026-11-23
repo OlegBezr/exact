@@ -68,6 +68,8 @@ pub struct CommitReceipt {
     pub destroyed: Vec<NodeKey>,
     /// Live nodes whose props, style, or children changed (created nodes excluded).
     pub touched: Vec<NodeKey>,
+    /// Of `touched`, the nodes changed only in their place in their set ([`crate::rows::touch`]).
+    pub placed: Vec<NodeKey>,
     /// Whether any change can move geometry; a host that only paints may skip layout otherwise.
     pub layout_invalidated: bool,
     /// The destroyed nodes that play an exit before a host removes them.
@@ -784,7 +786,7 @@ pub(crate) fn continue_document(
                         crate::rows::prop_changed(arena, layout, slot, *prop, touched);
                     receipt.layout_invalidated |=
                         segmented::prop_changed(arena, layout, slot, *prop, touched);
-                    touched.push(arena.key(slot));
+                    crate::rows::touch(arena.key(slot), *prop, touched, receipt);
                 }
                 Op::ClearProp { id, prop } => {
                     let slot = live_slot(arena, op_index, *id)?;
@@ -1095,6 +1097,7 @@ pub(crate) fn finish_document(arena: &NodeArena, commit: DocumentCommit) -> Comm
             live.insert(slot);
         }
     }
+    crate::rows::placed(arena, &mut receipt, &created, &mut live);
     let mut touched: Vec<NodeKey> = live.iter().map(|slot| arena.key(slot)).collect();
     // Receipts outlive this batch; do not retain scratch for duplicates or dead nodes.
     touched.shrink_to_fit();

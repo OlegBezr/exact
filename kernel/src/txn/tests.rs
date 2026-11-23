@@ -1207,3 +1207,42 @@ fn looks_take_the_look_rows_only_and_go_with_the_node() {
     k.apply(2, 3, &[Op::DestroyView { id: 1 }]).unwrap();
     assert!(k.node(1).is_none());
 }
+
+/// A node whose only change was its place in its set is placed, and still
+/// touched; one changed otherwise too, by its own style or by what it
+/// inherits, is only touched.
+#[test]
+fn a_node_changed_only_in_its_place_is_placed() {
+    let mut ops = create([1, 2, 3, 4, 5], NodeType::View);
+    ops.extend([
+        children(1, &[2, 3, 5]),
+        children(5, &[4]),
+        Op::AttachRoot { id: 1 },
+    ]);
+    let mut k = kernel(&ops);
+    let place = |id, prop| Op::SetProp {
+        id,
+        prop,
+        value: crate::PropValue::Int(2),
+    };
+    let (at, size) = (PropId::AccessibilityPosInSet, PropId::AccessibilitySetSize);
+    let receipt = k
+        .apply(
+            0,
+            2,
+            &[
+                place(2, at),
+                place(2, size),
+                place(3, at),
+                tall(3, 10.0),
+                place(4, at),
+                relative_style(5, &[(StyleId::Visibility, "hidden")]),
+            ],
+        )
+        .unwrap();
+    let key = |id| k.node(id).unwrap().key;
+    assert_eq!(receipt.placed, [key(2)]);
+    for id in [2, 3, 4, 5] {
+        assert!(receipt.touched.contains(&key(id)), "{id}");
+    }
+}

@@ -227,6 +227,47 @@ pub(crate) fn row_of(arena: &crate::arena::NodeArena, slot: u32) -> Option<(u32,
     .flatten()
 }
 
+/// A node's change of `prop` touches it, but for its place in its set
+/// (`aria-posinset`, `aria-setsize`), which a list moves on every row after
+/// one inserted or removed and which no host draws: that change names it
+/// placed (`CommitReceipt::placed`), so a host may keep what it drew of it.
+pub(crate) fn touch(
+    key: crate::NodeKey,
+    prop: PropId,
+    touched: &mut Vec<crate::NodeKey>,
+    receipt: &mut crate::CommitReceipt,
+) {
+    if matches!(
+        prop,
+        PropId::AccessibilityPosInSet | PropId::AccessibilitySetSize
+    ) {
+        receipt.placed.push(key);
+    } else {
+        touched.push(key);
+    }
+}
+
+/// At a commit's end, a placed node it created, or touched any other way
+/// (`live`, the touched slots), is not placed; each one left is touched too.
+pub(crate) fn placed(
+    arena: &crate::arena::NodeArena,
+    receipt: &mut crate::CommitReceipt,
+    created: &crate::id::IdSet<u32>,
+    live: &mut crate::sorted::SlotSet,
+) {
+    let mut placed: Vec<u32> = std::mem::take(&mut receipt.placed)
+        .into_iter()
+        .filter_map(|key| arena.resolve(key))
+        .filter(|slot| !created.contains(slot) && !live.contains(*slot))
+        .collect();
+    placed.sort_unstable();
+    placed.dedup();
+    for &slot in &placed {
+        live.insert(slot);
+    }
+    receipt.placed = placed.into_iter().map(|slot| arena.key(slot)).collect();
+}
+
 fn wrote(node: &NodeRef<'_>, width: StyleId, line: StyleId) -> bool {
     node.style.written.has(width) || node.style.written.has(line)
 }

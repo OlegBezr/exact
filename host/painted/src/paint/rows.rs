@@ -10,7 +10,9 @@
 //! or ring suppression, a picture arriving, a layout publishing something
 //! new beside a frame that stayed (a resolved padding, a scroll extent). A
 //! layout change that moves a node only makes the row suspect: kept while
-//! every node sits where it sat relative to the row.
+//! every node sits where it sat relative to the row. So does a commit that
+//! changes only the row's place in its set (`CommitReceipt::placed`): kept
+//! while the separators under it, which follow the next row, stand.
 //!
 //! A drawing the stage keeps apart (`stage.rs`) holds the rows the walk drew
 //! this frame by reference ([`RowPin`]): a row's id names one recording for
@@ -31,6 +33,9 @@ pub struct Dirty {
     moved: Vec<NodeKey>,
     /// Nodes a commit bound to another item (LLP 1078).
     renewed: Vec<NodeKey>,
+    /// Nodes a commit changed only in their place in their set
+    /// (`CommitReceipt::placed`).
+    placed: Vec<NodeKey>,
     /// When the latest commit landed, ms (where a numeric roll starts).
     committed: Option<f64>,
 }
@@ -38,7 +43,7 @@ pub struct Dirty {
 impl Dirty {
     #[cfg(test)]
     pub(crate) fn pending_nodes(&self) -> usize {
-        self.hard.len() + self.moved.len() + self.renewed.len()
+        self.hard.len() + self.moved.len() + self.renewed.len() + self.placed.len()
     }
 
     /// Take node changes while keeping the commit time for the next paint's numeric roll.
@@ -51,7 +56,10 @@ impl Dirty {
     /// A commit's nodes, and when it landed (ms).
     pub fn commit(&mut self, r: &exact_kernel::CommitReceipt, at: f64) {
         self.committed = Some(at);
-        self.hard.extend(&r.touched);
+        let placed: IdSet<NodeKey> = r.placed.iter().copied().collect();
+        self.hard
+            .extend(r.touched.iter().filter(|key| !placed.contains(*key)));
+        self.placed.extend(&r.placed);
         self.hard.extend(&r.created);
         self.hard.extend(&r.destroyed);
         self.destroyed |= !r.destroyed.is_empty();
@@ -119,6 +127,25 @@ struct Row {
     /// What its subtree lets escape into its list's painting, while nothing
     /// in it changed ([`Painter::refresh_ranks`]).
     order: Option<exact_kernel::paint_order::Potentials>,
+    /// The separators under it as recorded ([`edges`]), where it has a place
+    /// in its set: the one change it is kept through, while these stand.
+    edges: Option<Edges>,
+}
+
+/// The separators under a row, which follow the row after it: a list's
+/// (`Kernel::row_separator`) and a grouped list's
+/// (`Kernel::grouped_separator`).
+type Edges = (bool, Option<exact_kernel::GroupedSeparator>);
+
+fn edges(kernel: &Kernel, node: &NodeRef<'_>) -> Option<Edges> {
+    let placed = [PropId::AccessibilityPosInSet, PropId::AccessibilitySetSize];
+    if !placed.iter().any(|id| node.props.get(*id).is_some()) {
+        return None;
+    }
+    Some((
+        kernel.row_separator(node.id),
+        kernel.grouped_separator(node.id),
+    ))
 }
 
 impl Row {
@@ -376,6 +403,15 @@ impl Painter {
     fn invalidate_rows(&mut self, kernel: &Kernel, mut dirty: Dirty) {
         if self.rows.kept.is_empty() {
             return;
+        }
+        // A row given only a new place in its set (a row inserted above it)
+        // draws as recorded while the separators under it stand.
+        for key in std::mem::take(&mut dirty.placed) {
+            let row = self.rows.kept.get(&key);
+            let now = || kernel.node_by_key(key).and_then(|n| edges(kernel, &n));
+            if row.is_none_or(|row| row.edges.is_none() || row.edges != now()) {
+                dirty.hard.push(key);
+            }
         }
         // A source can animate outside the row holding its SVG instance.
         let changed: IdSet<_> = dirty
@@ -1277,6 +1313,7 @@ impl Painter {
                 seen: frame,
                 stale: false,
                 order,
+                edges: edges(walk.scene.kernel, &node),
             },
         );
     }
