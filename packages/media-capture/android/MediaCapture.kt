@@ -35,6 +35,7 @@ import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import dev.exact.canvas.Cause
 import dev.exact.canvas.AudioSource
 import dev.exact.canvas.ExactExtension
 import dev.exact.canvas.ExtensionContext
@@ -74,6 +75,8 @@ class MediaCaptureModule internal constructor(
         var used = false
         var leased = false
         var platformMute: String? = null
+        /** The call whose consumer opened the capture, which the capture's background claim names. */
+        var cause = Cause.none
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -90,19 +93,21 @@ class MediaCaptureModule internal constructor(
 
     init { if (!context.agent) Capture.listeners += this }
 
-    override fun later(name: String, args: JSONObject, reply: (JSONObject) -> Unit) {
+    override fun later(name: String, args: JSONObject, reply: (JSONObject) -> Unit) = later(name, args, null, Cause.none, reply)
+
+    override fun later(name: String, args: JSONObject, preferred: Any?, cause: Cause, reply: (JSONObject) -> Unit) {
         val t = tracks[args.optString("track")]
         if (cameras.owns(args.optString("track"))) {
             val id = args.optString("track")
             when (name) {
-                "applyConstraints" -> return cameras.applyConstraints(args, reply)
+                "applyConstraints" -> return cameras.applyConstraints(args, cause, reply)
                 "stopTrack" -> return reply(cameras.stop(id))
-                "setTrackEnabled" -> return reply(cameras.setEnabled(id, args.optBoolean("enabled", true)))
+                "setTrackEnabled" -> return reply(cameras.setEnabled(id, args.optBoolean("enabled", true), cause))
                 "mediaStreamTrack" -> return reply(cameras.state(id))
             }
         }
         when (name) {
-            "getUserMedia" -> if (args.optBoolean("video", false) || args.has("videoConstraints")) withCamera(args, reply) else getUserMedia(args, reply)
+            "getUserMedia" -> if (args.optBoolean("video", false) || args.has("videoConstraints")) withCamera(args, cause, reply) else getUserMedia(args, cause, reply)
             "applyConstraints" -> reply(error(if (t == null) "NotFoundError" else "NotSupportedError"))
             "cameraStatus" -> reply(cameras.status())
             "stopTrack" -> if (t == null) reply(error("NotFoundError")) else { end(t, "stopTrack"); reply(shape(t)) }
@@ -110,7 +115,7 @@ class MediaCaptureModule internal constructor(
                 if (t == null) return reply(error("NotFoundError"))
                 t.enabled = args.optBoolean("enabled", true)
                 // Turning a track back on is a start: it reopens an idle one that has consumers (D6).
-                if (t.enabled && !t.active && t.consumers.isNotEmpty() && t.readyState == "live") activate(t)
+                if (t.enabled && !t.active && t.consumers.isNotEmpty() && t.readyState == "live") activate(t, cause)
                 announce()
                 reply(shape(t))
             }
@@ -129,10 +134,10 @@ class MediaCaptureModule internal constructor(
     }
 
     /** A stream with a camera's track, and the microphone's first where it asks for both (LLP 1133.008 D1). */
-    private fun withCamera(args: JSONObject, reply: (JSONObject) -> Unit) {
+    private fun withCamera(args: JSONObject, cause: Cause, reply: (JSONObject) -> Unit) {
         val stream = "stream-${context.session}-${++next}"
         val video = { made: List<JSONObject> ->
-            cameras.open(args, stream) { v ->
+            cameras.open(args, stream, cause) { v ->
                 // What opened first is let go when the camera fails (LLP 1133.009 D3).
                 if (v.has("error")) {
                     made.forEach { m -> tracks[m.optString("id")]?.let { end(it, "the camera failed") } }
@@ -145,7 +150,7 @@ class MediaCaptureModule internal constructor(
             }
         }
         if (!args.optBoolean("audio", false) && !args.has("audioConstraints")) return video(emptyList())
-        getUserMedia(args) { a ->
+        getUserMedia(args, cause) { a ->
             if (a.has("error")) reply(a)
             else {
                 val made = a.getJSONArray("tracks")
@@ -157,7 +162,7 @@ class MediaCaptureModule internal constructor(
     private fun error(code: String) = JSONObject().put("error", code)
     private fun announce() = context.changed("media-capture.mediaStreamTrack")
 
-    private fun getUserMedia(args: JSONObject, reply: (JSONObject) -> Unit) {
+    private fun getUserMedia(args: JSONObject, cause: Cause, reply: (JSONObject) -> Unit) {
         // No kind asked for is Media Capture's TypeError, before anything opens.
         if (!args.optBoolean("audio", false) && !args.has("audioConstraints")) return reply(error("TypeError"))
         // A recognizer holding the microphone exclusively (LLP 1133.012 D8): nothing opens beside it.
@@ -180,13 +185,13 @@ class MediaCaptureModule internal constructor(
         when (status().getString("state")) {
             "granted" -> make()
             "denied" -> reply(error("NotAllowedError"))
-            else -> ask { if (granted()) make() else reply(error("NotAllowedError")) }
+            else -> ask(cause) { if (granted()) make() else reply(error("NotAllowedError")) }
         }
     }
 
     // Tracks and leases (D6)
 
-    override fun subscribe(id: String, consumer: TrackConsumer, start: Boolean, origin: String): () -> Unit {
+    override fun subscribe(id: String, consumer: TrackConsumer, start: Boolean, cause: Cause): () -> Unit {
         val t = tracks[id] ?: throw TrackError("NotFoundError")
         if (t.readyState == "ended") { consumer.ended(); return {} }
         val leave = {
@@ -203,9 +208,7 @@ class MediaCaptureModule internal constructor(
                     if (t.muted) consumer.muted(t.muteReason ?: "idle")
                 }
                 // While a recognizer holds the microphone exclusively, a track stays idle (LLP 1133.012 D8).
-                // `press`: a control's press the runner admitted to start this capture (LLP 1126.004 D4), which
-                // the recorder checks is still live where it subscribes.
-                (origin == "app" || origin == "press") && t.enabled && (!t.used || start) && !context.tracks.held("audio") -> activate(t)
+                starts(cause) && t.enabled && (!t.used || start) && !context.tracks.held("audio") -> activate(t, cause)
                 else -> consumer.muted(t.muteReason ?: "idle")
             }
         } catch (e: Throwable) {
@@ -243,8 +246,15 @@ class MediaCaptureModule internal constructor(
 
     private fun settle(t: Track) { t.platformMute?.let { mute(t, it) } ?: unmute(t) }
 
-    private fun activate(t: Track) {
-        t.active = true; t.used = true
+    /**
+     * Whether [cause] may open the microphone: the app's own, or a control's press the runner admitted to start this
+     * capture (`press`, LLP 1126.004 D4) while it still runs and an activity shows the app, which Android needs to hand
+     * it the microphone (D5).
+     */
+    private fun starts(cause: Cause) = cause.app || (cause.origin == "press" && context.visible && cause.pressLive())
+
+    private fun activate(t: Track, cause: Cause) {
+        t.active = true; t.used = true; t.cause = cause
         if (!context.agent && !t.leased) {
             try {
                 Capture.lease(app, t.options)
@@ -256,7 +266,7 @@ class MediaCaptureModule internal constructor(
         }
         each(t) { it.live(t.audio) }
         settle(t)
-        if (t.leased || context.agent) claimBackground()
+        if (t.leased || context.agent) claimBackground(cause)
     }
 
     private fun deactivate(t: Track) {
@@ -267,9 +277,9 @@ class MediaCaptureModule internal constructor(
     }
 
     /** Claim the `capture` service where the app's lines declare it, at a lease taken in the foreground (D5). */
-    private fun claimBackground() {
+    private fun claimBackground(cause: Cause) {
         if (background != null || !context.foregroundService.declared("capture", "microphone")) return
-        background = context.foregroundService.claim("capture", setOf("microphone"), context.origin, lost = { why ->
+        background = context.foregroundService.claim("capture", setOf("microphone"), cause.origin, lost = { why ->
             background = null
             context.log("media-capture: the background claim was refused after it was made: $why")
             if (!context.foreground) foreground(false)
@@ -321,7 +331,7 @@ class MediaCaptureModule internal constructor(
             if (t.readyState != "live" || !t.active) continue
             if (shown) {
                 t.platformMute = overlay
-                activate(t)
+                activate(t, t.cause)
             } else {
                 t.platformMute = "background"
                 release(t)
@@ -379,8 +389,8 @@ class MediaCaptureModule internal constructor(
             .put("android", JSONObject().put("shouldShowRationale", rationale).put("permanentlyDenied", permanent))
     }
 
-    private fun ask(done: () -> Unit) {
-        context.requestPermissions(arrayOf(PERMISSION)) { answered ->
+    private fun ask(cause: Cause, done: () -> Unit) {
+        context.requestPermissions(cause, arrayOf(PERMISSION)) { answered ->
             val activity = context.activity
             if (PERMISSION in answered && !granted() && activity != null && !activity.shouldShowRequestPermissionRationale(PERMISSION)) {
                 history.edit().putBoolean("permanent", true).apply()

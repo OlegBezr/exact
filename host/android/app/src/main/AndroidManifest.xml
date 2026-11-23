@@ -57,9 +57,10 @@
              and the press it names is a record the tile left in this process. -->
         <activity-alias android:name=".Control" android:targetActivity=".MainActivity" android:exported="false" />
         <!-- What a locked control's tile starts to run its tool once the person unlocks (`Controls.kt`, ControlPress): a
-             transparent window that finishes as soon as it has pressed, out of Recents. -->
+             transparent window, out of Recents, that finishes itself once it has pressed or the unlock is turned down; not
+             `noHistory`, which would end it under the credential screen. -->
         <activity android:name="dev.exact.canvas.ControlPress" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:taskAffinity="" android:excludeFromRecents="true" android:noHistory="true" />
+            android:taskAffinity="" android:excludeFromRecents="true" />
         <!-- Only adb shell selects a development loop for subsequent starts of this APK. -->
         <activity-alias android:name=".DevLoop" android:targetActivity=".MainActivity" android:enabled="${exactDevelopment}"
             android:exported="true" android:permission="android.permission.DUMP" />

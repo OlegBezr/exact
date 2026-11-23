@@ -212,10 +212,25 @@ internal object Controls {
                 pending = record
                 receiver = java.lang.ref.WeakReference(activity)
                 main.postDelayed({ expire(record) }, record.at + BOUND_MS - SystemClock.elapsedRealtime())
+                unlock(activity, record)
                 ready(activity)
             }
         }
         return true
+    }
+
+    /**
+     * Ask the person to unlock where [activity] arrived behind the keyguard, as the `Intent` overload starts it before
+     * API 34 ([KeyguardManager.requestDismissKeyguard], which asks for the credential where the keyguard holds one);
+     * from 34 the system asks before it starts the activity. Turning the request down drops the press.
+     */
+    private fun unlock(activity: ExactActivity, record: Record) {
+        val keyguard = activity.getSystemService(KeyguardManager::class.java) ?: return
+        if (!keyguard.isKeyguardLocked) return
+        keyguard.requestDismissKeyguard(activity, object : KeyguardManager.KeyguardDismissCallback() {
+            override fun onDismissCancelled() { if (pending === record) drop("the phone stayed locked, so the press was dropped") }
+            override fun onDismissError() { if (pending === record) drop("the phone stayed locked, so the press was dropped") }
+        })
     }
 
     /** Whether [activity] can run a handoff now: resumed, drawn since its start, and unlocked. */

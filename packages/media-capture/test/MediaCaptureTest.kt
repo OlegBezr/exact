@@ -1,6 +1,7 @@
 package exact.mediacapture
 
 import dev.exact.canvas.AudioSource
+import dev.exact.canvas.Cause
 import dev.exact.canvas.ExtensionContext
 import dev.exact.canvas.Native
 import dev.exact.canvas.TrackConsumer
@@ -50,7 +51,7 @@ class MediaCaptureTest {
 
     private fun call(name: String, args: JSONObject = JSONObject()): JSONObject {
         var answer: JSONObject? = null
-        module.later(name, args) { answer = it }
+        module.later(name, args, null, Cause("app")) { answer = it }
         return requireNotNull(answer)
     }
 
@@ -66,7 +67,7 @@ class MediaCaptureTest {
     }
 
     private fun subscribe(id: String, consumer: Consumer, origin: String = "app", start: Boolean = false) =
-        context.tracks.subscribe(id, consumer, start, origin)
+        context.tracks.subscribe(id, consumer, start, Cause(origin))
 
     @Test
     @Config(shadows = [dev.exact.canvas.ExtensionInvokeTest.Host::class])
@@ -80,13 +81,13 @@ class MediaCaptureTest {
                 val track = VideoTracks.Track(id, "stream-$id")
                 tracks[id] = track
                 context.tracks.add(dev.exact.canvas.TrackEntry(id, "video", owner = videos))
-                val leave = if (alreadyLeased) videos.subscribe(id, Consumer(CameraCapture), false, "app") else null
+                val leave = if (alreadyLeased) videos.subscribe(id, Consumer(CameraCapture), false, Cause("app")) else null
                 var hatches = 0
                 exact.camera.CameraModule.useCasesHatch = { hatches++; throw IllegalStateException("hatch refused") }
                 val view = camera.view("exact-camera", "1", id, context.application, JSONObject().put("srcObject", id)) { _, _ -> }
                 try {
-                    camera.bound("1", id, "srcObject", "app")
-                    camera.displayed("1", id, true, "app")
+                    camera.bound("1", id, "srcObject", Cause("app"))
+                    camera.displayed("1", id, true, Cause("app"))
                     assertEquals(1, hatches)
                     assertEquals(if (alreadyLeased) 1 else 0, track.consumers.size)
                     assertEquals(alreadyLeased, track.leased)
@@ -94,7 +95,7 @@ class MediaCaptureTest {
                     assertTrue(track.consumers.isEmpty())
                     assertFalse(track.leased)
                     exact.camera.CameraModule.useCasesHatch = { hatches++ }
-                    camera.displayed("1", id, true, "app")
+                    camera.displayed("1", id, true, Cause("app"))
                     assertEquals(3, hatches)
                     assertEquals(1, track.consumers.size)
                     assertTrue(track.leased)
@@ -129,7 +130,7 @@ class MediaCaptureTest {
                     override fun ended() = deliver("ended")
                 }
                 assertSame(failure, assertThrows(IllegalStateException::class.java) {
-                    context.tracks.subscribe(id, consumer, true)
+                    context.tracks.subscribe(id, consumer, true, Cause("app"))
                 })
                 val delivered = deliveries
                 assertEquals(alreadyActive, module.leased(id))
@@ -157,7 +158,7 @@ class MediaCaptureTest {
         // Admission is updated before the extension receives its foreground request.
         context.foreground = true
         assertSame(failure, assertThrows(IllegalStateException::class.java) {
-            context.tracks.subscribe(id, joining, false)
+            context.tracks.subscribe(id, joining, false, Cause("app"))
         })
         assertFalse(videos.leased(id))
         assertEquals(listOf("idle", "video", "idle"), remaining.events)
@@ -178,7 +179,7 @@ class MediaCaptureTest {
             override fun live(source: AudioSource?) { throw failure }
         }
         assertSame(failure, assertThrows(IllegalStateException::class.java) {
-            context.tracks.subscribe(id, joining, true)
+            context.tracks.subscribe(id, joining, true, Cause("app"))
         })
         assertFalse(module.leased(id))
         assertEquals(listOf("idle", "audio", "idle"), remaining.events)
@@ -196,7 +197,7 @@ class MediaCaptureTest {
             override fun live(source: AudioSource?) { throw failure }
         }
         assertSame(failure, assertThrows(IllegalStateException::class.java) {
-            context.tracks.subscribe(id, joining, false)
+            context.tracks.subscribe(id, joining, false, Cause("app"))
         })
         assertFalse(module.leased(id))
         val replacement = Consumer()
@@ -220,7 +221,7 @@ class MediaCaptureTest {
             }
         }
         assertSame(failure, assertThrows(IllegalStateException::class.java) {
-            context.tracks.subscribe(id, joining, false)
+            context.tracks.subscribe(id, joining, false, Cause("app"))
         })
         assertFalse(module.leased(id))
         val replacement = Consumer()
@@ -350,7 +351,6 @@ class MediaCaptureTest {
             foreground(false)
             val app = Consumer()
             subscribe(id, app)
-            context.origin = origin
             foreground(true)
             assertEquals(listOf("idle", "video", "unmuted"), app.events)
             assertEquals(listOf("idle", "video", "unmuted"), consumer.events)
@@ -381,9 +381,9 @@ class MediaCaptureTest {
         tracks[back.id] = back
         tracks[front.id] = front
         try {
-            val release = videos.subscribe(back.id, Consumer(CameraCapture), false, "app")
+            val release = videos.subscribe(back.id, Consumer(CameraCapture), false, Cause("app"))
             val consumer = Consumer(CameraCapture)
-            videos.subscribe(front.id, consumer, false, "app")
+            videos.subscribe(front.id, consumer, false, Cause("app"))
             assertEquals("in-use", videos.state(front.id).getString("muteReason"))
             videos.foreground(false)
             consumer.events.clear()

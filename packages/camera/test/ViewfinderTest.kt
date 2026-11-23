@@ -5,6 +5,7 @@ import android.view.View
 import android.widget.ImageView
 import androidx.camera.core.Preview
 import androidx.camera.view.PreviewView
+import dev.exact.canvas.Cause
 import dev.exact.canvas.ExtensionContext
 import dev.exact.canvas.Native
 import dev.exact.canvas.TrackConsumer
@@ -54,7 +55,7 @@ class ViewfinderTest {
             }
         var liveCallbacks = 0
         override fun leased(id: String) = consumers.isNotEmpty()
-        override fun subscribe(id: String, consumer: TrackConsumer, start: Boolean, origin: String): () -> Unit {
+        override fun subscribe(id: String, consumer: TrackConsumer, start: Boolean, cause: Cause): () -> Unit {
             consumers += consumer
             liveCallbacks++
             consumer.liveVideo(source)
@@ -72,8 +73,8 @@ class ViewfinderTest {
         fun view(): View = module.view("exact-camera", "1", "finder", context.application,
             JSONObject().put("srcObject", "track")) { _, _ -> }
         fun show(): View = view().also {
-            module.bound("1", "finder", "srcObject", "app")
-            module.displayed("1", "finder", true, "app")
+            module.bound("1", "finder", "srcObject", Cause("app"))
+            module.displayed("1", "finder", true, Cause("app"))
         }
         fun destroy(view: View) = module.destroyView(view)
     }
@@ -88,7 +89,7 @@ class ViewfinderTest {
             override fun unmuted() {}
             override fun ended() {}
         }
-        val finishPhoto = f.context.tracks.subscribe("track", photo, false)
+        val finishPhoto = f.context.tracks.subscribe("track", photo, false, Cause("app"))
         f.track.background = true
         assertNull(source.preview.surfaceProvider)
         f.destroy(first)
@@ -117,7 +118,7 @@ class ViewfinderTest {
         val replaced = f.track.consumers.single()
         f.addTrack("other-track")
         f.module.update(current, JSONObject().put("srcObject", "other-track"))
-        f.module.bound("1", "finder", "srcObject", "app")
+        f.module.bound("1", "finder", "srcObject", Cause("app"))
         val active = f.track.consumers.single()
         for (stale in listOf(destroyed, replaced)) {
             stale.muted("background")

@@ -35,6 +35,7 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.view.Choreographer
 import android.view.View
+import dev.exact.canvas.Cause
 import dev.exact.canvas.AudioSource
 import dev.exact.canvas.ExactExtension
 import dev.exact.canvas.ExtensionContext
@@ -73,10 +74,12 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
     private fun error(code: String) = JSONObject().put("error", code)
     private fun announce() = context.changed("recording.mediaRecorderState")
 
-    override fun later(name: String, args: JSONObject, reply: (JSONObject) -> Unit) {
+    override fun later(name: String, args: JSONObject, reply: (JSONObject) -> Unit) = later(name, args, null, Cause.none, reply)
+
+    override fun later(name: String, args: JSONObject, preferred: Any?, cause: Cause, reply: (JSONObject) -> Unit) {
         val r = recorders[args.optString("recorder")]
         when (name) {
-            "startMediaRecorder" -> reply(start(args))
+            "startMediaRecorder" -> reply(start(args, cause))
             "pauseMediaRecorder", "resumeMediaRecorder" -> {
                 if (r == null) return reply(error("NotFoundError"))
                 if (r.state == "inactive") return reply(error("InvalidStateError"))
@@ -91,19 +94,22 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
                 val type = args.optString("type")
                 reply(JSONObject().put("type", type).put("supported", if (context.agent) type in listOf("audio/wav", "video/mp4") else type == "video/mp4" || type in TYPES))
             }
-            "audioLevel" -> reply(level(args))
+            "audioLevel" -> reply(level(args, cause))
             else -> reply(error("NotSupportedError"))
         }
     }
 
-    private fun start(args: JSONObject): JSONObject {
+    private fun start(args: JSONObject, cause: Cause): JSONObject {
         val entry = context.tracks.lookup(args.optString("stream"))
         if (entry?.kind != "stream") return error("NotFoundError")
         if (args.has("maxDuration") && (!args.optDouble("maxDuration").isFinite() || args.optDouble("maxDuration") <= 0)) return error("TypeError")
         val videos = entry.tracks.filter { context.tracks.lookup(it)?.kind == "video" }
         // A control's press records audio alone, only while the press runs and an activity shows the app, which
-        // Android needs to hand it the microphone (LLP 1126.004 D4, D5).
-        if (context.origin == "press" && (videos.isNotEmpty() || !context.visible || !context.pressLive())) return error("NotAllowedError")
+        // Android needs to hand it the microphone (LLP 1126.004 D4, D5). The track's owner decides whether the press
+        // may open its device; a stream holding anything but audio is refused here.
+        if (cause.origin == "press" && (entry.tracks.any { context.tracks.lookup(it)?.kind != "audio" } || !context.visible || !cause.pressLive())) {
+            return error("NotAllowedError")
+        }
         if (videos.isNotEmpty()) {
             if (entry.tracks.size != 1) return error("NotSupportedError")
             val type = args.optString("mimeType").ifEmpty { "video/mp4" }
@@ -112,7 +118,7 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
             val file = context.file(path) ?: return error("NotSupportedError")
             val r = VideoTake("recorder-${context.session}-${++next}", path, file, context, args.optDouble("maxDuration", 0.0), ::announce, context.tracks.lookup(videos.single()))
             try {
-                r.leave = context.tracks.subscribe(videos.single(), r, true, context.origin)
+                r.leave = context.tracks.subscribe(videos.single(), r, true, cause)
                 r.arm()
             } catch (e: Exception) {
                 r.finish("error", e.message) {}
@@ -131,7 +137,7 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
         next += 1
         val r = Recorder("recorder-${context.session}-$next", type, form, path, file, args.optDouble("audioBitsPerSecond", 0.0), args.optDouble("maxDuration", 0.0))
         try {
-            r.leave = context.tracks.subscribe(track, r, true, context.origin)
+            r.leave = context.tracks.subscribe(track, r, true, cause)
             r.arm()
         } catch (e: TrackError) {
             return error(e.code)
@@ -151,14 +157,14 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
         return if (name.substring(dot) == ext) path else null
     }
 
-    private fun level(args: JSONObject): JSONObject {
+    private fun level(args: JSONObject, cause: Cause): JSONObject {
         val track = args.optString("track")
         // A read of no track (`track=""`) is silence: an app reads before it holds one.
         if (track.isEmpty()) return JSONObject().put("audioLevel", 0).put("totalAudioEnergy", 0).put("totalSamplesDuration", 0).put("levels", JSONArray())
         val key = "$track ${args.optDouble("interval", 0.0)} ${args.optDouble("history", 0.0)}"
         val m = meters[key] ?: Meter(args.optDouble("interval", 50.0).takeIf { it > 0 } ?: 50.0,
             args.optDouble("history", 100.0).takeIf { it > 0 }?.toInt() ?: 100, context.now(), context.agent).also { m ->
-            try { m.leave = context.tracks.subscribe(track, m, false, context.origin) } catch (e: TrackError) { return error(e.code) }
+            try { m.leave = context.tracks.subscribe(track, m, false, cause) } catch (e: TrackError) { return error(e.code) }
             meters[key] = m
         }
         return m.read(context.now())
@@ -179,7 +185,18 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
      * own, so no level crosses into Contract; a reader of the track that never starts it. */
     override fun view(tag: String, session: String, id: String, context: Context, props: JSONObject, emit: (String, String) -> Unit): View {
         require(tag == "audio-waveform") { "no view $tag" }
-        return Waveform(context).also { update(it, props) }
+        return Waveform(context, id).also { waveforms[id] = it; update(it, props) }
+    }
+
+    /** Each waveform by its node, and the commit that last bound each node's `track` (`bound`), which a report can
+     * name before the view is made. */
+    private val waveforms = HashMap<String, Waveform>()
+    private val boundBy = HashMap<String, Cause>()
+
+    override fun bound(session: String, id: String, prop: String, cause: Cause) {
+        if (prop != "track") return
+        boundBy[id] = cause
+        waveforms[id]?.let(::listen)
     }
 
     override fun update(view: View, props: JSONObject) {
@@ -187,20 +204,40 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
         props.optString("tint").takeIf { it.isNotEmpty() }?.let { c -> runCatching { Color.parseColor(c) }.getOrNull()?.let { w.paint.color = it } }
         val track = props.optString("track")
         if (track == w.track) return
-        w.meter?.stop()
         w.track = track
-        w.meter = if (track.isEmpty()) null else Meter(WaveformBars.STEP, WaveformBars.HISTORY, this.context.now(), this.context.agent).also { m ->
-            try { m.leave = this.context.tracks.subscribe(track, m, false, this.context.origin) } catch (e: TrackError) { return }
-        }
+        listen(w)
         w.bars = WaveformBars(this.context.now())
     }
 
-    override fun destroyView(view: View) { (view as? Waveform)?.let { it.gone = true; it.meter?.stop() } }
+    /** [w]'s meter on its track, under the commit that bound the track: before its report, no call's, which starts no
+     * capture. */
+    private fun listen(w: Waveform) {
+        val cause = boundBy[w.id] ?: Cause.none
+        if (w.meter != null && w.cause === cause && w.listened == w.track) return
+        w.meter?.stop()
+        w.meter = null
+        w.cause = cause
+        w.listened = w.track
+        if (w.track.isEmpty()) return
+        val m = Meter(WaveformBars.STEP, WaveformBars.HISTORY, this.context.now(), this.context.agent)
+        try { m.leave = this.context.tracks.subscribe(w.track, m, false, cause) } catch (e: TrackError) { return }
+        w.meter = m
+    }
 
-    private inner class Waveform(context: Context) : View(context), Choreographer.FrameCallback {
+    override fun destroyView(view: View) {
+        val w = view as? Waveform ?: return
+        w.gone = true
+        w.meter?.stop()
+        if (waveforms[w.id] === w) { waveforms.remove(w.id); boundBy.remove(w.id) }
+    }
+
+    private inner class Waveform(context: Context, val id: String) : View(context), Choreographer.FrameCallback {
         val paint = Paint().apply { color = Color.rgb(209, 36, 47) }
         var track = ""
         var meter: Meter? = null
+        /** What [meter] was subscribed under, and to. */
+        var cause = Cause.none
+        var listened = ""
         var bars = WaveformBars(0.0)
         var gone = false
         private val density = context.resources.displayMetrics.density

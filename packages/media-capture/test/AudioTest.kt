@@ -3,6 +3,7 @@ package exact.mediacapture
 import android.os.Handler
 import android.os.Looper
 import dev.exact.canvas.AudioSource
+import dev.exact.canvas.Cause
 import dev.exact.canvas.ExactExtension
 import dev.exact.canvas.ExtensionContext
 import dev.exact.canvas.Native
@@ -100,7 +101,7 @@ class AudioTest {
 
     private fun call(module: ExactExtension, name: String, args: JSONObject = JSONObject()): JSONObject {
         var answer: JSONObject? = null
-        module.later(name, args) { answer = it }
+        module.later(name, args, null, Cause("app")) { answer = it }
         return requireNotNull(answer)
     }
 
@@ -116,7 +117,7 @@ class AudioTest {
         val recorders = ReflectionHelpers.getField<Map<String, Any>>(recording, "recorders")
         val writer = ReflectionHelpers.getField<Handler>(recorders.getValue(id), "writer")
         var answer: JSONObject? = null
-        recording.later("stopMediaRecorder", JSONObject().put("recorder", id)) { answer = it }
+        recording.later("stopMediaRecorder", JSONObject().put("recorder", id), null, Cause("app")) { answer = it }
         val drained = CountDownLatch(1)
         writer.post { drained.countDown() }
         assertTrue("the writer finishes", drained.await(5, TimeUnit.SECONDS))
@@ -166,11 +167,11 @@ class AudioTest {
         val (_, otherTrack) = open()
         val probe = Probe()
         val other = Probe()
-        val leave = context.tracks.subscribe(track, probe, true, "app")
-        val leaveOther = context.tracks.subscribe(otherTrack, other, true, "app")
+        val leave = context.tracks.subscribe(track, probe, true, Cause("app"))
+        val leaveOther = context.tracks.subscribe(otherTrack, other, true, Cause("app"))
         enable(track, false)
         val late = Probe()
-        val leaveLate = context.tracks.subscribe(track, late, false, "app")
+        val leaveLate = context.tracks.subscribe(track, late, false, Cause("app"))
         pcm.send(8192)
         assertEquals(listOf(true), probe.zero)
         assertEquals(listOf(true), late.zero)
@@ -218,11 +219,11 @@ class AudioTest {
 
         val (_, lastTrack) = open()
         val last = Probe()
-        val leaveLast = context.tracks.subscribe(lastTrack, last, true, "app")
+        val leaveLast = context.tracks.subscribe(lastTrack, last, true, Cause("app"))
         last.leave!!(); leaveLast()
         assertTrue(pcm.taps.isEmpty())
         val replacement = Probe()
-        val leaveReplacement = context.tracks.subscribe(lastTrack, replacement, true, "app")
+        val leaveReplacement = context.tracks.subscribe(lastTrack, replacement, true, Cause("app"))
         pcm.send()
         assertEquals(listOf(false), replacement.zero)
         capture.destroy {}
