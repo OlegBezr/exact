@@ -661,6 +661,181 @@ fn pinned_old_allocation_causes_downsize_and_real_visible_progress() {
     assert_eq!(images.bitmaps[&1].width(), 2048);
 }
 
+const MIB: u64 = 1024 * 1024;
+
+fn square_images() -> Images {
+    let bytes = encoded(1024, 1024, [71, 80, 90, 255]);
+    Images::local(Assets::selected(
+        PathBuf::new(),
+        Arc::new(move |_| Ok(Some(bytes.clone()))),
+    ))
+}
+
+#[test]
+fn an_upgrade_waits_with_its_thumbnail_when_cold_pixels_are_still_held() {
+    let mut images = square_images();
+    let k = kernel(2);
+    images.sync(&k, &[1]);
+    images.wait(SETTLED);
+    let held = images.bitmaps[&1].clone();
+    let session = images.backend.session.clone();
+    let _pressure = session.reserve_allocation(25 * MIB).unwrap();
+    images.sync(&k, &[1, 2]);
+    images.wait(SETTLED);
+    let thumbnail = images.bitmaps[&2].clone();
+    assert_eq!(thumbnail.width(), 512);
+
+    images.sync(&k, &[2]);
+    let upgrade = images.views[&2].request.unwrap();
+    assert_eq!(upgrade.1.width, 1024);
+    until(|| session.status(upgrade.0) == Some(RequestStatus::WaitingBudget));
+    images.poll();
+    assert_eq!(images.views[&2].request, Some(upgrade));
+    assert!(Arc::ptr_eq(&thumbnail, &images.bitmaps[&2]));
+    assert_eq!(images.load_events.len(), 1);
+
+    drop(held);
+    images.wait(SETTLED);
+    assert_eq!(images.bitmaps[&2].width(), 1024);
+    assert_eq!(images.load_events.len(), 1);
+}
+
+#[test]
+fn distinct_upgrades_spend_cold_headroom_once_per_poll() {
+    let mut images = square_images();
+    let k = kernel(3);
+    images.sync(&k, &[1]);
+    images.wait(SETTLED);
+    let session = images.backend.session.clone();
+    let _pressure = session.reserve_allocation(24 * MIB).unwrap();
+    images.sync(&k, &[1, 2]);
+    images.wait(SETTLED);
+    images.sync(&k, &[1, 2, 3]);
+    images.wait(SETTLED);
+    assert_eq!(images.bitmaps[&2].width(), 512);
+    assert_eq!(images.bitmaps[&3].width(), 512);
+    let second = images.views[&3].request;
+
+    assert_eq!(session.available_bytes(), 2 * MIB);
+    images.sync(&k, &[2, 3]);
+    assert_eq!(images.views[&2].request.unwrap().1.width, 1024);
+    assert_eq!(images.views[&3].request, second);
+    images.wait_until(SETTLED, |images| images.bitmaps[&2].width() == 1024);
+    assert_eq!(images.bitmaps[&2].width(), 1024);
+    assert_eq!(images.bitmaps[&3].width(), 512);
+    assert!(images.stats().evicted > 0);
+}
+
+#[test]
+fn cold_pixels_cannot_fund_an_upgrade_while_the_session_is_over_budget() {
+    let mut images = square_images();
+    let mut k = kernel(2);
+    boxed(&mut k, 2, 512., 512., exact_kernel::ObjectFit::Fill);
+    let session = images.backend.session.clone();
+    session.set_budget(48 * MIB);
+    images.sync(&k, &[1]);
+    images.wait(SETTLED);
+    let _pressure = session.reserve_allocation(42 * MIB).unwrap();
+    images.sync(&k, &[1, 2]);
+    images.wait(SETTLED);
+    assert_eq!(images.bitmaps[&2].width(), 256);
+    let thumbnail = images.views[&2].request;
+
+    session.set_budget(SESSION_BYTES);
+    images.sync(&k, &[2]);
+    assert_eq!(images.views[&2].request, thumbnail);
+    assert_eq!(images.stats().cold_bytes, 4 * MIB);
+}
+
+#[test]
+fn a_cover_upgrade_needs_room_for_only_its_crop() {
+    let mut images = square_images();
+    let mut k = kernel(1);
+    boxed(&mut k, 1, 256., 1024., exact_kernel::ObjectFit::Cover);
+    let session = images.backend.session.clone();
+    let _pressure = session.reserve_allocation(29 * MIB).unwrap();
+    let brief = session.reserve_allocation(MIB).unwrap();
+    images.sync(&k, &[1]);
+    images.wait(SETTLED);
+    assert!(images.bitmaps[&1].height() < 1024);
+
+    drop(brief);
+    images.wait(SETTLED);
+    let picture = &images.bitmaps[&1];
+    assert_eq!((picture.width(), picture.height()), (260, 1024));
+    assert_eq!(picture.crop().full.width, 1024);
+}
+
+#[test]
+fn downsized_views_share_an_upgrade_in_flight_and_after_it_lands() {
+    let mut images = square_images();
+    let mut k = kernel(3);
+    source(&mut k, 2, "1");
+    source(&mut k, 3, "1");
+    let session = images.backend.session.clone();
+    let _pressure = session.reserve_allocation(25 * MIB).unwrap();
+    let brief = session.reserve_allocation(3 * MIB).unwrap();
+    for last in 1..=3 {
+        images.sync(&k, &(1..=last).collect::<Vec<_>>());
+        images.wait(SETTLED);
+        assert!(Arc::ptr_eq(&images.bitmaps[&1], &images.bitmaps[&last]));
+    }
+    assert_eq!(images.bitmaps[&1].width(), 512);
+
+    // Poll the second view while the decode holds its reservation, then the
+    // third after it lands. Neither has enough room for another decode.
+    let joining = images.views.remove(&2).unwrap();
+    let later = images.views.remove(&3).unwrap();
+    let (started, decoding) = std::sync::mpsc::channel();
+    let (release, finish) = std::sync::mpsc::channel();
+    let finish = Mutex::new(finish);
+    *images.backend.hook.lock().unwrap() = Some(Arc::new(move |_, _| {
+        if started.send(()).is_ok() {
+            let _ = finish.lock().unwrap().recv_timeout(SETTLED);
+        }
+    }));
+    drop(brief);
+    images.poll();
+    let (upgrade, size) = images.views[&1].request.unwrap();
+    assert_eq!(size.width, 1024);
+    decoding.recv_timeout(SETTLED).unwrap();
+    assert_eq!(session.status(upgrade), Some(RequestStatus::Decoding));
+    images.views.insert(2, joining);
+    images.poll();
+    assert_eq!(images.views[&2].request.unwrap().1.width, 1024);
+    release.send(()).unwrap();
+    images.wait(SETTLED);
+    images.views.insert(3, later);
+    assert_eq!(session.available_bytes(), 2 * MIB);
+    images.poll();
+    assert_eq!(images.bitmaps[&1].width(), 1024);
+    assert!(Arc::ptr_eq(&images.bitmaps[&1], &images.bitmaps[&2]));
+    assert!(Arc::ptr_eq(&images.bitmaps[&1], &images.bitmaps[&3]));
+}
+
+#[test]
+fn a_box_that_shrank_during_a_budget_wait_asks_once_at_its_new_size() {
+    use exact_kernel::ObjectFit;
+    let mut images = square_images();
+    let mut k = kernel(1);
+    boxed(&mut k, 1, 1024., 1024., ObjectFit::Fill);
+    let session = images.backend.session.clone();
+    let _pressure = session.reserve_allocation(30 * MIB).unwrap();
+    assert!(images.prepare_metadata(&k, &[1], SETTLED));
+    images.enable_decode();
+    images.poll();
+    let large = images.views[&1].request.unwrap().0;
+    until(|| session.status(large) == Some(RequestStatus::WaitingBudget));
+
+    boxed(&mut k, 1, 256., 256., ObjectFit::Fill);
+    images.sync(&k, &[1]);
+    let requested = images.views[&1].request;
+    assert!(!images.views[&1].downsized);
+    images.wait(SETTLED);
+    assert_eq!(images.views[&1].request, requested);
+    assert_eq!(images.bitmaps[&1].width(), 256);
+}
+
 #[test]
 fn source_identity_survives_displayed_replacement_and_cold_unmount() {
     let mut k = kernel(1);

@@ -54,6 +54,11 @@ impl BudgetAccount {
         self.budget()
             .saturating_sub(s.resident_bytes + s.reserved_bytes)
     }
+    pub fn available_after_eviction(&self) -> u64 {
+        let s = self.usage.lock().unwrap();
+        self.budget()
+            .saturating_sub(s.resident_bytes - s.cold_bytes + s.reserved_bytes)
+    }
     pub fn budget(&self) -> u64 {
         self.budget.load(Ordering::Relaxed)
     }

@@ -376,6 +376,29 @@ impl Backend {
         self.requests.lock().unwrap().insert(id);
         Ok(id)
     }
+    /// Match an existing request before spending this poll's decode headroom.
+    pub(super) fn request_upgrade(
+        &self,
+        demand: exact_raster::Demand,
+        spare: &mut Option<u64>,
+    ) -> Result<Option<exact_raster::RequestId>, Refusal> {
+        let id = match self.session.request_existing(demand) {
+            Ok(id) => id,
+            Err(Refusal::Stale) => {
+                let peak = demand.cost.peak()?;
+                let spare = spare.get_or_insert_with(|| self.session.available_after_eviction());
+                if peak > *spare {
+                    return Ok(None);
+                }
+                let id = self.session.request(demand)?;
+                *spare -= peak;
+                id
+            }
+            Err(e) => return Err(e),
+        };
+        self.requests.lock().unwrap().insert(id);
+        Ok(Some(id))
+    }
     /// The device scale an SVG picture of `source` at `pixels` is asked at.
     pub fn note_scale(&self, source: u64, pixels: exact_raster::PixelSize, scale: f32) {
         let mut scales = self.scales.lock().unwrap();

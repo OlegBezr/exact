@@ -500,6 +500,12 @@ impl Drop for SessionOwner {
 pub struct RasterSession {
     owner: Arc<SessionOwner>,
 }
+
+enum Subscription {
+    Decode,
+    Cached,
+    Existing,
+}
 impl std::fmt::Debug for RasterSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RasterSession")
@@ -514,14 +520,19 @@ impl RasterSession {
     /// Same-view replacement validates all candidate metadata/capacity first.
     /// Temporary budget pressure retains the queued request and wakes on free.
     pub fn request(&self, demand: Demand) -> Result<RequestId, Refusal> {
-        self.subscribe(demand, false)
+        self.subscribe(demand, Subscription::Decode)
     }
     /// Subscribe to a published bitmap while it is cached. Eviction returns
     /// `Stale` so the caller can request its file at the size it needs.
     pub fn request_cached(&self, demand: Demand) -> Result<RequestId, Refusal> {
-        self.subscribe(demand, true)
+        self.subscribe(demand, Subscription::Cached)
     }
-    fn subscribe(&self, demand: Demand, cached_only: bool) -> Result<RequestId, Refusal> {
+    /// Share a matching cached image or a decode that has reserved its bytes.
+    /// A miss leaves the view's demand in place and returns `Stale`.
+    pub fn request_existing(&self, demand: Demand) -> Result<RequestId, Refusal> {
+        self.subscribe(demand, Subscription::Existing)
+    }
+    fn subscribe(&self, demand: Demand, subscription: Subscription) -> Result<RequestId, Refusal> {
         validate(demand)?;
         let mut garbage = Vec::new();
         let mut state = self.owner.gate.inner.state.lock().unwrap();
@@ -535,19 +546,22 @@ impl RasterSession {
         if session.paused {
             return Err(Refusal::Paused);
         }
-        if cached_only
-            && !session
-                .entries
-                .get(&demand.key)
-                .is_some_and(|entry| matches!(entry.phase, Phase::Ready { .. }))
-        {
+        let entry = session.entries.get(&demand.key);
+        let found = match subscription {
+            Subscription::Decode => true,
+            Subscription::Cached => entry.is_some_and(|e| matches!(e.phase, Phase::Ready { .. })),
+            Subscription::Existing => {
+                entry.is_some_and(|e| matches!(e.phase, Phase::Ready { .. } | Phase::Decoding(_)))
+            }
+        };
+        if !found {
             return Err(Refusal::Stale);
         }
         if demand.cost.peak()? > session.account.budget() {
             return Err(Refusal::TooLarge);
         }
         let previous = session.views.get(&demand.view).copied();
-        if let Some(entry) = session.entries.get(&demand.key) {
+        if let Some(entry) = entry {
             if entry.demand.metadata != demand.metadata || entry.demand.cost != demand.cost {
                 return Err(Refusal::ConflictingMetadata);
             }
@@ -946,6 +960,11 @@ impl RasterSession {
     /// Bytes available for a new allocation at the session's current budget.
     pub fn available_bytes(&self) -> u64 {
         self.owner.account.available()
+    }
+    /// Headroom if cold entries are evicted. Native owners may keep their
+    /// allocations alive after eviction.
+    pub fn available_after_eviction(&self) -> u64 {
+        self.owner.account.available_after_eviction()
     }
     /// Reserve a distinct allocation before an upload/conversion CPU copy.
     pub fn reserve_allocation(&self, bytes: u64) -> Result<AllocationReservation, Refusal> {

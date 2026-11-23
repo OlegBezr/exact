@@ -50,6 +50,8 @@ mod crop;
 #[cfg(test)]
 #[path = "image/decode_tests.rs"]
 mod decode_tests;
+#[path = "image/demand.rs"]
+mod demand;
 #[path = "image/jpeg.rs"]
 mod jpeg_decode;
 #[path = "image/package.rs"]
@@ -120,6 +122,7 @@ struct View {
     part: bool,
     /// The request was shrunk to fit a short budget: smaller than its box wants.
     downsized: bool,
+    upgrading: bool,
     /// Retries this showing has made or joined for a URL whose download
     /// failed in a way asking again may mend, and when it next asks
     /// ([`RETRY_AFTER`]): from nothing whenever it leaves the screen or its
@@ -473,6 +476,7 @@ impl Images {
                 resized: false,
                 part: false,
                 downsized: false,
+                upgrading: false,
                 retries: 0,
                 retry_at: None,
                 settled: false,
@@ -785,6 +789,7 @@ impl Images {
                     view.requested_scale = scale;
                     view.part = false;
                     view.downsized = false;
+                    view.upgrading = false;
                     view.refusal = None;
                     if let Some(lease) = self.backend.session.take_ready(request) {
                         if let Some(bitmap) = lease.payload::<Arc<Bitmap>>() {
@@ -911,7 +916,9 @@ impl Images {
                         }
                         continue;
                     }
-                    Some(RequestStatus::WaitingBudget) => {
+                    // An upgrade keeps its accepted pixels while the gate
+                    // waits for the owners of evicted allocations to let go.
+                    Some(RequestStatus::WaitingBudget) if !view.upgrading => {
                         admission_budget =
                             admission_budget.min(self.backend.session.available_bytes());
                         let smaller = plan_view(header, view, scale, admission_budget);
@@ -934,30 +941,19 @@ impl Images {
                     && (view.requested_for != view.desired
                         || view.fit != Some(exact_kernel::ObjectFit::Cover));
                 view.resized |= recut;
-                // A picture shrunk to fit the budget, shown, is asked for whole
-                // once the budget has room for it, counting the cold pictures
-                // its decode would evict (pressure is often brief: a screen's
-                // pictures replacing the last one's).
-                let room = view.downsized
-                    && view.accepted == Some(request)
-                    && plan_view(header, view, scale, SESSION_BYTES).is_ok_and(|p| {
-                        let session = &self.backend.session;
-                        let spare = spare.get_or_insert_with(|| {
-                            session.available_bytes() + session.stats().cold_bytes
-                        });
-                        let fits = p.peak_bytes() <= *spare;
-                        if fits {
-                            *spare -= p.peak_bytes();
-                        }
-                        fits
-                    });
                 // A changed offered size replaces demand, retaining old pixels.
-                if recut || room || resize_changes_view(header, view, scale) {
+                if recut || resize_changes_view(header, view, scale) {
                     self.backend.cancel(request);
                     view.request = None;
                 }
             }
-            if view.request.is_none() && !matches!(view.refusal, Some(Refusal::DecodeFailed)) {
+            // Once room returns, a shown thumbnail can ask at full resolution.
+            let upgrade = view
+                .request
+                .filter(|(request, _)| view.downsized && view.accepted == Some(*request));
+            if (view.request.is_none() || upgrade.is_some())
+                && !matches!(view.refusal, Some(Refusal::DecodeFailed))
+            {
                 let decode = match plan_view(header, view, scale, admission_budget) {
                     Ok(plan) => plan,
                     Err(e) => {
@@ -969,36 +965,16 @@ impl Images {
                         continue;
                     }
                 };
-                // A picture of this source already decoded (or decoding) a
-                // little larger serves this view too: no second decode, no
-                // second charge. An SVG is drawn for its box: one a little
-                // larger is another picture (under `fill`, another ratio).
-                let wanted = u64::from(decode.pixels.width) * u64::from(decode.pixels.height);
-                let held = (!header.is_svg())
-                    .then(|| {
-                        (self.backend.session).covering(
-                            source,
-                            self.generation,
-                            decode.storage(),
-                            decode.pixels,
-                            wanted * 5 / 2,
-                        )
-                    })
-                    .flatten();
-                let decode = held
-                    .filter(|p| *p != decode.pixels)
-                    .and_then(|p| png_decode::DecodePlan::new(header, (p.width, p.height)).ok())
-                    .filter(|p| p.peak_bytes() <= admission_budget)
-                    .unwrap_or(decode);
-                // No whole picture to share: one that a box clips to itself
-                // is decoded as the part the box shows (`crop`), unless the
-                // box has changed size under a part before.
-                let cut = (held.is_none() && !view.resized && *PARTS && !header.is_svg())
-                    .then_some(view.fit)
-                    .flatten()
-                    .and_then(|fit| crop::part(decode.natural(), decode.pixels, view.desired, fit))
-                    .and_then(|(x, y, pixels)| decode.part(x, y, pixels).ok());
-                let decode = cut.unwrap_or(decode);
+                let decode = demand::for_view(
+                    &self.backend.session,
+                    view,
+                    source,
+                    decode,
+                    admission_budget,
+                );
+                if upgrade.is_some_and(|(_, pixels)| !demand::sharper(decode.full(), pixels)) {
+                    continue;
+                }
                 let demand = Demand {
                     view: view.key,
                     key: RasterKey {
@@ -1015,17 +991,28 @@ impl Images {
                 if header.is_svg() {
                     self.backend.note_scale(source, decode.pixels, scale);
                 }
-                match self.backend.request(demand, false) {
-                    Ok(request) => {
+                let result = if upgrade.is_some() {
+                    self.backend.request_upgrade(demand, &mut spare)
+                } else {
+                    self.backend.request(demand, false).map(Some)
+                };
+                match result {
+                    Ok(None) => continue,
+                    Ok(Some(request)) => {
                         #[cfg(target_os = "macos")]
                         exact_ink::device::apple::trace_mark(c"image request", || source as f64);
-                        view.request = Some((request, decode.full()));
+                        if let Some((old, _)) = view.request.replace((request, decode.full())) {
+                            self.backend.forget(old);
+                        }
                         view.requested_for = view.desired;
                         view.requested_fit = view.object_fit;
                         view.requested_rendering = view.rendering;
                         view.requested_scale = scale;
                         view.part = !decode.crop.whole();
-                        view.downsized = admission_budget < SESSION_BYTES;
+                        view.upgrading = upgrade.is_some();
+                        view.downsized = admission_budget < SESSION_BYTES
+                            && plan_view(header, view, scale, SESSION_BYTES)
+                                .is_ok_and(|p| demand::sharper(p.pixels, decode.full()));
                         view.refusal = None;
                         // A picture the cache holds is ready as it is asked
                         // for: taken now, it is in this paint, not the next
