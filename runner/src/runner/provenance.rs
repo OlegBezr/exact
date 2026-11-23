@@ -189,6 +189,9 @@ pub(in crate::runner) struct Origins {
     /// A re-ask the device causes is being made: each resource asks under
     /// its own last ask's cause, or its waiting ask's.
     reasking: bool,
+    /// What `data_ready`'s answers arm (a task, a sequence, a mounted
+    /// component's task) takes, in a commit with no cause of its own.
+    arming: Option<Cause>,
     /// Each armed `then`'s cause, its answer's commit's, by mutation.
     thens: BTreeMap<usize, Cause>,
     /// The last invocation id given.
@@ -468,6 +471,91 @@ impl<D: DataSource> Runner<D> {
         let rank = |c: Cause| (c.origin, !grants(c) || self.persons(c));
         let least = if rank(b) < rank(a) { b } else { a };
         least.joined(a.causes.union(b.causes))
+    }
+
+    /// The cause of what `data_ready` arms (LLP 1133.023 D7a): its waiting
+    /// sends' causes and its stale resources' asks' (`cause_for` under the
+    /// device's re-ask), and no one's for a peer's store change. One they
+    /// all share is theirs, with all their causes. Several give no
+    /// invocation and no grant, but keep each one's rules: the most
+    /// restricted origin among them, and a call's if any is one.
+    pub(in crate::runner) fn arming_cause(
+        &self,
+        sends: impl Iterator<Item = Cause>,
+        stale: &[usize],
+        store_changed: bool,
+    ) -> Cause {
+        let asks = stale.iter().map(|i| self.reask_cause(*i));
+        let changed = store_changed.then(Cause::none);
+        let mut all = sends.chain(asks).chain(changed);
+        let Some(first) = all.next() else {
+            return Cause::none();
+        };
+        let same = |a: &Cause, b: &Cause| {
+            (a.origin, a.id, a.call, a.owned, a.data) == (b.origin, b.id, b.call, b.owned, b.data)
+        };
+        let (mut shared, mut mixed) = (first, false);
+        for c in all {
+            mixed |= !same(&shared, &c);
+            shared = Cause {
+                causes: shared.causes.union(c.causes),
+                call: shared.call || c.call,
+                data: shared.data || c.data,
+                ..shared
+            };
+        }
+        if !mixed {
+            return shared;
+        }
+        const MOST_RESTRICTED: [CallOrigin; 4] = [
+            CallOrigin::Action,
+            CallOrigin::Tool,
+            CallOrigin::Wake,
+            CallOrigin::Device,
+        ];
+        let origin = (MOST_RESTRICTED.into_iter())
+            .find(|o| shared.causes.has(*o))
+            .unwrap_or(CallOrigin::Device);
+        Cause {
+            origin,
+            id: 0,
+            owned: false,
+            causes: shared.causes.union(Cause::of(origin, 0, false).causes),
+            ..shared
+        }
+    }
+
+    /// The cause resource `i` is asked under in a device's re-ask with no
+    /// cause installed: its last ask's and its waiting ask's, else none.
+    fn reask_cause(&self, i: usize) -> Cause {
+        let o = &self.origins;
+        let asked = o.asked.get(&i).copied();
+        let waiting = o.deferred.get(&i).map(|(c, _)| *c);
+        match (asked, waiting) {
+            (Some(a), Some(w)) => self.least(a, w).unowned(),
+            (Some(c), None) | (None, Some(c)) => c.unowned(),
+            (None, None) => Cause::none(),
+        }
+    }
+
+    /// Run `f` with what it arms under `cause` where no cause is installed.
+    pub(in crate::runner) fn arming<T>(
+        &mut self,
+        cause: Cause,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let before = self.origins.arming.replace(cause);
+        let out = f(self);
+        self.origins.arming = before;
+        out
+    }
+
+    /// The cause a task, a timer or a sequence armed now keeps: the
+    /// commit's, else what `data_ready`'s answers arm, else none.
+    pub(in crate::runner) fn arms_under(&self) -> Cause {
+        (self.origins.current)
+            .or(self.origins.arming)
+            .unwrap_or(Cause::none())
     }
 
     /// Request `ticket` of `target`, in flight, is kept with the newer

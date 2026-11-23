@@ -808,10 +808,28 @@ impl<D: DataSource> Runner<D> {
             .iter_mut()
             .map(|row| &mut row.overlay)
             .for_each(|o| *o = None);
+        if self.unsent.is_empty()
+            && !change.any
+            && stale.is_empty()
+            && self.writes.records.is_empty()
+        {
+            return Ok(None);
+        }
+        // What the answers open (a task, a sequence, a mounted component's
+        // task) is the work of the sends and asks that waited: it keeps
+        // their cause (LLP 1133.023 D7a).
+        let sends = self.unsent.iter().map(|u| u.3);
+        let arming = self.arming_cause(sends, &stale, change.any);
+        self.arming(arming, |r| r.activate_with(stale, launch))
+    }
+
+    /// [`Self::activate`]'s commit, once something waited.
+    fn activate_with(
+        &mut self,
+        stale: Vec<usize>,
+        launch: Vec<usize>,
+    ) -> Result<Option<CommitReceipt>, RunnerError> {
         if self.unsent.is_empty() {
-            if !change.any && stale.is_empty() && self.writes.records.is_empty() {
-                return Ok(None);
-            }
             self.owe(&stale);
             self.launch = launch;
             return (self.reasking(|r| r.commit_again(stale, "data_ready"))).map(Some);

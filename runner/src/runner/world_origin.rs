@@ -9,6 +9,7 @@
 //! cannot start a device through the world's later emissions. The hosts
 //! carry the text unchanged.
 
+use super::provenance::Cause;
 use super::{CallOrigin, Command};
 use exact_plan::Value;
 
@@ -27,6 +28,23 @@ pub(super) fn unmark(text: &str) -> Option<(CallOrigin, &str)> {
         _ => CallOrigin::Device,
     };
     Some((origin, text))
+}
+
+/// The origin a world's posts from a commit of `cause` carry: the most
+/// restricted among its causes (LLP 1133.023 D7a), so a background action's
+/// or a tool's that joined a request the app asked is not lost. In order:
+/// an action (its foreground rule and a wake's commands), a call (LLP 1111
+/// D4a's command rules), a wake (its commands), the device.
+pub(super) fn mark_origin(cause: Cause) -> CallOrigin {
+    const MOST_RESTRICTED: [CallOrigin; 4] = [
+        CallOrigin::Action,
+        CallOrigin::Tool,
+        CallOrigin::Wake,
+        CallOrigin::Device,
+    ];
+    (MOST_RESTRICTED.into_iter())
+        .find(|o| cause.causes.has(*o))
+        .unwrap_or(CallOrigin::App)
 }
 
 /// Each `postMessage` to a canvas (two arguments: an iframe's carries a
@@ -50,6 +68,23 @@ pub(super) fn mark_world_posts(origin: CallOrigin, commands: &mut [Command]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A commit with several causes posts under the most restricted.
+    #[test]
+    fn a_mark_names_the_most_restricted_cause() {
+        let app = Cause::of(CallOrigin::App, 0, false);
+        let action = Cause::of(CallOrigin::Action, 3, true);
+        let tool = Cause::of(CallOrigin::Tool, 4, true);
+        assert_eq!(mark_origin(app), CallOrigin::App);
+        assert_eq!(mark_origin(app.joined(action.causes)), CallOrigin::Action);
+        assert_eq!(mark_origin(tool.joined(action.causes)), CallOrigin::Action);
+        assert_eq!(mark_origin(app.joined(tool.causes)), CallOrigin::Tool);
+        let device = Cause::none();
+        assert_eq!(mark_origin(tool.joined(device.causes)), CallOrigin::Tool);
+        let wake = Cause::of(CallOrigin::Wake, 5, false);
+        assert_eq!(mark_origin(device.joined(wake.causes)), CallOrigin::Wake);
+        assert_eq!(mark_origin(device), CallOrigin::Device);
+    }
 
     #[test]
     fn a_mark_reads_as_its_origin_and_never_as_the_apps() {

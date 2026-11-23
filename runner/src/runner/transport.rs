@@ -63,7 +63,7 @@ impl<D: DataSource> Runner<D> {
         self.audio.transport.pending = Some(seen);
         // What the gate read starts under the reading commit's cause, which
         // has been put back by the time the commit stands.
-        self.audio.staged = self.cause();
+        self.audio.staged = self.arms_under();
         Ok(())
     }
 

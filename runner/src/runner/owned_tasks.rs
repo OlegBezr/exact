@@ -106,7 +106,7 @@ impl<D: DataSource> Runner<D> {
     pub(super) fn arm_task(&mut self, i: usize, on: bool, key: Option<String>) {
         let row = self.timer_row(i);
         let (frame, interval) = (row.frame, row.interval_ms);
-        let cause = self.cause();
+        let cause = self.arms_under();
         let t = &mut self.timers[i];
         if !on {
             t.armed = false;

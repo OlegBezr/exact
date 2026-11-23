@@ -790,6 +790,14 @@ component App
         });
         r.fulfill(out[0].ticket, ok).unwrap();
         r.land_then();
-        assert_eq!(logs(&r).contains(refused), late, "late {late}: {}", logs(&r));
+        // Admitted, the substitute answers it.
+        let sent = "quick-actions.requestPinShortcut: NotSupportedError";
+        assert_eq!(logs(&r).contains(sent), !late, "late {late}: {}", logs(&r));
+        assert_eq!(
+            logs(&r).contains(refused),
+            late,
+            "late {late}: {}",
+            logs(&r)
+        );
     }
 }
