@@ -655,6 +655,10 @@ fn pinned_old_allocation_causes_downsize_and_real_visible_progress() {
     assert_eq!(image.as_ref().as_ref()[0], 71);
     assert!(images.stats().peak_bytes <= budget);
     drop(pinned);
+    // With room again, the box gets the whole picture it asked for.
+    images.sync(&k, &k.roots());
+    images.wait(SETTLED);
+    assert_eq!(images.bitmaps[&1].width(), 2048);
 }
 
 #[test]

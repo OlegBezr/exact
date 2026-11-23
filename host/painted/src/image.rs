@@ -118,6 +118,8 @@ struct View {
     resized: bool,
     /// The request is for a part of the picture.
     part: bool,
+    /// The request was shrunk to fit a short budget: smaller than its box wants.
+    downsized: bool,
     /// Retries this showing has made or joined for a URL whose download
     /// failed in a way asking again may mend, and when it next asks
     /// ([`RETRY_AFTER`]): from nothing whenever it leaves the screen or its
@@ -470,6 +472,7 @@ impl Images {
                 rendering: Default::default(),
                 resized: false,
                 part: false,
+                downsized: false,
                 retries: 0,
                 retry_at: None,
                 settled: false,
@@ -713,6 +716,8 @@ impl Images {
         }
         let mut reports = Vec::new();
         let scale = self.scale;
+        // What upgrades of shrunk pictures may still spend in this poll.
+        let mut spare = None;
         for (id, view) in &mut self.views {
             // (An `error` ends its source assignment: nothing more is asked.)
             if self.boot_visible_only && !view.visible
@@ -779,6 +784,7 @@ impl Images {
                     view.requested_rendering = view.rendering;
                     view.requested_scale = scale;
                     view.part = false;
+                    view.downsized = false;
                     view.refusal = None;
                     if let Some(lease) = self.backend.session.take_ready(request) {
                         if let Some(bitmap) = lease.payload::<Arc<Bitmap>>() {
@@ -928,8 +934,25 @@ impl Images {
                     && (view.requested_for != view.desired
                         || view.fit != Some(exact_kernel::ObjectFit::Cover));
                 view.resized |= recut;
+                // A picture shrunk to fit the budget, shown, is asked for whole
+                // once the budget has room for it, counting the cold pictures
+                // its decode would evict (pressure is often brief: a screen's
+                // pictures replacing the last one's).
+                let room = view.downsized
+                    && view.accepted == Some(request)
+                    && plan_view(header, view, scale, SESSION_BYTES).is_ok_and(|p| {
+                        let session = &self.backend.session;
+                        let spare = spare.get_or_insert_with(|| {
+                            session.available_bytes() + session.stats().cold_bytes
+                        });
+                        let fits = p.peak_bytes() <= *spare;
+                        if fits {
+                            *spare -= p.peak_bytes();
+                        }
+                        fits
+                    });
                 // A changed offered size replaces demand, retaining old pixels.
-                if recut || resize_changes_view(header, view, scale) {
+                if recut || room || resize_changes_view(header, view, scale) {
                     self.backend.cancel(request);
                     view.request = None;
                 }
@@ -1002,6 +1025,7 @@ impl Images {
                         view.requested_rendering = view.rendering;
                         view.requested_scale = scale;
                         view.part = !decode.crop.whole();
+                        view.downsized = admission_budget < SESSION_BYTES;
                         view.refusal = None;
                         // A picture the cache holds is ready as it is asked
                         // for: taken now, it is in this paint, not the next
