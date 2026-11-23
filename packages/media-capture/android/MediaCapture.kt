@@ -203,7 +203,9 @@ class MediaCaptureModule internal constructor(
                     if (t.muted) consumer.muted(t.muteReason ?: "idle")
                 }
                 // While a recognizer holds the microphone exclusively, a track stays idle (LLP 1133.012 D8).
-                origin == "app" && t.enabled && (!t.used || start) && !context.tracks.held("audio") -> activate(t)
+                // `press`: a control's press the runner admitted to start this capture (LLP 1126.004 D4), which
+                // the recorder checks is still live where it subscribes.
+                (origin == "app" || origin == "press") && t.enabled && (!t.used || start) && !context.tracks.held("audio") -> activate(t)
                 else -> consumer.muted(t.muteReason ?: "idle")
             }
         } catch (e: Throwable) {

@@ -604,7 +604,8 @@ app that runs one of its tools or opens one of its locations: `controls` in
 `app.json`, WidgetKit controls on Apple and Quick Settings tiles on
 Android. A press is the person's and enters as origin `action`; a recording
 control may start audio capture from a locked iPhone once that path is
-qualified on a device. Consumer: #710's app, which starts a voice recording
+qualified on a device, and on Android opens the app and records once it is
+in front. Consumer: #710's app, which starts a voice recording
 from the Lock Screen without opening. Take: none named; Charlie waives the trade. Still out
 (LLP 1126.004 §3): toggles, state providers, configurable controls, fixed
 tool arguments, a control's tool run in the extension, Live Activity

@@ -301,6 +301,14 @@ object Native {
      * raised with a person's origin (LLP 1133.004 D6); for a notification's action, only while the plan declares
      * [action], the action's record. On the host's thread. */
     @JvmStatic external fun activate(extension: String, event: String, args: String, action: String?)
+    /** A person's press of control [kind], installed with [digest] ([Controls], LLP 1126.004 D2): `{"call": id}`, or
+     * `{"error"}` for one the runner refuses outright. With [foreground] it is pressed from the app in front, which a
+     * tile opened for it. On the host's thread. */
+    @JvmStatic external fun press(kind: String, digest: String, foreground: Boolean, cold: Boolean, hidden: Boolean): String
+    /** Press [id] ends now: superseded, its app left the front, or the phone locked. On the host's thread. */
+    @JvmStatic external fun cancelPress(id: Long)
+    /** Whether press [id] still runs uncancelled within its bound. On the host's thread. */
+    @JvmStatic external fun pressLive(id: Long): Boolean
     /** A line for the session's journal. On the host's thread. */
     @JvmStatic external fun journal(line: String)
     /** The extensions the APK carries, one a line ([Extensions]); under the agent, told so unless the drive names them

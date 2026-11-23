@@ -902,6 +902,17 @@ internal object Exact {
         val o = owner
         if (o != null) { o.input(); o.call { Native.activate(extension, event, args, action) } } else Native.activate(extension, event, args, action)
     }
+    /** A control's press ([Controls]), as an input, on exact2's thread: its call's id, or null for one refused
+     * outright. */
+    fun press(kind: String, digest: String, foreground: Boolean, cold: Boolean, hidden: Boolean): Long? {
+        val o = owner ?: return null
+        o.input()
+        val reply = o.sync { Native.press(kind, digest, foreground, cold, hidden) }
+        return runCatching { JSONObject(reply) }.getOrNull()?.takeIf { it.has("call") }?.getLong("call")
+    }
+    fun cancelPress(id: Long) { owner?.call { Native.cancelPress(id) } }
+    /** Whether press [id] still runs: asked on exact2's thread and waited for. */
+    fun pressLive(id: Long): Boolean = owner?.sync(publish = false) { Native.pressLive(id) } ?: false
     /** A line for the session's journal, on exact2's thread, in order with what the extensions tell ([changed]). */
     fun journal(line: String) { val o = owner; if (o != null) o.hand(OwnerReplies.Handed.Journal(line)) else Native.journal(line) }
     /** A turn on exact2's thread, which asks for a display frame while a canvas input's samples wait. */

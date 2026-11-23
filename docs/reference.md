@@ -2332,13 +2332,15 @@ sign-in callback and the app's own document types are shared by both installs.
 A brand that ships as its own store app is another app, not a variant: one directory and manifest per brand,
 sharing its screens and data code through workspace packages ([one app under several brands](recipes/white-label.md)).
 
-## Controls (Control Center, the Lock Screen, the Action button)
+## Controls (Control Center, the Lock Screen, the Action button, Quick Settings)
 
 A control is a button the system draws outside the app; a press runs one of
 the app's tools or opens one of its locations (LLP 1126.004). iOS and iPadOS
 18 and later draw them: the build puts each offered control in the app's
 WidgetKit extension, where the person adds it to Control Center, the Lock
-Screen or the Action button. Android, the Mac and the watch do not yet.
+Screen or the Action button. Android draws each as a Quick Settings tile,
+which the person adds by editing Quick Settings. The Mac and the watch do not
+yet.
 
 Declare each in `app.json`:
 
@@ -2377,8 +2379,9 @@ and puts it in `compat.inputs.controls` and the compatibility id, so any
 change to a row, its tool's signature or its effects is a new binary. The
 web has no binary and its id does not move.
 
-1. A host other than iOS and iPadOS (the Mac, Android, the watch, tvOS,
-   visionOS, Linux, Windows): omitted, `control-host`.
+1. A host other than iOS, iPadOS and Android (the Mac, the watch, tvOS,
+   visionOS, Linux, Windows): omitted, `control-host`. Android's placement
+   is below.
 2. A build that packages no control extension: omitted, `control-metadata`.
    The Apple build on Linux is one, since only Xcode extracts a control's App
    Intents metadata; so is `--extensions` without `controls`.
@@ -2395,7 +2398,46 @@ web has no binary and its id does not move.
    iOS 18, as a `LiveActivityIntent`.
 7. Any other tool: omitted, `control-process`.
 
-An offered control is a `ControlWidgetButton` in the widget extension, which
+On Android every control is offered from Android 10 as a tile, but a tool
+known to start camera, screen or speech capture (`control-capture`). A press
+is the person's action (origin `action`) everywhere, and starts at most the
+two captures below:
+
+- a `url`: `"intent": "open"`. The tile opens the app at the location,
+  unlocking first; on a cold launch it is the launch location.
+- a tool whose reach can start or restart a capture (the microphone, a
+  recorder, or a capture its arguments decide): `"intent": "foreground"`. A
+  tile grants no microphone, so the tile opens the app, and the press runs
+  once the app is in front, unlocked, drawn and its data ready. While it
+  runs and the app shows, it may call `getUserMedia` for audio alone and
+  `startMediaRecorder`, which the microphone starts for; anything else it
+  or its tasks try is refused as for any background action, a camera,
+  speech recognition and every permission prompt included. With the
+  microphone's permission not yet granted, `getUserMedia` fails
+  `NotAllowedError`, and the app asks in its own UI. So does a Live
+  Activity the tool starts (`startActivity`), which Android shows as a
+  notification: with notifications off it fails, and the app asks with
+  `requestNotificationPermission()` (Recorder shows the request when a
+  press finds them off). The control needs `device.microphone`
+  (`grant-needs`); `device.microphone-background` keeps a take the person
+  leaves running. The press runs at once or not at all (`busy` with other
+  work running), and pressing another tile, leaving the app or the screen
+  turning off ends it. `always` does not record on a Lock Screen that holds
+  a credential: the press is refused there. The press is dropped if the app
+  is not ready within 20 seconds of the click.
+- any other tool: `"intent": "tool"`. The press runs where it is, in a
+  session booted with no view if none shows. On a Lock Screen that holds a
+  credential, `required` and `local` ask for it and then press, leaving the
+  person where they were; a swipe lock, or a keyguard Smart Lock trusts,
+  asks for nothing. `always` runs there.
+
+A tile is the system's, in its inactive appearance, with the row's `title`,
+its `description` beneath, and the Material glyph of its `symbol` (a `.fill`
+name without one takes its outline's; with none at all, the app's icon or
+the platform's default one). Its service is named by the control's kind,
+so a placed tile survives reordering the rows.
+
+On iOS an offered control is a `ControlWidgetButton` in the widget extension, which
 an app with controls and no widgets or Live Activities also gets, linking no
 Exact runtime. Its WidgetKit kind is `<app id>.control.<kind>`. Its intent is
 compiled into both the app and the extension and is not discoverable, so
@@ -2408,7 +2450,9 @@ extension's copy refuses without running anything.
 A press enters only through a host's native entry, `Runner::press_control`,
 with the compiled control's kind and digest; on Apple, the tool door's
 `exact_tool` export takes it as op `press`, and the app's generated intent
-calls `ExactTools.press`. It is for tool controls (a host opens a URL control
+calls `ExactTools.press`; on Android, the tile's `onClick` calls
+`Native.press`. A tile that opens the app names a one-use record it left in
+the app's process, so a replayed or stale launch presses nothing. It is for tool controls (a host opens a URL control
 itself). The runner runs the tool as the person's action
 (origin `action`), refused `unavailable` when the installed control's
 digest is not the plan's, and `busy` while the same control's press waits or
@@ -2423,6 +2467,14 @@ web, which compiles no control, says `absent`:
 
 ```
 bun scripts/agent.mjs ios --app <app> "state controls"
+```
+
+On an Android device or emulator, add a tile and press it from adb
+(`<id>/dev.exact.app.ExactControl_<kind in UTF-8 hex>`):
+
+```
+adb shell cmd statusbar add-tile <id>/dev.exact.app.ExactControl_7265636f7264
+adb shell cmd statusbar click-tile <id>/dev.exact.app.ExactControl_7265636f7264
 ```
 
 A qualification build (LLP 1126.004 §6d) offers on iOS what items 5 and 7

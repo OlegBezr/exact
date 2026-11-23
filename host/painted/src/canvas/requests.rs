@@ -233,6 +233,53 @@ impl<D: DataSource + Default> CanvasHost<D> {
         self.force = true;
     }
 
+    /// A person's press of the compiled control `kind`, installed with
+    /// `digest`: a Quick Settings tile's, or with `foreground` the app's in
+    /// front that the tile opened (`Native.press`, LLP 1126.004 D2, D5).
+    /// `{"call": id}`, or `{"error"}`.
+    pub fn press_control(
+        &mut self,
+        kind: &str,
+        digest: &str,
+        foreground: bool,
+        cold: bool,
+        hidden: bool,
+    ) -> String {
+        let how = exact_runner::CallHow {
+            door: "android".into(),
+            cold,
+            hidden,
+            digest: None,
+            foreground,
+        };
+        let runner = self.p.host_mut().runner_mut();
+        let reply = match runner.press_control(kind, digest, how) {
+            Ok(id) => serde_json::json!({ "call": id }),
+            Err(e) => {
+                runner.log(format!("control:{kind}: {e}"));
+                serde_json::json!({ "error": e })
+            }
+        };
+        self.force = true;
+        reply.to_string()
+    }
+
+    /// Press `id` ends: the tile that started it was superseded, the app it
+    /// opened left the front, or the phone locked (`Native.cancelPress`).
+    pub fn cancel_press(&mut self, id: u64) {
+        let request = serde_json::json!({ "op": "cancel", "id": id }).to_string();
+        let runner = self.p.host_mut().runner_mut();
+        if let Some(Err(e)) = runner.call_agent("cancel", &request) {
+            runner.log(format!("control: press {id}: {e}"));
+        }
+        self.force = true;
+    }
+
+    /// Whether press `id` still runs (`Native.pressLive`).
+    pub fn press_live(&self, id: u64) -> bool {
+        self.p.host().runner().press_live(id)
+    }
+
     /// A line the reader journals (`Native.journal`).
     pub fn journal(&mut self, line: String) {
         self.p.host_mut().runner_mut().log(line);

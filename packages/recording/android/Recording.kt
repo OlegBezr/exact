@@ -101,6 +101,9 @@ class RecordingModule(context: ExtensionContext) : ExactExtension(context) {
         if (entry?.kind != "stream") return error("NotFoundError")
         if (args.has("maxDuration") && (!args.optDouble("maxDuration").isFinite() || args.optDouble("maxDuration") <= 0)) return error("TypeError")
         val videos = entry.tracks.filter { context.tracks.lookup(it)?.kind == "video" }
+        // A control's press records audio alone, only while the press runs and an activity shows the app, which
+        // Android needs to hand it the microphone (LLP 1126.004 D4, D5).
+        if (context.origin == "press" && (videos.isNotEmpty() || !context.visible || !context.pressLive())) return error("NotAllowedError")
         if (videos.isNotEmpty()) {
             if (entry.tracks.size != 1) return error("NotSupportedError")
             val type = args.optString("mimeType").ifEmpty { "video/mp4" }

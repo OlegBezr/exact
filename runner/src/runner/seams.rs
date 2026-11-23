@@ -559,6 +559,7 @@ impl<D: DataSource> Runner<D> {
                     cold: true,
                     hidden: true,
                     digest: None,
+                    foreground: false,
                 };
                 self.log(format!("launch --call ({tool})"));
                 let id = self.call_tool(tool, args.trim(), how);
@@ -575,6 +576,7 @@ impl<D: DataSource> Runner<D> {
                     cold: v["cold"] == true,
                     hidden: v["hidden"] == true,
                     digest: v["digest"].as_str().map(str::to_owned),
+                    foreground: false,
                 };
                 let id = self.call_tool(&tool, &args, how);
                 Some(

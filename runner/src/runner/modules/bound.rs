@@ -247,6 +247,11 @@ impl<D: DataSource> Runner<D> {
             let press =
                 origin == super::CallOrigin::Action && self.press_starts_audio(row, &args, cause);
             body["origin"] = json!(if press { "press" } else { origin.word() });
+            // Which press, so a host can ask whether it still runs where it
+            // acquires the device.
+            if press {
+                body["press"] = json!(cause.id);
+            }
             // A call not the app's that would ask (LLP 1133.002 D12): the
             // host reads the status first and refuses it while `prompt`,
             // since only the implementation knows the platform's state.

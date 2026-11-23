@@ -272,6 +272,15 @@ class ExtensionContext internal constructor(
     var foreground = true
         internal set
 
+    /** The control's press a `press` call is the capture of (LLP 1126.004 D4), read at [ExactExtension.later]'s
+     * entry; null for any other call. */
+    var press: Long? = null
+        internal set
+
+    /** Whether that press still runs, asked of the runner where the capture acquires the device: a call can wait on
+     * the main thread past the press's end. */
+    fun pressLive(): Boolean = press?.let { Exact.pressLive(it) } == true
+
     /** The session's clock, ms: the agent's under the agent (LLP 1133.009 D10 item 2). */
     fun now(): Double = Native.now()
 
@@ -366,9 +375,11 @@ class ExtensionContext internal constructor(
      * thread: when the result comes, or when the activity resumes without it (a result lost to recreation, LLP 1133.002
      * D9). Overlapping requests queue in order; identical permission sets share a result. [done] receives only the
      * names the platform answered. An empty set means no result, so callers must not record a denial. With no
-     * activity in front and no request pending, nothing is asked and [done] runs at once.
+     * activity in front and no request pending, nothing is asked and [done] runs at once, as it does for a call that is
+     * not the app's own ([origin]): only the person's act in the app asks (LLP 1133.002 D12).
      */
-    fun requestPermissions(permissions: Array<String>, done: (Set<String>) -> Unit) = Extensions.ask(permissions, done)
+    fun requestPermissions(permissions: Array<String>, done: (Set<String>) -> Unit) =
+        if (origin != "app") done(emptySet()) else Extensions.ask(permissions, done)
 
     /**
      * Runtime permission [name]'s state, from the one history every module reads (LLP 1133.008 D8 item 7): `granted`;
@@ -655,11 +666,25 @@ internal object Extensions {
                     reply(JSONObject())
                 }
                 declared.isNotEmpty() -> {
-                    extension.context.origin = request.optString("origin").ifEmpty { "app" }
-                    extension.context.authority = request.optString("authority")
-                    extension.context.userActivation = request.optBoolean("userActivation")
-                    extension.context.request = if (request.has("request")) request.getInt("request") else null
-                    extension.later(declared, request.optJSONObject("args") ?: JSONObject(), request.opt("preferred"), reply)
+                    val call = {
+                        extension.context.origin = request.optString("origin").ifEmpty { "app" }
+                        extension.context.authority = request.optString("authority")
+                        extension.context.userActivation = request.optBoolean("userActivation")
+                        extension.context.press = if (request.has("press")) request.getLong("press") else null
+                        extension.context.request = if (request.has("request")) request.getInt("request") else null
+                        extension.later(declared, request.optJSONObject("args") ?: JSONObject(), request.opt("preferred"), reply)
+                    }
+                    // A call that would ask and is no person's in-app act (LLP 1133.002 D12): refused while the
+                    // implementation's own status could lead to a dialog, as Apple's host refuses it.
+                    val admit = request.optJSONObject("admit")
+                    if (admit == null) call()
+                    else extension.later(admit.getString("status"), JSONObject(), null) { status ->
+                        // A missing status, `prompt`, and Android's `denied` (which asks again until the person says
+                        // not to) may each lead to a dialog; any other lets the call run.
+                        val state = status.opt(admit.optString("field")) as? String
+                        if (!state.isNullOrEmpty() && state != "prompt" && state != "denied") call()
+                        else reply(JSONObject().put("error", admit.optString("denied").ifEmpty { "NotAllowedError" }).put("message", "person-required"))
+                    }
                 }
                 request.has("preferred") -> {
                     request.optJSONObject("permissions")?.let { extension.permissions(it) }
