@@ -252,7 +252,15 @@ extension NavigationHost {
                 // PROTO (safe-area design r2 §2.1): the bottom clearance is the part of the inset the block still overlaps
                 // (a block the keyboard ends above the bars has none), measured from the block, not the root laid out inside it.
                 let block = presenter.owners.block(in: c.surface)
-                let reached = block.maxY - (c.surface.bounds.maxY - safe.bottom)
+                var reached = block.maxY - (c.surface.bounds.maxY - safe.bottom)
+                // Each side on the device's pixel grid, as the layout it moves is: a side measured from a box laid out
+                // in the side last told carries that layout's rounding back, so unrounded it never settles. A sidebar
+                // 495⅔ points wide at a partial fold told a side an ulp smaller every pass, each a change that laid
+                // the route out again, and the app froze.
+                let scale = c.surface.traitCollection.displayScale
+                safe = UIEdgeInsets(top: PixelGrid.round(safe.top, scale: scale), left: PixelGrid.round(safe.left, scale: scale),
+                                    bottom: PixelGrid.round(safe.bottom, scale: scale), right: PixelGrid.round(safe.right, scale: scale))
+                reached = PixelGrid.round(reached, scale: scale)
                 // A transparent bar covers nothing of the route's top, scroller or not: the content starts under it.
                 // PROTO (safe-area design r2 §2.3): a title's collapsing scroller and an arrangement's top pane leave the
                 // route below the bar, and reach the edge (`SafeReachIOS`), where UIKit insets them.
