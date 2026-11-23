@@ -108,6 +108,7 @@ impl std::fmt::Debug for RasterLease {
 
 struct Control {
     cancelled: AtomicBool,
+    upgrade: bool,
 }
 enum Phase {
     Queued { budget: bool },
@@ -120,6 +121,7 @@ struct Entry {
     demand: Demand,
     requests: BTreeSet<RequestId>,
     phase: Phase,
+    upgrade: bool,
     touched: u64,
 }
 impl Entry {
@@ -135,6 +137,7 @@ impl Entry {
 }
 struct Binding {
     demand: Demand,
+    upgrade: bool,
 }
 struct SessionState {
     account: Arc<BudgetAccount>,
@@ -313,25 +316,41 @@ impl Gate {
                     .iter()
                     .filter(|(_, e)| matches!(e.phase, Phase::Queued { .. }))
                     .map(|(key, e)| {
-                        let priority = e
+                        let (upgrade, priority) = e
                             .requests
                             .iter()
                             .filter_map(|r| session.requests.get(r))
-                            .map(|b| b.demand.priority)
+                            .map(|b| (b.upgrade, b.demand.priority))
                             .min()
-                            .unwrap_or(Priority::Overscan);
-                        (priority, e.id, *key)
+                            .unwrap_or((true, Priority::Overscan));
+                        (upgrade, priority, e.id, *key)
                     })
                     .collect();
                 candidates.sort_unstable();
-                for (_, _, key) in candidates {
+                let ordinary_queued = candidates.first().is_some_and(|(upgrade, ..)| !upgrade);
+                for (upgrade, _, _, key) in candidates {
                     let cost = session.entries[&key].demand.cost;
+                    let peak = cost.peak().unwrap();
+                    if upgrade {
+                        if ordinary_queued || !session.active.is_empty() {
+                            break;
+                        }
+                        let (after_eviction, after_release) = session.account.upgrade_headroom();
+                        if peak > after_eviction {
+                            session.entries.get_mut(&key).unwrap().phase = if peak > after_release {
+                                Phase::Failed(Refusal::Budget)
+                            } else {
+                                Phase::Queued { budget: true }
+                            };
+                            continue;
+                        }
+                    }
                     let available = session.account.available();
-                    if cost.peak().unwrap() > available {
+                    if peak > available {
                         // The least recently used cold entries, only until
                         // their bytes cover the shortfall: the rest stay
                         // cached for the rows that show them again.
-                        let mut short = cost.peak().unwrap() - available;
+                        let mut short = peak - available;
                         for cold in session.cold_keys() {
                             if short == 0 {
                                 break;
@@ -358,6 +377,7 @@ impl Gate {
                         .then(|| session.account.reserve(cost.scratch_bytes).unwrap());
                     let control = Arc::new(Control {
                         cancelled: AtomicBool::new(false),
+                        upgrade: session.entries[&key].upgrade,
                     });
                     let entry = session.entries.get_mut(&key).unwrap();
                     entry.phase = Phase::Decoding(control.clone());
@@ -504,7 +524,7 @@ pub struct RasterSession {
 enum Subscription {
     Decode,
     Cached,
-    Existing,
+    Upgrade,
 }
 impl std::fmt::Debug for RasterSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -527,10 +547,10 @@ impl RasterSession {
     pub fn request_cached(&self, demand: Demand) -> Result<RequestId, Refusal> {
         self.subscribe(demand, Subscription::Cached)
     }
-    /// Share a matching cached image or a decode that has reserved its bytes.
-    /// A miss leaves the view's demand in place and returns `Stale`.
-    pub fn request_existing(&self, demand: Demand) -> Result<RequestId, Refusal> {
-        self.subscribe(demand, Subscription::Existing)
+    /// Sharpen a displayed image when ordinary requests and the budget allow.
+    /// A refusal leaves the view's existing demand intact.
+    pub fn request_upgrade(&self, demand: Demand) -> Result<RequestId, Refusal> {
+        self.subscribe(demand, Subscription::Upgrade)
     }
     fn subscribe(&self, demand: Demand, subscription: Subscription) -> Result<RequestId, Refusal> {
         validate(demand)?;
@@ -547,20 +567,48 @@ impl RasterSession {
             return Err(Refusal::Paused);
         }
         let entry = session.entries.get(&demand.key);
-        let found = match subscription {
-            Subscription::Decode => true,
-            Subscription::Cached => entry.is_some_and(|e| matches!(e.phase, Phase::Ready { .. })),
-            Subscription::Existing => {
-                entry.is_some_and(|e| matches!(e.phase, Phase::Ready { .. } | Phase::Decoding(_)))
-            }
-        };
-        if !found {
+        if matches!(subscription, Subscription::Cached)
+            && !entry.is_some_and(|e| matches!(e.phase, Phase::Ready { .. }))
+        {
             return Err(Refusal::Stale);
         }
-        if demand.cost.peak()? > session.account.budget() {
+        let peak = demand.cost.peak()?;
+        if peak > session.account.budget() {
             return Err(Refusal::TooLarge);
         }
         let previous = session.views.get(&demand.view).copied();
+        let upgrade = matches!(subscription, Subscription::Upgrade);
+        if upgrade {
+            if previous.is_none_or(|id| {
+                !matches!(
+                    session.entries[&session.requests[&id].demand.key].phase,
+                    Phase::Ready { .. }
+                )
+            }) {
+                return Err(Refusal::Stale);
+            }
+            match entry.map(|e| (&e.phase, e.upgrade)) {
+                Some((Phase::Failed(_), _) | (Phase::Queued { .. }, false)) => {
+                    return Err(Refusal::Stale);
+                }
+                _ => {}
+            }
+            // Joining the same queued upgrade and sharing a reserved decode
+            // need no more bytes. A cold cache hit can pin more bytes.
+            if entry.is_none_or(SessionState::is_cold)
+                && session
+                    .entries
+                    .values()
+                    .any(|e| matches!(e.phase, Phase::Queued { .. }))
+            {
+                return Err(Refusal::Budget);
+            }
+            if entry.is_none()
+                && (!session.active.is_empty() || peak > session.account.upgrade_headroom().0)
+            {
+                return Err(Refusal::Budget);
+            }
+        }
         if let Some(entry) = entry {
             if entry.demand.metadata != demand.metadata || entry.demand.cost != demand.cost {
                 return Err(Refusal::ConflictingMetadata);
@@ -568,7 +616,7 @@ impl RasterSession {
         }
         if let Some(id) = previous {
             if session.requests[&id].demand.key == demand.key {
-                session.requests.get_mut(&id).unwrap().demand = demand;
+                session.requests.insert(id, Binding { demand, upgrade });
                 drop(state);
                 self.owner.gate.inner.wake.notify();
                 return Ok(id);
@@ -591,7 +639,10 @@ impl RasterSession {
             + usize::from(detached_previous)
             - usize::from(previous.is_some())
             - usize::from(reattached);
-        if subscriptions > SUBSCRIPTIONS {
+        // A detached thumbnail must leave room for the next first load.
+        if subscriptions > SUBSCRIPTIONS
+            || (upgrade && detached_previous && !reattached && subscriptions == SUBSCRIPTIONS)
+        {
             return Err(Refusal::SubscriberLimit);
         }
         if !session.entries.contains_key(&demand.key) {
@@ -628,11 +679,12 @@ impl RasterSession {
                     demand,
                     requests: BTreeSet::from([id]),
                     phase: Phase::Queued { budget: false },
+                    upgrade,
                     touched: identity(),
                 },
             );
         }
-        session.requests.insert(id, Binding { demand });
+        session.requests.insert(id, Binding { demand, upgrade });
         session.views.insert(demand.view, id);
         enforce_cold_limit(session, &mut garbage);
         drop(state);
@@ -935,6 +987,7 @@ impl RasterSession {
                     image,
                     delivery: false,
                 },
+                upgrade: false,
                 touched: identity(),
             },
         );
@@ -960,11 +1013,6 @@ impl RasterSession {
     /// Bytes available for a new allocation at the session's current budget.
     pub fn available_bytes(&self) -> u64 {
         self.owner.account.available()
-    }
-    /// Headroom if cold entries are evicted. Native owners may keep their
-    /// allocations alive after eviction.
-    pub fn available_after_eviction(&self) -> u64 {
-        self.owner.account.available_after_eviction()
     }
     /// Reserve a distinct allocation before an upload/conversion CPU copy.
     pub fn reserve_allocation(&self, bytes: u64) -> Result<AllocationReservation, Refusal> {
@@ -1041,6 +1089,10 @@ impl DecodePermit {
     }
     pub fn is_cancelled(&self) -> bool {
         self.control.cancelled.load(Ordering::Acquire)
+    }
+    /// Whether this decode started as an upgrade of already displayed pixels.
+    pub fn is_upgrade(&self) -> bool {
+        self.control.upgrade
     }
     pub fn allocation_charge(&self) -> AllocationCharge {
         self.output.as_ref().unwrap().charge()

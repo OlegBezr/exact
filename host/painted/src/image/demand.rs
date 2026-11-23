@@ -1,5 +1,9 @@
-use super::{crop, png_decode::DecodePlan, View, PARTS};
-use exact_raster::{PixelSize, RasterSession};
+use super::{
+    crop,
+    png_decode::{DecodePlan, Header},
+    View, PARTS,
+};
+use exact_raster::{Demand, PixelSize, Priority, RasterSession};
 
 /// A raster already decoded (or decoding) a little larger serves this view
 /// too. Otherwise a box that clips the picture can ask for its visible part.
@@ -40,4 +44,29 @@ pub(super) fn for_view(
 
 pub(super) fn sharper(next: PixelSize, current: PixelSize) -> bool {
     next != current && next.width >= current.width && next.height >= current.height
+}
+
+/// Reattach a failed upgrade's still-displayed thumbnail.
+pub(super) fn keep_thumbnail(view: &mut View, session: &RasterSession, header: Header) -> bool {
+    let Some(lease) = &view.lease else {
+        return false;
+    };
+    let key = lease.key();
+    let Ok(plan) = DecodePlan::of_key(header, &key) else {
+        return false;
+    };
+    let demand = Demand {
+        view: view.key,
+        key,
+        metadata: lease.metadata(),
+        cost: plan.cost,
+        priority: Priority::Visible,
+    };
+    let Ok(request) = session.request_cached(demand) else {
+        return false;
+    };
+    view.request = Some((request, plan.full()));
+    view.accepted = Some(request);
+    view.part = !key.crop.whole();
+    true
 }

@@ -54,10 +54,15 @@ impl BudgetAccount {
         self.budget()
             .saturating_sub(s.resident_bytes + s.reserved_bytes)
     }
-    pub fn available_after_eviction(&self) -> u64 {
+    /// Headroom after dropping cold entries, then after their remaining owners release them.
+    pub fn upgrade_headroom(&self) -> (u64, u64) {
         let s = self.usage.lock().unwrap();
-        self.budget()
-            .saturating_sub(s.resident_bytes - s.cold_bytes + s.reserved_bytes)
+        let budget = self.budget();
+        let held = s.pinned_bytes + s.reserved_bytes;
+        (
+            budget.saturating_sub(held + s.retiring_bytes),
+            budget.saturating_sub(held),
+        )
     }
     pub fn budget(&self) -> u64 {
         self.budget.load(Ordering::Relaxed)

@@ -12,7 +12,7 @@ const SETTLED: Duration = Duration::from_secs(60);
 // Running them together can leave each holding one while waiting for the other.
 static BOTH_WORKERS: Mutex<()> = Mutex::new(());
 
-fn encoded(w: u32, h: u32, color: [u8; 4]) -> Arc<[u8]> {
+pub(super) fn encoded(w: u32, h: u32, color: [u8; 4]) -> Arc<[u8]> {
     let mut data = Vec::new();
     let mut encoder = png::Encoder::new(&mut data, w, h);
     encoder.set_color(png::ColorType::Rgba);
@@ -253,7 +253,7 @@ fn http_images_share_a_download_without_blocking_local_images() {
         Some(path)
     );
 }
-fn kernel(count: u32) -> Kernel {
+pub(super) fn kernel(count: u32) -> Kernel {
     let mut k = Kernel::with_monospace();
     let mut ops = Vec::new();
     for id in 1..=count {
@@ -698,32 +698,6 @@ fn an_upgrade_waits_with_its_thumbnail_when_cold_pixels_are_still_held() {
     images.wait(SETTLED);
     assert_eq!(images.bitmaps[&2].width(), 1024);
     assert_eq!(images.load_events.len(), 1);
-}
-
-#[test]
-fn distinct_upgrades_spend_cold_headroom_once_per_poll() {
-    let mut images = square_images();
-    let k = kernel(3);
-    images.sync(&k, &[1]);
-    images.wait(SETTLED);
-    let session = images.backend.session.clone();
-    let _pressure = session.reserve_allocation(24 * MIB).unwrap();
-    images.sync(&k, &[1, 2]);
-    images.wait(SETTLED);
-    images.sync(&k, &[1, 2, 3]);
-    images.wait(SETTLED);
-    assert_eq!(images.bitmaps[&2].width(), 512);
-    assert_eq!(images.bitmaps[&3].width(), 512);
-    let second = images.views[&3].request;
-
-    assert_eq!(session.available_bytes(), 2 * MIB);
-    images.sync(&k, &[2, 3]);
-    assert_eq!(images.views[&2].request.unwrap().1.width, 1024);
-    assert_eq!(images.views[&3].request, second);
-    images.wait_until(SETTLED, |images| images.bitmaps[&2].width() == 1024);
-    assert_eq!(images.bitmaps[&2].width(), 1024);
-    assert_eq!(images.bitmaps[&3].width(), 512);
-    assert!(images.stats().evicted > 0);
 }
 
 #[test]

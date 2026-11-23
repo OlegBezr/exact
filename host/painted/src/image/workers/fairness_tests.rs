@@ -1,5 +1,7 @@
 //! Deterministic turns of the real worker loop, without process-pool competitors.
 use super::*;
+use crate::image::{control_tests, Images};
+use exact_raster::{DecodeCost, Metadata, PixelSize, RequestStatus};
 use exact_raster::{Demand, Priority, RasterKey, ViewKey};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -16,6 +18,182 @@ fn pixels() -> Arc<[u8]> {
     let mut pixmap = tiny_skia::Pixmap::new(3, 3).unwrap();
     pixmap.fill(tiny_skia::Color::WHITE);
     pixmap.encode_png().unwrap().into()
+}
+
+const MIB: u64 = 1024 * 1024;
+
+fn square_images(workers: &Workers) -> Images {
+    let bytes = control_tests::encoded(1024, 1024, [71, 80, 90, 255]);
+    let assets = Assets::selected(
+        Default::default(),
+        Arc::new(move |_| Ok(Some(bytes.clone()))),
+    );
+    Images::make(assets, Backend::with_downloads(workers, None))
+}
+
+fn prepare(images: &mut Images, k: &exact_kernel::Kernel, visible: &[u32]) {
+    images.sync(k, visible);
+    while images.backend.prepare() {}
+    images.poll();
+}
+
+fn settle(workers: &Workers, images: &mut Images) {
+    while let Some(permit) = workers.gate.next_decode() {
+        workers.complete(permit);
+        images.poll();
+    }
+    assert!(!images.pending());
+}
+
+fn pixel(view: u64, source: u64) -> Demand {
+    let pixels = PixelSize {
+        width: 1,
+        height: 1,
+    };
+    Demand {
+        view: ViewKey {
+            view,
+            generation: 0,
+        },
+        key: RasterKey {
+            source,
+            generation: 0,
+            pixels,
+            variant: 1,
+            crop: Default::default(),
+        },
+        metadata: Metadata {
+            natural: pixels,
+            encoded_bytes: 4,
+            header_bytes: 4,
+        },
+        cost: DecodeCost::checked(4, 1, 0, 0).unwrap(),
+        priority: Priority::Visible,
+    }
+}
+
+#[test]
+fn distinct_upgrades_do_not_spend_cold_headroom_again_in_the_next_poll() {
+    let workers = workers();
+    let mut images = square_images(&workers);
+    let k = control_tests::kernel(3);
+    prepare(&mut images, &k, &[1]);
+    settle(&workers, &mut images);
+    let session = images.backend.session.clone();
+    let _pressure = session.reserve_allocation(24 * MIB).unwrap();
+    for visible in [&[1, 2][..], &[1, 2, 3]] {
+        prepare(&mut images, &k, visible);
+        assert!(workers.gate.next_decode().is_none());
+        images.poll();
+        settle(&workers, &mut images);
+    }
+    assert_eq!(images.bitmaps[&2].width(), 512);
+    assert_eq!(images.bitmaps[&3].width(), 512);
+    let second = images.views[&3].request;
+    assert_eq!(session.available_bytes(), 2 * MIB);
+
+    let blocker = workers.gate.session();
+    blocker.request(pixel(1, 1)).unwrap();
+    blocker.request(pixel(2, 2)).unwrap();
+    let held = [
+        workers.gate.next_decode().unwrap(),
+        workers.gate.next_decode().unwrap(),
+    ];
+    images.sync(&k, &[2, 3]);
+    let upgrade = images.views[&2].request.unwrap();
+    assert_eq!(upgrade.1.width, 1024);
+    assert_eq!(session.status(upgrade.0), Some(RequestStatus::Queued));
+    assert_eq!(images.views[&3].request, second);
+    images.poll();
+    assert_eq!(
+        images.views[&3].request, second,
+        "both worker slots are still held"
+    );
+
+    drop(held);
+    settle(&workers, &mut images);
+    assert_eq!(images.bitmaps[&2].width(), 1024);
+    assert_eq!(images.bitmaps[&3].width(), 512);
+    assert_eq!(images.views[&3].request, second);
+    assert!(images.stats().evicted > 0);
+}
+
+#[test]
+fn a_first_load_gets_a_budget_wake_while_an_upgrade_waits() {
+    let workers = workers();
+    let mut images = square_images(&workers);
+    let k = control_tests::kernel(3);
+    prepare(&mut images, &k, &[1]);
+    settle(&workers, &mut images);
+    let session = images.backend.session.clone();
+    let held = images.bitmaps[&1].clone();
+    let _pressure = session.reserve_allocation(24 * MIB + MIB / 2).unwrap();
+    prepare(&mut images, &k, &[1, 2]);
+    assert!(workers.gate.next_decode().is_none());
+    images.poll();
+    settle(&workers, &mut images);
+    let thumbnail = images.bitmaps[&2].clone();
+
+    images.sync(&k, &[2]);
+    let upgrade = images.views[&2].request.unwrap().0;
+    assert!(workers.gate.next_decode().is_none());
+    assert_eq!(session.status(upgrade), Some(RequestStatus::WaitingBudget));
+    images.backend.notify_budget_wait();
+    prepare(&mut images, &k, &[2, 3]);
+    let first = images.views[&3].request.unwrap().0;
+    let seen = images.revision();
+    assert!(workers.gate.next_decode().is_none());
+    assert_eq!(session.status(first), Some(RequestStatus::WaitingBudget));
+    assert_eq!(session.status(upgrade), Some(RequestStatus::WaitingBudget));
+    images.backend.notify_budget_wait();
+    assert!(
+        images.revision() > seen,
+        "the host must be woken before polling"
+    );
+
+    images.poll();
+    let permit = workers.gate.next_decode().unwrap();
+    workers.complete(permit);
+    images.poll();
+    assert_eq!(images.bitmaps[&3].width(), 512);
+    assert!(Arc::ptr_eq(&images.bitmaps[&2], &thumbnail));
+    drop(held);
+    settle(&workers, &mut images);
+}
+
+#[test]
+fn an_upgrade_leaves_the_last_subscription_for_a_first_load() {
+    let workers = workers();
+    let mut images = square_images(&workers);
+    let k = control_tests::kernel(2);
+    let session = images.backend.session.clone();
+    let pressure = session.reserve_allocation(29 * MIB).unwrap();
+    prepare(&mut images, &k, &[1]);
+    assert!(workers.gate.next_decode().is_none());
+    images.poll();
+    settle(&workers, &mut images);
+    let thumbnail = images.views[&1].request;
+    assert_eq!(images.bitmaps[&1].width(), 512);
+
+    let filler = session.request(pixel(1, 1)).unwrap();
+    workers
+        .gate
+        .next_decode()
+        .unwrap()
+        .complete((), ResidentBytes { output: 4, copy: 0 })
+        .unwrap();
+    assert!(session.take_ready(filler).is_some());
+    for view in 2..(SUBSCRIPTIONS - 1) as u64 {
+        session.request_cached(pixel(view, 1)).unwrap();
+    }
+    assert_eq!(session.stats().subscribers, SUBSCRIPTIONS - 1);
+    drop(pressure);
+    images.poll();
+    prepare(&mut images, &k, &[1, 2]);
+    assert_eq!(images.views[&2].refusal, None);
+    assert_eq!(images.views[&1].request, thumbnail);
+    settle(&workers, &mut images);
+    assert_eq!(images.bitmaps[&2].width(), 1024);
 }
 struct Known {
     backend: Arc<Backend>,

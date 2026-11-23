@@ -473,6 +473,40 @@ fn images() -> Images {
 }
 
 #[test]
+fn a_failed_upgrade_keeps_the_download_and_loads_again_after_scrolling_back() {
+    let bytes = png(1024, 1024, [42, 80, 90, 255]);
+    let origin = serve(move |_, _| Answer::Body(bytes.clone()));
+    let k = kernel(&format!("{origin}/photo.png"));
+    let mut images = self::images();
+    let mib = 1024 * 1024;
+    let pressure = images.backend.session.reserve_allocation(29 * mib).unwrap();
+    images.sync(&k, &[1]);
+    images.wait(SETTLED);
+    let thumbnail = images.bitmaps[&1].clone();
+    assert_eq!(thumbnail.width(), 512);
+    let source = images.views[&1].source_id.as_ref().unwrap().clone();
+    let path = source.file().unwrap();
+    let held = path.with_extension("held");
+    std::fs::rename(&path, &held).unwrap();
+    drop(pressure);
+    images.poll();
+    assert_eq!(images.views[&1].request.unwrap().1.width, 1024);
+    images.wait(SETTLED);
+    std::fs::rename(held, &path).unwrap();
+    assert!(Arc::ptr_eq(&images.bitmaps[&1], &thumbnail));
+    drop(thumbnail);
+
+    images.sync_visible(&k, &[1], 1., |_| false);
+    assert!(images.bitmaps.is_empty());
+    images.sync(&k, &[1]);
+    images.wait(SETTLED);
+    assert_eq!(images.bitmaps.get(&1).map(|b| b.width()), Some(1024));
+    assert_eq!(source.file(), Some(path));
+    assert_eq!(images.load_events.len(), 1);
+    assert_eq!(images.load_events[0].error, None);
+}
+
+#[test]
 fn a_url_is_decoded_and_a_failed_one_keeps_what_was_shown() {
     let origin = serve(|path, _| match path {
         "/a.png" => Answer::Body(png(6, 4, [200, 0, 0, 255])),

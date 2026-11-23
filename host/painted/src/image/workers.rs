@@ -360,6 +360,8 @@ impl Backend {
             .and_then(|s| super::published::current(&self.published, s.generation, &s.name))
             .filter(|p| whole || area(p.key.pixels) <= area(demand.key.pixels) * 5 / 2);
         drop(source);
+        // Publish the subscription before a worker can inspect budget waits.
+        let mut requests = self.requests.lock().unwrap();
         let cached = published.and_then(|p| {
             self.session
                 .request_cached(exact_raster::Demand {
@@ -373,31 +375,8 @@ impl Backend {
             Some(request) => request,
             None => self.session.request(demand)?,
         };
-        self.requests.lock().unwrap().insert(id);
+        requests.insert(id);
         Ok(id)
-    }
-    /// Match an existing request before spending this poll's decode headroom.
-    pub(super) fn request_upgrade(
-        &self,
-        demand: exact_raster::Demand,
-        spare: &mut Option<u64>,
-    ) -> Result<Option<exact_raster::RequestId>, Refusal> {
-        let id = match self.session.request_existing(demand) {
-            Ok(id) => id,
-            Err(Refusal::Stale) => {
-                let peak = demand.cost.peak()?;
-                let spare = spare.get_or_insert_with(|| self.session.available_after_eviction());
-                if peak > *spare {
-                    return Ok(None);
-                }
-                let id = self.session.request(demand)?;
-                *spare -= peak;
-                id
-            }
-            Err(e) => return Err(e),
-        };
-        self.requests.lock().unwrap().insert(id);
-        Ok(Some(id))
     }
     /// The device scale an SVG picture of `source` at `pixels` is asked at.
     pub fn note_scale(&self, source: u64, pixels: exact_raster::PixelSize, scale: f32) {
@@ -662,7 +641,7 @@ impl Backend {
                 });
             }
             Err(e) => {
-                if e == Refusal::DecodeFailed {
+                if e == Refusal::DecodeFailed && !permit.is_upgrade() {
                     if let Some(source) = &decoded_source {
                         source.release(e, self.downloads.as_deref());
                     }

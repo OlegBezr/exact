@@ -122,6 +122,7 @@ struct View {
     part: bool,
     /// The request was shrunk to fit a short budget: smaller than its box wants.
     downsized: bool,
+    /// The request is trying for sharper pixels while the accepted lease shows.
     upgrading: bool,
     /// Retries this showing has made or joined for a URL whose download
     /// failed in a way asking again may mend, and when it next asks
@@ -573,7 +574,7 @@ impl Images {
                         let message = refusal_text(Refusal::DecodeFailed).into();
                         self.load_events.extend(view.settle(*id, Some(message)));
                     }
-                    if status != Some(RequestStatus::Decoding) {
+                    if view.upgrading || status != Some(RequestStatus::Decoding) {
                         self.backend.cancel(request);
                         view.request = None;
                     }
@@ -720,8 +721,20 @@ impl Images {
         }
         let mut reports = Vec::new();
         let scale = self.scale;
-        // What upgrades of shrunk pictures may still spend in this poll.
-        let mut spare = None;
+        let mut upgrades = Vec::new();
+        let mut accept =
+            |id, view: &mut View, request, lease: RasterLease, events: &mut Vec<LoadEvent>| {
+                if let Some(bitmap) = lease.payload::<Arc<Bitmap>>() {
+                    self.bitmaps.insert(id, bitmap.clone());
+                    let natural = bitmap.natural();
+                    reports.push((id, Some((natural.0 as f32, natural.1 as f32))));
+                    view.lease = Some(lease);
+                    view.accepted = Some(request);
+                    view.displayed_source = view.source.clone();
+                    view.upgrading = false;
+                    events.extend(view.settle(id, None));
+                }
+            };
         for (id, view) in &mut self.views {
             // (An `error` ends its source assignment: nothing more is asked.)
             if self.boot_visible_only && !view.visible
@@ -792,15 +805,7 @@ impl Images {
                     view.upgrading = false;
                     view.refusal = None;
                     if let Some(lease) = self.backend.session.take_ready(request) {
-                        if let Some(bitmap) = lease.payload::<Arc<Bitmap>>() {
-                            self.bitmaps.insert(*id, bitmap.clone());
-                            let natural = bitmap.natural();
-                            reports.push((*id, Some((natural.0 as f32, natural.1 as f32))));
-                            view.lease = Some(lease);
-                            view.accepted = Some(request);
-                            view.displayed_source = view.source.clone();
-                            self.load_events.extend(view.settle(*id, None));
-                        }
+                        accept(*id, view, request, lease, &mut self.load_events);
                     }
                 }
             }
@@ -874,7 +879,7 @@ impl Images {
                         let message = refusal_text(Refusal::DecodeFailed).into();
                         self.load_events.extend(view.settle(*id, Some(message)));
                     }
-                    if status != Some(RequestStatus::Decoding) {
+                    if view.upgrading || status != Some(RequestStatus::Decoding) {
                         self.backend.cancel(request);
                         view.request = None;
                     }
@@ -894,21 +899,22 @@ impl Images {
                             .then(|| self.backend.session.take_ready(request))
                             .flatten()
                         {
-                            if let Some(bitmap) = lease.payload::<Arc<Bitmap>>() {
-                                self.bitmaps.insert(*id, bitmap.clone());
-                                let natural = bitmap.natural();
-                                reports.push((*id, Some((natural.0 as f32, natural.1 as f32))));
-                                view.lease = Some(lease);
-                                view.accepted = Some(request);
-                                view.displayed_source = view.source.clone();
-                                self.load_events.extend(view.settle(*id, None));
-                            }
+                            accept(*id, view, request, lease, &mut self.load_events);
                         }
                     }
                     Some(RequestStatus::Failed(e)) => {
-                        view.refusal = Some(e);
+                        if view.upgrading {
+                            view.upgrading = false;
+                            view.downsized = e == Refusal::Budget;
+                            if !demand::keep_thumbnail(view, &self.backend.session, header) {
+                                self.backend.cancel(request);
+                                view.request = None;
+                            }
+                            continue;
+                        }
                         self.backend.cancel(request);
                         view.request = None;
+                        view.refusal = Some(e);
                         // A decode that fails for good (others are asked again below).
                         if e == Refusal::DecodeFailed {
                             self.load_events
@@ -930,6 +936,7 @@ impl Images {
                     None => {
                         self.backend.forget(request);
                         view.request = None;
+                        view.upgrading = false;
                     }
                     _ => {}
                 }
@@ -956,6 +963,7 @@ impl Images {
             {
                 let decode = match plan_view(header, view, scale, admission_budget) {
                     Ok(plan) => plan,
+                    Err(_) if upgrade.is_some() => continue,
                     Err(e) => {
                         view.refusal = Some(e);
                         if !passing(e) {
@@ -991,14 +999,12 @@ impl Images {
                 if header.is_svg() {
                     self.backend.note_scale(source, decode.pixels, scale);
                 }
-                let result = if upgrade.is_some() {
-                    self.backend.request_upgrade(demand, &mut spare)
-                } else {
-                    self.backend.request(demand, false).map(Some)
-                };
-                match result {
-                    Ok(None) => continue,
-                    Ok(Some(request)) => {
+                if upgrade.is_some() {
+                    upgrades.push((*id, view, demand, decode.full()));
+                    continue;
+                }
+                match self.backend.request(demand, false) {
+                    Ok(request) => {
                         #[cfg(target_os = "macos")]
                         exact_ink::device::apple::trace_mark(c"image request", || source as f64);
                         if let Some((old, _)) = view.request.replace((request, decode.full())) {
@@ -1009,7 +1015,7 @@ impl Images {
                         view.requested_rendering = view.rendering;
                         view.requested_scale = scale;
                         view.part = !decode.crop.whole();
-                        view.upgrading = upgrade.is_some();
+                        view.upgrading = false;
                         view.downsized = admission_budget < SESSION_BYTES
                             && plan_view(header, view, scale, SESSION_BYTES)
                                 .is_ok_and(|p| demand::sharper(p.pixels, decode.full()));
@@ -1023,15 +1029,7 @@ impl Images {
                             Some(RequestStatus::Ready)
                         ) {
                             if let Some(lease) = self.backend.session.take_ready(request) {
-                                if let Some(bitmap) = lease.payload::<Arc<Bitmap>>() {
-                                    self.bitmaps.insert(*id, bitmap.clone());
-                                    let natural = bitmap.natural();
-                                    reports.push((*id, Some((natural.0 as f32, natural.1 as f32))));
-                                    view.lease = Some(lease);
-                                    view.accepted = Some(request);
-                                    view.displayed_source = view.source.clone();
-                                    self.load_events.extend(view.settle(*id, None));
-                                }
+                                accept(*id, view, request, lease, &mut self.load_events);
                             }
                         }
                     }
@@ -1044,6 +1042,28 @@ impl Images {
                         }
                     }
                 }
+            }
+        }
+        // Give first loads in this poll the first chance at the queue and budget.
+        for (id, view, demand, pixels) in upgrades {
+            let Ok(request) = self.backend.session.request_upgrade(demand) else {
+                continue;
+            };
+            #[cfg(target_os = "macos")]
+            exact_ink::device::apple::trace_mark(c"image request", || demand.key.source as f64);
+            if let Some((old, _)) = view.request.replace((request, pixels)) {
+                self.backend.forget(old);
+            }
+            view.requested_for = view.desired;
+            view.requested_fit = view.object_fit;
+            view.requested_rendering = view.rendering;
+            view.requested_scale = scale;
+            view.part = !demand.key.crop.whole();
+            view.upgrading = true;
+            view.downsized = false;
+            view.refusal = None;
+            if let Some(lease) = self.backend.session.take_ready(request) {
+                accept(id, view, request, lease, &mut self.load_events);
             }
         }
         self.loaded = self
