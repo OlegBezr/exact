@@ -222,6 +222,13 @@ public final class HeadlessSession {
         return bytes
     }
 
+    /// The share handler's answer (LLP 1133.024 D4, amended 2026-11-22): the share entry's source asked with
+    /// the share's members, JSON (`{"title", "text", "url"}`), within `deadline`. Returns the answer's JSON,
+    /// `{"outcome", "message"}`.
+    public func share(_ members: Data, moduleRoot: URL? = nil, deadline: DispatchTime) throws -> Data {
+        try timeline(at: Date(timeIntervalSince1970: 0), configuration: members, moduleRoot: moduleRoot, deadline: deadline)
+    }
+
     public func close() {
         Owner.shared.sync {
             HeadlessWakes.callbacks[wakeKey] = nil

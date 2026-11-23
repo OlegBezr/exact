@@ -337,3 +337,121 @@ fn the_bake_refuses_a_share_target_no_route_matches() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// LLP 1133.024 D4 (amended 2026-11-22): `share_target.handle` compiles the
+/// share entry, whose one source takes the share's members and answers an
+/// outcome, and nothing else of the app's; the bake refuses the compose sheet
+/// beside it, a name that is no source's, and a widget that takes its kind.
+#[test]
+fn a_share_handler_compiles_the_share_entry_and_its_refusals() {
+    let dir = Scratch::new(format!("exact2-share-handle-{}", std::process::id()));
+    std::fs::write(dir.join("app.contract"), SOURCE).unwrap();
+    let entries = |target: &str, extra: &str| {
+        std::fs::write(
+            dir.join("app.json"),
+            format!(r#"{{"app": {{"id": "dev.test.share", "name": "Share"}}, "share_target": {target}{extra}}}"#),
+        )
+        .unwrap();
+        contract::snapshot::entries(&dir)
+    };
+    let target = r#"{"action": "/share", "params": {"text": "text"}, "handle": "submitShared"}"#;
+    let compiled = entries(target, "").unwrap();
+    assert_eq!(compiled.keys().collect::<Vec<_>>(), ["share"]);
+    let plan = &compiled["share"].plan;
+    assert_eq!(plan.snapshot_entry, exact_plan::SHARE_ENTRY);
+    assert_eq!(plan.app_id, "dev.test.share");
+    assert!(
+        plan.nodes.len() <= 2,
+        "the share entry has no view but its root"
+    );
+    let source = plan.source(plan.snapshot_refresh.unwrap());
+    assert_eq!(plan.str(source.name), "submitShared");
+    let shape = |ty: exact_plan::TypesId| {
+        plan.type_(ty)
+            .fields
+            .iter()
+            .map(|id| plan.str(plan.field(id).name).to_owned())
+            .collect::<Vec<_>>()
+    };
+    let param = plan.source_param(source.params.iter().next().unwrap()).ty;
+    assert_eq!(shape(param), ["title", "text", "url"]);
+    assert_eq!(shape(source.ty), ["outcome", "message"]);
+    // Its signature joins the app's sources, as a widget refresh's does, for TypeScript's `Sources`.
+    let app = contract::compile_path(&dir.join("app.contract")).unwrap();
+    let joined = contract::snapshot::source_plan(&compiled, &app).unwrap();
+    assert!(joined
+        .sources
+        .iter()
+        .any(|s| joined.str(s.name) == "submitShared"));
+    assert!(
+        entries(r#"{"action": "/share", "params": {"text": "text"}}"#, "")
+            .unwrap()
+            .is_empty()
+    );
+    for (target, extra, refusal) in [
+        (
+            r#"{"action": "/share", "params": {"text": "text"}, "handle": "submitShared", "apple": {"presentation": "compose"}}"#,
+            "",
+            "remove `\"presentation\": \"compose\"`",
+        ),
+        (
+            r#"{"action": "/share", "params": {"text": "text"}, "handle": "submit-shared"}"#,
+            "",
+            "must name a data source",
+        ),
+        (
+            target,
+            r#", "widgets": [{"kind": "share", "families": ["systemSmall"], "component": "App", "props": "P", "refresh": "r", "preview": {}}]"#,
+            "names the share handler's plan",
+        ),
+    ] {
+        let error = entries(target, extra).unwrap_err();
+        assert!(error.contains(refusal), "{error}");
+    }
+}
+
+/// The bake asks the share handler with an empty share. A throw there is the
+/// handler's `open` on the device, so it passes; a missing source and an answer
+/// of another shape fail.
+#[test]
+fn the_bake_checks_the_share_handler_without_failing_a_throw() {
+    struct Handler(u8);
+    impl DataSource for Handler {
+        fn query(&mut self, name: &str, args: &[Value]) -> Result<Value, DataError> {
+            let none = Value::Option(None);
+            assert_eq!(
+                args,
+                [Value::record(vec![
+                    none.clone(),
+                    none.clone(),
+                    none.clone()
+                ])]
+            );
+            match self.0 {
+                0 => Err(DataError::Failed(
+                    exact_runner::failure::FailureCode::Error,
+                    "no puzzle in an empty share".into(),
+                    String::new(),
+                )),
+                1 => Err(DataError::UnknownSource(name.into())),
+                2 => Ok(Value::str("done")),
+                _ => Ok(Value::record(vec![Value::str("refused"), none])),
+            }
+        }
+    }
+    let plan = contract::snapshot::compile_share("dev.test.share", "submitShared").unwrap();
+    let entries = std::collections::BTreeMap::from([(
+        "share".to_owned(),
+        contract::snapshot::Entry {
+            declaration: contract::snapshot::Declaration::Share("submitShared".into()),
+            plan,
+        },
+    )]);
+    let check = |n| contract::snapshot::check_refreshes(&entries, &mut boxed(Handler(n)));
+    assert!(check(0).is_ok());
+    assert!(check(1)
+        .unwrap_err()
+        .contains("unknown refresh `submitShared`"));
+    assert!(check(2).unwrap_err().contains("share_target.handle"));
+    assert!(check(3).is_ok());
+}

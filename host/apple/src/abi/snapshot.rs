@@ -94,8 +94,11 @@ impl<D: DataSource> Bridge<D> {
         self.entry_timeline_until(now, 0, deadline, "", &[])
     }
     /// The placement's configuration JSON is the input buffer's first
-    /// `configuration` bytes, none when zero. Borrow the pinned pair for
-    /// admission; no bridge input or concatenation.
+    /// `configuration` bytes, none when zero; the share handler's entry takes
+    /// the share there (`exact_runner::entry::refresh_args`). Borrow the pinned
+    /// pair for admission; no bridge input or concatenation. A widget's bound
+    /// is WidgetKit's 900 ms; the share handler's is 10 s under the sheet's
+    /// spinner (LLP 1133.024 D4, amended 2026-11-22).
     pub fn entry_timeline_module(
         &mut self,
         now: f64,
@@ -104,7 +107,12 @@ impl<D: DataSource> Bridge<D> {
         receipt: &[u8],
         module: &[u8],
     ) -> u32 {
-        if !remaining_ms.is_finite() || remaining_ms <= 0.0 || remaining_ms > 900.0 {
+        let share = self
+            .host
+            .as_ref()
+            .is_some_and(|host| exact_runner::entry::is_share_handler(host.runner().plan()));
+        let bound = if share { 10_000.0 } else { 900.0 };
+        if !remaining_ms.is_finite() || remaining_ms <= 0.0 || remaining_ms > bound {
             return self.invalid();
         }
         let deadline =

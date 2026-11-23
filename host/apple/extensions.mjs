@@ -3,7 +3,7 @@ import { capturePrivacyManifest, writePrivacyManifest } from './privacy.mjs';
 // what an appex compile links with, and the share extension, which links
 // no Exact runtime and writes only its inbox in the App Group.
 import { relative, resolve } from 'node:path';
-import { mkdirSync, mkdtempSync, writeFileSync, copyFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, copyFileSync, cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { plistFile } from './assets.mjs';
 import { stripProductionExecutable } from './link.mjs';
 import { appleActivationRule, applePresentation, appleShareMembers, appleSharePage } from '../../scripts/share-target.mjs';
@@ -143,8 +143,13 @@ export const shareInfo = (app, group = null) => app.manifest.share_target
  * the activation rule and the post button's word). It holds the one presentation the app declares: that
  * presentation's source is compiled and its controller is the principal class. For an app that maps `url` it also
  * holds Exact's page script, which Safari runs in a shared page, and the code that reads its answer. `entitlements`
- * is the extension's plist text; `sign(extension, path)` signs it. */
-export function packageShareExtension({ app, bundle, directory, sdk, triple, device = false, platform = 'ios', group, entitlements, sign, runApple, production, symbols = directory, profile = null }) {
+ * is the extension's plist text; `sign(extension, path)` signs it.
+ *
+ * `shared`, the app's ExactCore framework (widgets.mjs `sharedWidgetCore`), is given for an app with a share handler
+ * (D4, amended 2026-11-22): the extension then links it and the snapshot archive, compiles `ShareHandle.swift` under
+ * `EXACT_SHARE_HANDLE`, and carries the bake's plans and TypeScript pair, which the handler runs. Without it the
+ * extension is built as it was before handlers existed. */
+export function packageShareExtension({ app, bundle, directory, sdk, triple, device = false, platform = 'ios', group, entitlements, sign, runApple, production, symbols = directory, profile = null, shared = null }) {
   const mac = platform === 'macos', contents = mac ? resolve(bundle, 'Contents') : bundle;
   const target = app.manifest.share_target;
   const extension = resolve(contents, 'PlugIns/ExactShare.appex');
@@ -155,8 +160,10 @@ export function packageShareExtension({ app, bundle, directory, sdk, triple, dev
   if (profile) copyFileSync(profile.path, resolve(extensionContents, mac ? 'embedded.provisionprofile' : 'embedded.mobileprovision'));
   const appInfo = JSON.parse(runApple('plutil', ['-convert', 'json', '-o', '-', resolve(contents, 'Info.plist')], { read: true }).stdout);
   const versions = Object.fromEntries(['CFBundleVersion', 'CFBundleShortVersionString', mac ? 'LSMinimumSystemVersion' : 'MinimumOSVersion'].map(key => [key, appInfo[key]]).filter(([, v]) => v !== undefined));
-  const params = target.params ?? {}, page = appleSharePage(target);
-  const [principalClass, presentationSource] = applePresentation(target) === 'confirmation'
+  const params = target.params ?? {}, page = appleSharePage(target), handle = shared ? target.handle : null;
+  // A handler answers in the confirmation, its default where it runs (D4, amended 2026-11-22).
+  const presentation = target.apple?.presentation ?? (handle ? 'confirmation' : applePresentation(target));
+  const [principalClass, presentationSource] = presentation === 'confirmation'
     ? ['ExactShareConfirmationViewController', 'ShareConfirmation.swift'] : ['ExactShareViewController', 'ShareViewController.swift'];
   writeFileSync(resolve(extensionContents, 'Info.plist'), plistFile({
     CFBundleIdentifier: shareId(app), CFBundleName: 'ExactShare', CFBundleDisplayName: appInfo.CFBundleDisplayName ?? appInfo.CFBundleName ?? app.displayName,
@@ -164,6 +171,10 @@ export function packageShareExtension({ app, bundle, directory, sdk, triple, dev
     ...(!mac ? { UIDeviceFamily: appInfo.UIDeviceFamily } : {}), CFBundleSupportedPlatforms: mac ? ['MacOSX'] : appInfo.CFBundleSupportedPlatforms,
     ExactAppGroup: group, ExactAppIdentifier: app.id, ExactShareParams: ['title', 'text', 'url'].filter(k => params[k]), ExactShareMembers: appleShareMembers(target),
     ...(target.apple?.postTitle ? { ExactSharePostTitle: target.apple.postTitle } : {}),
+    // The runtime's keys, as the widget extension reads them (widgets.mjs `widgetExtensionInfo`).
+    ...(handle ? { ExactShareHandle: handle, ExactWidgetTypeScript: existsSync(resolve(app.dir, 'app.ts')),
+      ...(appInfo.ExactKeychainAccessGroup ? { ExactKeychainAccessGroup: appInfo.ExactKeychainAccessGroup } : {}),
+      ...(appInfo.NSAppTransportSecurity ? { NSAppTransportSecurity: appInfo.NSAppTransportSecurity } : {}) } : {}),
     NSExtension: { NSExtensionPointIdentifier: 'com.apple.share-services', NSExtensionPrincipalClass: principalClass,
       // The script's name, without `.js`, as Safari looks it up among the extension's resources.
       NSExtensionAttributes: { NSExtensionActivationRule: appleActivationRule(target), ...(page ? { NSExtensionJavaScriptPreprocessingFile: 'SharePage' } : {}) } },
@@ -173,12 +184,20 @@ export function packageShareExtension({ app, bundle, directory, sdk, triple, dev
     mkdirSync(resources, { recursive: true });
     copyFileSync(resolve(root, 'host/apple/share/SharePage.js'), resolve(resources, 'SharePage.js'));
   }
+  if (handle) for (const tree of ['plans', 'typescript']) {
+    const from = resolve(contents, tree);
+    if (existsSync(from)) cpSync(from, resolve(extensionContents, tree), { recursive: true });
+    else if (tree === 'plans' || existsSync(resolve(app.dir, 'app.ts'))) throw new Error(`host/apple: the bake wrote no ${tree} tree for the share handler (${from})`);
+  }
   mkdirSync(directory, { recursive: true });
   const entitlementPath = resolve(directory, 'share-entitlements.plist');
   writeFileSync(entitlementPath, entitlements);
   runApple('xcrun', ['--sdk', mac ? 'macosx' : device ? 'iphoneos' : 'iphonesimulator', 'swiftc', '-parse-as-library', swiftOptimization(), ...(production ? ['-g'] : []), ...appexArgs,
     ...(page ? ['-D', 'EXACT_SHARE_PAGE'] : []), '-module-name', 'ExactShare', '-target', triple, '-sdk', sdk, '-module-cache-path', extensionModuleCache,
     ...(!device && !mac ? ['-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__entitlements', '-Xlinker', entitlementPath] : []),
+    ...(handle ? ['-D', 'EXACT_SHARE_HANDLE', ...(!production ? ['-D', 'EXACT_INSPECT'] : []), '-I', resolve(root, 'host/apple/Sources/CExact'), '-I', resolve(shared.framework, 'Modules'),
+      '-F', resolve(shared.framework, '..'), '-framework', 'ExactCore', '-Xlinker', '-rpath', '-Xlinker', '@executable_path/../../Frameworks', shared.snapshotArchive,
+      resolve(root, 'host/apple/share/ShareHandle.swift')] : []),
     resolve(root, 'host/apple/share/ShareInbox.swift'), resolve(root, 'host/apple/share', presentationSource), '-o', binary]);
   stripProductionExecutable(binary, { production, dsym: resolve(symbols, 'ExactShare.appex.dSYM'), sourceDsym: `${binary}.dSYM` });
   writePrivacyManifest(mac ? resolve(extensionContents, 'Resources') : extension, [binary], { mac });

@@ -28,6 +28,8 @@ pub enum Declaration {
     Activity(Activity),
     /// The app's watch entry: a live plan, not a snapshot (LLP 1126.002 D4).
     Watch(WatchEntry),
+    /// The share handler, the source `share_target.handle` names (LLP 1133.024 D4).
+    Share(String),
 }
 
 pub(super) struct RenderEntry<'a> {
@@ -54,8 +56,23 @@ pub fn compile_entries(
     let watch = manifest
         .watch()
         .map_err(|m| refusal("watch-manifest", m, Span::default()))?;
+    let mut entries = BTreeMap::new();
+    if let Some(handle) = manifest
+        .share_handle()
+        .map_err(|m| refusal("share-manifest", m, Span::default()))?
+    {
+        let plan = super::share::compile_share(&manifest.id, &handle)
+            .map_err(|m| refusal("share-manifest", m, Span::default()))?;
+        entries.insert(
+            exact_plan::SHARE_ENTRY.to_owned(),
+            Entry {
+                declaration: Declaration::Share(handle),
+                plan,
+            },
+        );
+    }
     if widgets.is_empty() && activities.is_empty() && watch.is_none() {
-        return Ok(BTreeMap::new());
+        return Ok(entries);
     }
     let app = app
         .canonicalize()
@@ -64,7 +81,6 @@ pub fn compile_entries(
     let path = app.join("app.contract");
     let src = crate::read_source(&path)?;
     let (file, sources) = crate::sources::load(&path, &src, app)?;
-    let mut entries = BTreeMap::new();
     let mut errors = Vec::new();
     for widget in widgets {
         match compile_widget(file.clone(), &widget, Some(app)) {
@@ -137,7 +153,7 @@ pub fn write_entries(entries: &BTreeMap<String, Entry>, out: &Path) -> Result<()
                 Declaration::Widget(w) => Some(
                     serde_json::json!({"kind":w.kind, "families":w.families, "watchFamilies":w.watch_families, "requiresSecrets":w.requires_secrets, "preview":w.preview, "configuration":w.configuration.as_ref().map(Configuration::json)}),
                 ),
-                Declaration::Activity(_) | Declaration::Watch(_) => None,
+                Declaration::Activity(_) | Declaration::Watch(_) | Declaration::Share(_) => None,
             })
             .collect();
         if !registry.is_empty() {

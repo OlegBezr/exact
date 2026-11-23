@@ -2,7 +2,7 @@ import { writePrivacyManifest } from './privacy.mjs';
 // Apple bundle assembly. The build owns compilation and artifact publication.
 // @ref LLP 1126 D2/D8 — an extension is packaged inside its app's cohort.
 import { packageActivityArm, assertActivityRefusals } from './activities.mjs';
-import { packageWidgets, packageAlarmExtension, widgetId, entryProfiles, activityEntries, platformWidgetEntries, macWidgetGroup, macWidgetEntitlements, widgetGroup, widgetAppKeys } from './widgets.mjs';
+import { packageWidgets, packageAlarmExtension, widgetId, entryProfiles, activityEntries, platformWidgetEntries, macWidgetGroup, macWidgetEntitlements, widgetGroup, widgetAppKeys, hasEntries, shareHandle } from './widgets.mjs';
 import { packageNotificationService, packageShareExtension, notificationServiceEntitlements, notificationServiceProfile, shareInfo, shareId, macShareEntitlements } from './extensions.mjs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from './toolchain.mjs';
@@ -59,6 +59,7 @@ export function assembleMac({intents, shared, library, moduleLibraries = [], pac
     const team = widgetTeam ?? shareTeam;
     if (app.manifest.share_target && !team) console.log('Mac share extension: this build is signed ad hoc (EXACT_IDENTITY=-); building without it (LLP 1133.024 D4).');
     const shareGroup = app.manifest.share_target && team ? macWidgetGroup(app, team) : null;
+    if (shareGroup && shareHandle(app)) console.log('Mac share extension: share_target.handle runs only on iOS; a Mac share opens action (LLP 1133.024 D4, amended 2026-11-22).');
     const widgetKeys = { ...shareInfo(app, shareGroup), ...(shared ? widgetAppKeys(app, 'macos', {
       group: macWidgetGroup(app, team), keychain: profiles?.keychain,
       generation: createHash('sha256').update(JSON.stringify([bakedCompat.id, buildReceipt.graph.artifacts])).digest('hex'),
@@ -326,13 +327,16 @@ export function assembleIOS({intents, shared, library, moduleLibraries = [], pac
   const packageManifests = (buildReceipt.binary.privacyManifests ?? []).slice(1);
   // `watch`: a device build embeds the watch app, signed with profiles of the app's team, prefix and method.
   const companion = watch && appProfile ? watchProfiles({ app, udid: ph?.udid, like: appProfile }) : [];
+  // The cohort without a widget or Live Activity (a share handler's) has no widget extension; an alarm's countdown
+  // then gets its own.
+  const widgetExtension = shared && hasEntries(app);
   for (const [assembled, kind] of bundles) {
     const id = kind === 'host' ? `${app.id}.host` : kind === 'clip' ? clip.id : app.id, executable = kind === 'host' ? 'ExactHostIOS' : kind === 'clip' ? clip.executable : paths.executable;
     const keptSymbols = ipa || kind !== 'host' ? symbols : resolve(binDir, `${executable}.dSYMs`);
     const signingProfile = appProfile ? (kind === 'app' ? appProfile : profiles[kind]()) : null;
     const controls = kind === 'app' && !tv ? offeredControls(bakedCompat, 'ios') : [];
     // An extension without widgets or activities (an alarm's countdown, controls) takes the app's team's profile for its id.
-    const alarmProfile = signingProfile && !shared && (alarm || controls.length) && !tv && kind === 'app' ? embeddedProfile(ph?.udid, widgetId(app), signingProfile) : null;
+    const alarmProfile = signingProfile && !widgetExtension && (alarm || controls.length) && !tv && kind === 'app' ? embeddedProfile(ph?.udid, widgetId(app), signingProfile) : null;
     const signingIdentity = signingProfile ? identity(signingProfile.team, { profiles: [signingProfile, ...(kind === 'app' ? [provisioned?.extension, provisioned?.share, alarmProfile, ...companion] : [])].filter(Boolean) }) : sha1;
     const ent = resolve(binDir, kind === 'app' ? 'entitlements.plist' : `${kind}-entitlements.plist`);
     if (signingProfile) copyFileSync(signingProfile.path, resolve(assembled, 'embedded.mobileprovision'));
@@ -368,23 +372,24 @@ export function assembleIOS({intents, shared, library, moduleLibraries = [], pac
     }
     if (shared && kind === 'app' && activityEntries(app).length) packageActivityArm({ app, bundle: assembled, shared, sdk, triple, device, runApple });
     // Controls alone share the extension an alarm's countdown would have had to itself.
-    if ((shared || controls.length) && kind === 'app') packageWidgets({ app, bundle: assembled, shared, directory: linkRoot, sdk, triple, device, alarm: tv ? null : alarm, controls,
+    if ((widgetExtension || controls.length) && kind === 'app') packageWidgets({ app, bundle: assembled, shared: widgetExtension ? shared : null, directory: linkRoot, sdk, triple, device, alarm: tv ? null : alarm, controls,
       runApple, production: production || distribution, symbols: keptSymbols ?? linkRoot, profile: provisioned?.extension ?? alarmProfile,
       // The extension's identifier and shared Keychain group under its own profile's prefix (entryProfiles refused a pair whose prefixes differ);
       // an extension of controls alone shares neither.
-      entitlements: entitlements(shared ? { ...app, id: widgetId(app), widgetAppId: app.id } : { id: widgetId(app), manifest: {} }, signingProfile?.team, signingProfile?.dev ?? !unsigned, null, { simulator: !device, prefix: provisioned?.extension?.prefix ?? signingProfile?.prefix }),
+      entitlements: entitlements(widgetExtension ? { ...app, id: widgetId(app), widgetAppId: app.id } : { id: widgetId(app), manifest: {} }, signingProfile?.team, signingProfile?.dev ?? !unsigned, null, { simulator: !device, prefix: provisioned?.extension?.prefix ?? signingProfile?.prefix }),
       sign: (extension, ent) => run('codesign', ['--force', '--sign', signingIdentity, '--timestamp=none', ...(device ? ['--entitlements', ent] : []), extension], { stdio: 'ignore' }) });
     if (kind === 'app' && tv && app.manifest.share_target) console.log('Share extension: not built for tvOS, which has no share sheet (LLP 1133.024 D4).');
     if (kind === 'app' && !tv && app.manifest.share_target) {
-      const group = widgetGroup(app), share = provisioned?.share;
+      const group = widgetGroup(app), share = provisioned?.share, handled = shared && shareHandle(app);
       for (const [key, value] of Object.entries(shareInfo(app, group))) runApple('plutil', ['-replace', key, '-string', value, resolve(assembled, 'Info.plist')]);
-      // The extension writes the inbox. Only the app and its widgets use the app's Keychain group.
+      // The extension writes the inbox. Only the app, its widgets and a share handler use the app's Keychain group.
       const owner = { id: shareId(app), manifest: {} };
       packageShareExtension({ app, bundle: assembled, directory: linkRoot, sdk, triple, device, group, runApple, production: production || distribution, symbols: keptSymbols ?? linkRoot, profile: share,
-        entitlements: entitlements(owner, share?.team, share?.dev ?? !unsigned, null, { simulator: !device, prefix: share?.prefix, inboxGroup: group }),
+        shared: handled ? shared : null,
+        entitlements: entitlements(owner, share?.team, share?.dev ?? !unsigned, null, { simulator: !device, prefix: share?.prefix, inboxGroup: group, keychain: handled ? app.id : null }),
         sign: (extension, ent) => run('codesign', ['--force', '--sign', signingIdentity, '--timestamp=none', ...(device ? ['--entitlements', ent] : []), extension], { stdio: 'ignore' }) });
     }
-    if (!shared && !controls.length && alarm && !tv && kind === 'app') packageAlarmExtension({ app, bundle: assembled, directory: linkRoot, sdk, triple, device, runApple, alarm, production, symbols: keptSymbols ?? linkRoot,
+    if (!widgetExtension && !controls.length && alarm && !tv && kind === 'app') packageAlarmExtension({ app, bundle: assembled, directory: linkRoot, sdk, triple, device, runApple, alarm, production, symbols: keptSymbols ?? linkRoot,
       profile: alarmProfile,
       entitlements: entitlements({ ...app, id: widgetId(app), widgetAppId: app.id }, signingProfile?.team, signingProfile?.dev ?? !unsigned, null, { simulator: !device, prefix: signingProfile?.prefix }),
       sign: (extension, ent) => run('codesign', ['--force', '--sign', signingIdentity, '--timestamp=none', ...(device ? ['--entitlements', ent] : []), extension], { stdio: 'ignore' }) });

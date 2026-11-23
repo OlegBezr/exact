@@ -5925,6 +5925,50 @@ the inbox. The app’s submission may still be pending.
 - **`NSExtensionActivationRule`** replaces the rule the build derives from `params`:
   Apple's dictionary of keys, or a predicate string, which is used as written.
 
+**A handler in the share sheet (iOS).** `handle` names a data source the share extension
+runs on the share before it goes to the inbox, so the app can submit it and show the
+result without the person leaving the sender (LLP 1133.024 D4, amended 2026-11-22):
+
+```json
+"share_target": { "action": "/share", "params": { "text": "text" }, "handle": "submitShared" }
+```
+```ts
+// app.ts
+submitShared: async ([share], store) => {
+  const result = parseResult(share.text ?? '');
+  if (!result) return { outcome: 'refused', message: "That isn't a puzzle result." };
+  const response = await fetch('https://api.example.com/scores', { method: 'POST',
+    headers: { authorization: `Bearer ${store.get('session')}` }, body: JSON.stringify(result) });
+  if (!response.ok) return { outcome: 'open', message: null };
+  return { outcome: 'done', message: `Ranked ${(await response.json()).rank}` };
+},
+```
+
+The source takes `{ title, text, url }`, each a string or `null`, as the `action` route
+would receive them: `title` and `text` only when mapped, and a link in `text` when `url`
+is not mapped. It answers `{ outcome, message }`, `message` a string or `null`, at once
+or after awaiting:
+
+- `done` shows the checkmark with `message` under the app's name for two seconds (one
+  second when it is `null`) and saves nothing: `action` is not opened.
+- `refused` shows `message` in an alert ("The share was not accepted." when it is
+  `null`) and saves nothing.
+- `open` saves the share and opens `action`, as without a handler. A throw, a store
+  write, no answer within 10 s of the extension starting the source, and a share with
+  files (the source takes none) do the same.
+
+It runs headless after the extension's spinner has drawn, on the runtime a widget's
+refresh uses, with the app's `net.fetch` grants and its `secret.keep` values read from
+the shared Keychain group. It runs the handler this build was made with: an update
+`push` publishes reaches the handler with the next binary. It writes no store, so it cannot save a
+refreshed token: answer `open` on a 401, and let the route refresh it. The person can dismiss the sheet while it runs;
+nothing is then saved, and what the source already sent stays sent, so make the
+submission safe to repeat. A handler makes `"confirmation"` the default presentation,
+and the build refuses `"compose"` beside it. The extension of an app with a handler
+links the app's runtime and needs the shared Keychain group as a widget extension does
+(below); one without a handler is the same as before. The Mac, Android and the web
+ignore `handle` and open `action`.
+
 What does not arrive is left out, and the rest of the share is saved: a link that does
 not load, and a file that does not load, is over 64 MB or that no files member accepts
 (each such file is counted in `dropped`). A share left with no link, text or file is
@@ -5964,7 +6008,9 @@ page to a predicate that accepts only `public.url` and still hands over the deta
 this has not been run on a phone or a Mac.
 
 On iPhone, register the App IDs `<app id>` and `<app id>.share` on the same Apple
-Developer team and enable the App Group `group.<app id>` for both. Make and install a
+Developer team and enable the App Group `group.<app id>` for both. With `handle`, also
+enable Keychain Sharing for both with the group `<prefix>.<app id>` (or the team's
+`<prefix>.*`). Make and install a
 profile for each ID. For `bun exact.mjs ios --device`, both profiles must cover the
 phone and its development signing certificate. For a distribution archive, use profiles
 of the same distribution method. `EXACT_PROFILE` can select the containing app's profile.

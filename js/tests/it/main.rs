@@ -42,6 +42,7 @@ mod render;
 mod request_sets;
 mod secret_storage_order;
 mod secrets;
+mod share_handler;
 mod shim;
 mod snapshot;
 mod socket;

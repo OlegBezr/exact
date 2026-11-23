@@ -88,10 +88,21 @@ pub(crate) fn emit(
         compat.id = crate::compat::compatibility_digest(&compat.inputs);
     }
     let pictures = asset_islands(app, &assets);
+    // Only the iOS share extension runs the share handler (LLP 1133.024 D4,
+    // amended 2026-11-22); another platform's bundle neither carries its plan
+    // nor links what booting it needs.
+    let shipped: std::collections::BTreeMap<_, _> = entries
+        .iter()
+        .filter(|(_, entry)| {
+            platform == "ios"
+                || !matches!(entry.declaration, contract::snapshot::Declaration::Share(_))
+        })
+        .map(|(kind, entry)| (kind.clone(), entry.clone()))
+        .collect();
     let (widget_assets, plans) = crate::widgets::emit(
         out,
         matches!(platform, "ios" | "macos") && app.join("app.ts").is_file(),
-        entries,
+        &shipped,
     )?;
     assets.extend(widget_assets);
     let rust_assets = if let Some(directory) = std::env::var_os("EXACT_RUST_BUNDLE") {
@@ -117,7 +128,7 @@ pub(crate) fn emit(
     let required = crate::link::apple_requirement(
         app,
         &plan,
-        entries.values().map(|entry| &entry.plan),
+        shipped.values().map(|entry| &entry.plan),
         &compat.inputs,
         manifest,
         compat.host_work,
@@ -127,20 +138,20 @@ pub(crate) fn emit(
     }
     // What the binary links for its plan and, on Apple, its entries' plans,
     // as `link::name_into` decides it.
-    let entry_plans = entries.values().map(|entry| &entry.plan);
+    let entry_plans = shipped.values().map(|entry| &entry.plan);
     let uses =
         crate::link::production_uses(app, &plan, entry_plans, &compat.inputs, compat.host_work);
     graph["uses"] = json!(uses.iter().map(|c| c.name()).collect::<Vec<_>>());
     if matches!(platform, "ios" | "macos") {
         let mut icons = apple_icons(&plan)?;
-        for entry in entries.values() {
+        for entry in shipped.values() {
             icons.extend(apple_icons(&entry.plan)?);
         }
         icons.sort_by_key(|i| i["svg"].as_str().unwrap_or("").to_owned());
         icons.dedup();
         graph["appleIcons"] = json!(icons);
     }
-    for (kind, entry) in entries {
+    for (kind, entry) in &shipped {
         let entry_graph = artifact_graph(&entry.plan, &compat.inputs, &[], false, target)?;
         let raster = &entry_graph["artifacts"][0]["requires"]["appleRasterIcons"];
         if raster.is_null() {

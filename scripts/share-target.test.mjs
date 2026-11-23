@@ -68,6 +68,19 @@ test("Apple's extension shows the compose sheet unless the app declares the conf
   assert.doesNotMatch(`${words.description} ${words.properties.postTitle.description}`, /strings key/);
 });
 
+test('a handler (LLP 1133.024 D4, amended 2026-11-22) is an identifier, and the compose sheet is refused beside it', async () => {
+  const { validate } = await import('./app.mjs');
+  const schema = await Bun.file(new URL('./app.schema.json', import.meta.url)).json();
+  const member = schema.properties.share_target;
+  const handled = { ...fieldnotes, handle: 'submitShared' };
+  // The Mac's extension, which runs no handler, keeps its default; the iOS one defaults to the confirmation (extensions.test.mjs).
+  assert.equal(applePresentation(handled), 'compose');
+  assert.deepEqual(validate(handled, member, 'share_target', schema), []);
+  for (const handle of ['submit-shared', '1submit', '']) assert.ok(validate({ ...fieldnotes, handle }, member, 'share_target', schema).length, handle);
+  assert.deepEqual(shareTargetProblems({ share_target: { ...handled, apple: { presentation: 'confirmation' } } }), []);
+  assert.match(shareTargetProblems({ share_target: { ...handled, apple: { presentation: 'compose' } } }).join('\n'), /handle.*remove "presentation": "compose"/);
+});
+
 test("Apple's extension asks Safari for the page when the app maps url, and only then", () => {
   const mapped = params => ({ action: '/share', params });
   assert.equal(appleSharePage(fieldnotes), false);

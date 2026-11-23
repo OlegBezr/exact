@@ -267,6 +267,7 @@ fn main() {
         "heap",
         "oom",
         "snapshot",
+        "share",
         "context",
         "canvas-capture",
         "network",

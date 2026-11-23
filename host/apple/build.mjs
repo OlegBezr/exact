@@ -39,7 +39,7 @@ import { writeAppleBatchReader } from '../../kernel/build/apple-batch.mjs';
 // its own (AppDrop, a store's resigner). The simulator and phone helpers live
 // in devices.mjs, shared with scripts/agent.mjs, which launches the same bundle.
 // These developer builds explicitly allow unsigned updates. --release, --distribution, --archive (or EXACT_UPDATE_TRUST=production) build a signed-update-only artifact.
-import { platformWidgetEntries, widgetEntityKeys, activityEntries, hasEntries, widgetGroup, prepareWidgetCore, sharedWidgetCore, placeCoreFramework, dropLeftoverCore, entryProfiles, alarmActivity } from './widgets.mjs';
+import { platformWidgetEntries, widgetEntityKeys, activityEntries, hasEntries, inCohort, widgetGroup, prepareWidgetCore, sharedWidgetCore, placeCoreFramework, dropLeftoverCore, entryProfiles, alarmActivity } from './widgets.mjs';
 import { assembleMac, assembleIOS, buildIntents, shortcutKeys, placeMacDylibs } from './bundle.mjs';
 import { EXTENSION_KINDS, assertNotificationServiceGrants, extensionKinds, notificationService, notificationServiceDirectory, notificationServicePlatformRefusal, staleModuleCache, withoutExtensions } from './extensions.mjs';
 import { buildWatch, watchCompanion, watchProfiles, watchSyncSelected } from './watch.mjs';
@@ -330,7 +330,7 @@ export { appClip };
  * is the application-identifier. A simulator's is `SIMULATORX.<id>`, with the bare id it had before kept as a
  * second Keychain group so items stored then still read and update in place (D3, measured).
  * `allows`: the signing profile's entitlements; `profile`: that profile. */
-export const entitlements = (app, team = null, debuggable = true, reach = null, { simulator = false, prefix = team, allows = [], profile = null, distributed = false, inboxGroup = null } = {}) => {
+export const entitlements = (app, team = null, debuggable = true, reach = null, { simulator = false, prefix = team, allows = [], profile = null, distributed = false, inboxGroup = null, keychain = null } = {}) => {
   const prefixed = `${SIMULATOR_PREFIX}.${app.id}`;
   const dict = {
     'application-identifier': team ? `${prefix}.${app.id}` : simulator ? prefixed : app.id,
@@ -343,7 +343,7 @@ export const entitlements = (app, team = null, debuggable = true, reach = null, 
   // Keychain group of the parent's included (how a clip shares data with its app), under the clip's own
   // application-identifier (Apple, "Creating an App Clip with Xcode", the App Clip entitlement).
   Object.assign(dict, clipEntitlements(app, { prefix: prefix ?? SIMULATOR_PREFIX, profile }));
-  if (hasEntries(app) && !app.widgetTV && !app.widgetHost) {
+  if ((app.widgetAppId ? hasEntries(app) : inCohort(app)) && !app.widgetTV && !app.widgetHost) {
     dict['com.apple.security.application-groups'] = [widgetGroup(app)];
     const owner = app.widgetAppId ?? app.clipParent ?? app.id;
     dict['keychain-access-groups'] = [`${prefix ?? SIMULATOR_PREFIX}.${owner}`, ...(simulator && !team ? [owner] : [])];
@@ -353,6 +353,7 @@ export const entitlements = (app, team = null, debuggable = true, reach = null, 
   }
   const inbox = inboxGroup ?? (app.manifest.share_target && !app.widgetAppId && !app.widgetTV && !app.widgetHost && !app.clipParent ? widgetGroup(app) : null);
   if (inbox) dict['com.apple.security.application-groups'] = [inbox];
+  if (keychain) dict['keychain-access-groups'] = [`${prefix ?? SIMULATOR_PREFIX}.${keychain}`, ...(simulator && !team ? [keychain] : [])]; // a share handler's (LLP 1133.024 D4)
   // @ref LLP 1038 D8 — `handle_links`' derived applinks, then the raw list; tvOS signs no link claim.
   const domains = claimedDomains(app).filter((d) => !app.widgetTV || !d.startsWith('applinks:'));
   // @ref LLP 1069.006 D2 — a claimed https auth callback needs `webcredentials:` (the bake's derivation from the `auth.callback` grants, LLP 1069.008).
@@ -636,9 +637,8 @@ async function main(args, lockHeld = false) {
   if (prebuilt) await agentBuild.reportPrebuild(app, args);
   if (args.includes('--prebuild')) { process.exitCode = await agentBuild.prebuild(app, args); return; } // LLP 1116.003 D1.2
   const gallery = process.env.EXACT_UPDATE_TRUST !== 'production' && !tv && (args.includes('--widget-gallery') || process.env.EXACT_WIDGET_GALLERY === '1');
-  // An entry of either kind (a widget, a Live Activity) is the extension, the shared framework, the App Group and
-  // the Keychain group (LLP 1126.001 WP13); tvOS has none of them.
-  let widgets = !tv && (ios ? hasEntries(app) : platformWidgetEntries(app, 'macos').length > 0);
+  // An entry (a widget, a Live Activity) or an iOS share handler (LLP 1133.024 D4) is the cohort: the shared framework, App Group and Keychain group (LLP 1126.001 WP13); tvOS has none.
+  let widgets = !tv && (ios ? inCohort(app) : platformWidgetEntries(app, 'macos').length > 0);
   // Another build may take the claim first after that wait: this one waits again rather than refusing as busy.
   const release = lockHeld ? () => {} : awaitBuildOutput(app, appleArtifacts(app, { optimize }).lock, () => console.error(`waiting for the Apple build of ${app.name} already running`));
   const cleanup = [], beside = []; // what to remove, and the steps started beside the build, when it ends

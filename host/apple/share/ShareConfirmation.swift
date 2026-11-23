@@ -116,10 +116,28 @@ public final class ExactShareConfirmationViewController: UIViewController {
     private var save: ShareSave?
     private var failure: Error?
     private var requestEnded = false
+    #if EXACT_SHARE_HANDLE
+    /// The app's handler (ShareHandle.swift); nil takes the share as an app without one does. A test sets its own.
+    public var handle: ShareHandling? = ShareHandler(bundle: .main).map { handler -> ShareHandling in
+        { members, withdrawn, answer in handler.run(members, withdrawn: withdrawn, answer: answer) }
+    }
+    /// How long the sheet waits for the handler before the share goes to the inbox; a test shortens it.
+    public var handleBound = ShareHandler.bound + 1
+    private var handled: HandledShare?
+    /// The handler's line, under the app's name.
+    private let handlerLine = UILabel()
+    /// The handler's line as it shows; nil when there is none.
+    public var line: String? { handlerLine.isHidden ? nil : handlerLine.text }
+    /// Whether the checkmark is showing: the share is in the inbox, or the handler took it.
+    public var confirmed: Bool { !mark.isHidden }
+    /// Whether the save is over, written, taken or not; a test waits for it.
+    public var saveEnded: Bool { handled?.ended ?? save?.ended ?? false }
+    #else
     /// Whether the checkmark is showing: the share is in the inbox.
     public var confirmed: Bool { !mark.isHidden }
     /// Whether the save is over, written or not; a test waits for it.
     public var saveEnded: Bool { save?.ended ?? false }
+    #endif
 
     public override func loadView() {
         label.text = name
@@ -131,6 +149,18 @@ public final class ExactShareConfirmationViewController: UIViewController {
         mark.isHidden = true
         progress.startAnimating()
         [progress, mark, label].forEach(content.addArrangedSubview)
+        #if EXACT_SHARE_HANDLE
+        handlerLine.font = .preferredFont(forTextStyle: .subheadline)
+        handlerLine.adjustsFontForContentSizeCategory = true
+        handlerLine.textColor = .secondaryLabel
+        handlerLine.textAlignment = .center
+        handlerLine.numberOfLines = 4
+        handlerLine.lineBreakMode = .byTruncatingTail
+        // VoiceOver reads it as the name's value, from the one element the confirmation moves to.
+        handlerLine.isAccessibilityElement = false
+        handlerLine.isHidden = true
+        content.addArrangedSubview(handlerLine)
+        #endif
         content.axis = .vertical
         content.alignment = .center
         content.spacing = 12
@@ -147,6 +177,17 @@ public final class ExactShareConfirmationViewController: UIViewController {
 
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        #if EXACT_SHARE_HANDLE
+        if let handle {
+            guard handled == nil else { return }
+            // The spinner is drawn before the handler boots: no app code runs before the host's first frame.
+            handled = HandledShare.start(context?.inputItems as? [NSExtensionItem] ?? [], info: info, container: container, handle: handle, bound: handleBound) { [weak self] outcome in
+                self?.show(outcome)
+            }
+            if handled == nil { fail(NSError(domain: "exact.share", code: 1, userInfo: [NSLocalizedDescriptionKey: "The app's shared container is not available."])) }
+            return
+        }
+        #endif
         guard save == nil else { return }
         save = ShareInboxWriter.save(context?.inputItems as? [NSExtensionItem] ?? [], info: info, container: container) { [weak self] error in
             guard let self else { return }
@@ -164,8 +205,32 @@ public final class ExactShareConfirmationViewController: UIViewController {
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         save?.withdraw()
+        #if EXACT_SHARE_HANDLE
+        handled?.withdraw()
+        #endif
         end(confirmed ? nil : failure ?? CocoaError(.userCancelled))
     }
+
+    #if EXACT_SHARE_HANDLE
+    /// The handled share's end: the checkmark, with the handler's line under the name when it took the share and gave
+    /// one, held for two seconds to be read; or an alert.
+    private func show(_ outcome: ShareHandled) {
+        progress.stopAnimating()
+        let taken: String?
+        switch outcome {
+        case .failed(let error): return fail(error)
+        case .saved: taken = nil
+        case .taken(let text): taken = text
+        }
+        mark.isHidden = false
+        handlerLine.text = taken
+        handlerLine.isHidden = taken == nil
+        label.accessibilityValue = taken
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        postAccessibility(.layoutChanged, label)
+        DispatchQueue.main.asyncAfter(deadline: .now() + (taken == nil ? ShareInboxWriter.confirmation : 2 * ShareInboxWriter.confirmation)) { self.end(nil) }
+    }
+    #endif
 
     /// Ends the request, once: completed, or cancelled with `error`.
     private func end(_ error: Error?) {

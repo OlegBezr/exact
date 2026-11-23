@@ -33,6 +33,11 @@ mod entry;
 pub mod pool;
 mod unsettled;
 pub use entry::entry_identifier;
+/// The share handler's entry kind (LLP 1133.024 D4, amended 2026-11-22): its
+/// plan, `plans/share.plan`, holds the one source `share_target.handle` names
+/// as its `snapshot_refresh`, which takes the share's members and answers an
+/// outcome. No widget, activity or watch entry may take the name.
+pub const SHARE_ENTRY: &str = "share";
 /// ActivityKit's ordered placement identities (LLP 1126.001 WP8).
 pub const ACTIVITY_PLACEMENTS: [&str; 8] = [
     "lockScreen",

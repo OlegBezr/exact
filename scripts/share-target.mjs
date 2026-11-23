@@ -39,13 +39,16 @@ export function shareTargetProblems(manifest) {
   }));
   const names = [target.params?.title, target.params?.text, target.params?.url, ...files.map(f => f.name)].filter(Boolean);
   for (const name of new Set(names.filter((n, i) => names.indexOf(n) !== i))) problems.push(`share_target.params: the parameter ${name} is named twice`);
-  if (applePresentation(target) === 'confirmation' && target.apple.postTitle !== undefined)
+  if (applePresentation(target) === 'confirmation' && target.apple?.postTitle !== undefined)
     problems.push('share_target.apple.postTitle: "presentation": "confirmation" shows no compose sheet, so there is no post button to name');
+  if (target.handle !== undefined && target.apple?.presentation === 'compose')
+    problems.push('share_target.handle answers in Apple\'s confirmation, which shows its line under the checkmark; remove "presentation": "compose" (the confirmation is the default with a handler)');
   return problems;
 }
 
 /** How Apple's share extension presents (D4, D6): `compose`, the sheet whose Post writes the share, or `confirmation`,
- * no editor: choosing the app writes the share and shows the app's name under a checkmark. */
+ * no editor: choosing the app writes the share and shows the app's name under a checkmark. The iOS extension of an
+ * app with a handler defaults to the confirmation instead (`packageShareExtension`). */
 export const applePresentation = target => target.apple?.presentation ?? 'compose';
 
 /** Whether Apple's share extension asks Safari for a shared page's details (D4): when the app maps `url`. Safari then

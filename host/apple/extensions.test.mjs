@@ -114,6 +114,68 @@ test.skipIf(process.platform !== 'darwin')("the share extension compiles the pre
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// LLP 1133.024 D4 (amended 2026-11-22): an app with a handler gets an extension that links the cohort's ExactCore and
+// carries the bake's plans, in the confirmation by default; given no framework (the Mac) it is built as an app
+// without one has it. Its profile, and
+// the app's, must grant the shared Keychain group.
+test.skipIf(process.platform !== 'darwin')('a share handler links the runtime into the extension, which then needs the Keychain group', async () => {
+  const { runApple } = await import('./build.mjs');
+  const dir = mkdtempSync(resolve(tmpdir(), 'exact-share-handler-'));
+  const target = { action: '/share', params: { text: 'text' }, handle: 'submitShared' };
+  const packaged = shared => {
+    const bundle = resolve(dir, `${!!shared}`);
+    let args;
+    mkdirSync(resolve(bundle, 'plans'), { recursive: true });
+    writeFileSync(resolve(bundle, 'plans/share.plan'), 'plan');
+    writeFileSync(resolve(bundle, 'Info.plist'), plistFile({ CFBundleVersion: '1', UIDeviceFamily: [1], CFBundleSupportedPlatforms: ['iPhoneSimulator'], ExactWidgetGeneration: 'g1', ExactKeychainAccessGroup: 'TEAM.dev.exact.handler' }));
+    const extension = packageShareExtension({
+      app: { id: 'dev.exact.handler', dir, displayName: 'Fixture', manifest: { share_target: target } }, shared,
+      bundle, directory: resolve(bundle, 'build'), sdk: '/sdk', triple: 'fixture', group: 'group.dev.exact.handler', entitlements: plistFile({}), sign() {},
+      runApple: (command, a, options) => {
+        if (command === 'plutil') return runApple(command, a, options);
+        if (a.includes('swiftc')) { args = a; copyFileSync('/usr/bin/true', a[a.indexOf('-o') + 1]); }
+        return { status: 0 };
+      },
+    });
+    const info = readFileSync(resolve(extension, 'Info.plist'), 'utf8');
+    return { args, info, plans: existsSync(resolve(extension, 'plans/share.plan')), sources: args.filter(a => a.endsWith('.swift')).map(a => basename(a)), defines: args.filter((a, i) => args[i - 1] === '-D') };
+  };
+  try {
+    const shared = { framework: resolve(dir, 'core/ExactCore.framework'), snapshotArchive: resolve(dir, 'core/libExactSnapshot.a') };
+    const handled = packaged(shared), plain = packaged(null);
+    expect(handled.sources).toEqual(['ShareHandle.swift', 'ShareInbox.swift', 'ShareConfirmation.swift']);
+    expect(handled.defines).toEqual(['EXACT_SHARE_HANDLE', 'EXACT_INSPECT']);
+    expect(handled.args).toContain(shared.snapshotArchive);
+    expect(handled.args.join(' ')).toContain('-framework ExactCore');
+    expect(handled.plans).toBe(true);
+    for (const [key, value] of [['ExactShareHandle', 'submitShared'], ['ExactKeychainAccessGroup', 'TEAM.dev.exact.handler']])
+      expect(handled.info).toContain(`<key>${key}</key><string>${value}</string>`);
+    // The Mac's extension runs no handler, so it keeps the compose sheet the app left unsaid.
+    expect(plain.sources).toEqual(['ShareInbox.swift', 'ShareViewController.swift']);
+    expect([plain.defines, plain.plans, plain.info.includes('ExactShareHandle')]).toEqual([[], false, false]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  const id = 'dev.exact.handler', group = `group.${id}`, keychain = [`TEAM.${id}`];
+  const profile = (suffix, extra = {}) => ({ appId: `TEAM.${id}${suffix}`, name: `Handler${suffix}`, prefix: 'TEAM', team: 'TEAM', method: 'development',
+    expires: new Date('2099-01-01'), dev: true, devices: ['PHONE'], groups: [group], keychain: [], certificates: ['A'], ...extra });
+  const choose = installed => entryProfiles({ app: { id, manifest: { share_target: target } }, udid: 'PHONE', named: null, team: null, installed });
+  expect(() => choose([profile('', { keychain }), profile('.share')])).toThrow(`the Keychain group TEAM.${id}`);
+  expect(() => choose([profile(''), profile('.share', { keychain })])).toThrow(`the Keychain group TEAM.${id}`);
+  const both = [profile('', { keychain }), profile('.share', { keychain })];
+  expect(choose(both)).toEqual({ app: both[0], share: both[1] });
+  // The signed entitlements match what the profiles were chosen for: the share extension the group and the Keychain
+  // group alone, and an alarm's extension, which joins only with a widget or Live Activity, neither.
+  const { entitlements } = await import('./build.mjs');
+  const app = { id, manifest: { share_target: target } };
+  const signed = (bundle, options = {}) => entitlements(bundle, 'TEAM', true, null, { prefix: 'TEAM', ...options });
+  const share = signed({ id: `${id}.share`, manifest: {} }, { inboxGroup: group, keychain: id });
+  expect(share).toContain(`<key>keychain-access-groups</key><array><string>TEAM.${id}</string></array>`);
+  expect(share).toContain(`<key>com.apple.security.application-groups</key><array><string>${group}</string></array>`);
+  expect(share).not.toContain('associated-domains');
+  expect(signed(app)).toContain(`<string>TEAM.${id}</string>`);
+  const alarm = signed({ ...app, id: `${id}.widgets`, widgetAppId: id });
+  expect([alarm.includes('application-groups'), alarm.includes('keychain-access-groups')]).toEqual([false, false]);
+});
+
 // LLP 1133.024 D4 (amended 2026-11-15): what Exact's script answers Safari for a page. The extension's half of
 // the same table is ShareExtensionTests' merge test.
 test("the share extension's page script answers the page's title, its canonical web link or location as url, and a location that differs", () => {

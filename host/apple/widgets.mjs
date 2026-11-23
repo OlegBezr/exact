@@ -40,6 +40,12 @@ export const activityEntries = app => app.manifest.live_activities ?? [];
 /** Whether the app has an entry of either kind: what the extension, the shared framework, the App Group and the
  * Keychain group are gated on (LLP 1126.001 WP13). */
 export const hasEntries = app => platformWidgetEntries(app).length > 0 || activityEntries(app).length > 0;
+/** Whether the iOS share extension runs the app's `share_target.handle` (LLP 1133.024 D4, amended 2026-11-22). */
+export const shareHandle = app => typeof app.manifest.share_target?.handle === 'string';
+/** Whether an iOS app and an extension of its share one cohort (LLP 1126 D8): a widget, a Live Activity or a share
+ * handler. The shared framework, the App Group's generations and the Keychain group are gated on it; the widget
+ * extension on `hasEntries` alone. */
+export const inCohort = app => hasEntries(app) || shareHandle(app);
 /** What an iOS app's widget extension's binary and Metadata.appintents are generated from, as one digest, which a
  * development archive records (receipt `build.widgets`). A repack keeps the base's extension binary only when this is
  * the base's (host/apple/repack.mjs) and writes everything else of the extension again (plans, TypeScript, Info.plist).
@@ -157,12 +163,12 @@ export function entryProfiles({ app, udid, required = [], values = {}, installed
     installed = installed.filter(p => p.team === team);
     if (!coveringProfiles(udid, app.id, installed).length) throw missingDevelopmentProfile(udid, app.id, team, phoneName);
   }
-  const group = widgetGroup(app), widgets = hasEntries(app), push = activityEntries(app).some(entry => entry.push === true);
-  const extensions = [...(widgets ? [['extension', widgetId(app)]] : []), ...(app.manifest.share_target ? [['share', shareId(app)]] : [])];
+  const group = widgetGroup(app), cohort = inCohort(app), push = activityEntries(app).some(entry => entry.push === true);
+  const extensions = [...(hasEntries(app) ? [['extension', widgetId(app)]] : []), ...(app.manifest.share_target ? [['share', shareId(app)]] : [])];
   const shared = prefix => `${prefix}.${app.id}`;
   const wants = (id, prefix) => [
     { has: p => p.groups.includes(group), missing: `the App Group ${group}`, portal: `App Groups (${group})` },
-    ...(widgets && id !== shareId(app) ? [{ has: p => p.keychain.includes(`${p.prefix}.*`) || p.keychain.includes(shared(p.prefix)), missing: `the Keychain group ${shared(prefix)}`, portal: `Keychain Sharing (the group ${shared(prefix)}, or the team's ${prefix}.*)` }] : []),
+    ...((id === shareId(app) ? shareHandle(app) : cohort) ? [{ has: p => p.keychain.includes(`${p.prefix}.*`) || p.keychain.includes(shared(p.prefix)), missing: `the Keychain group ${shared(prefix)}`, portal: `Keychain Sharing (the group ${shared(prefix)}, or the team's ${prefix}.*)` }] : []),
     ...(id === app.id && push && !required.includes('aps-environment') ? [{ has: p => allowsEntitlement(p, 'aps-environment'), missing: 'aps-environment (development on a development profile, production otherwise; an activity takes pushes)', portal: 'Push Notifications' }] : []),
     ...(id === app.id ? required.map(name => ({ has: p => allowsEntitlement(p, name, values), missing: name === 'aps-environment' ? 'aps-environment (development on a development profile, production otherwise)' : name, portal: name === 'aps-environment' ? 'Push Notifications' : name })) : []),
   ];

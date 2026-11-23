@@ -89,6 +89,19 @@ setting. Take: the discovery of alternates from catalogs, where every extra
 out: Android, until its own RFC (LLP 1163.000 D5); tvOS, until a consumer asks;
 the Mac's Dock tile; switching without the person's tap.
 
+**Expanded (Charlie, 2026-11-22, #1273, "1 and 2: recs ok"; LLP 1133.024 D4,
+amended):** a share target may name a data source, `share_target.handle`, that
+the iOS share extension runs headless on the widget refresh's runtime, so a
+share is submitted and its answer shown in the sheet without opening the app:
+`done` shows a line under the checkmark, `refused` an alert, and `open` sends
+the share to the inbox and `action` as before. The extension of an app that
+names one joins the widget cohort (LLP 1126 D8); one that names none is
+unchanged. The consumer is #1273's league app. It lands once the extension's
+peak memory with the runtime, measured on an iPhone, is under half the measured
+ceiling (LLP 1126.000 §1.4). Take: none offered; waived by Charlie. Still out:
+a handler on the Mac, Android and the web; files in a handled share; a secret
+saved from the extension; a composer of the app's own in the sheet.
+
 **Expanded (Charlie, 2026-10-11, events ruling):** `keycapture=` admits DOM
 capture-phase key dispatch for the coding-agent desktop app's early shortcuts;
 `focusin`/`focusout` admit bubbling subtree focus observation for the clipped

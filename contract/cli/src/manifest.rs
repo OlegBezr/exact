@@ -13,6 +13,7 @@ mod controls;
 pub use controls::{Control, ControlAction};
 mod watch;
 pub use watch::{WatchEntry, WatchSync, WATCH_KIND};
+mod share;
 mod variant;
 
 /// The unsuffixed id of the selected variant whose id is `id` (LLP 1030.008

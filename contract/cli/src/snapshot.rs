@@ -6,6 +6,8 @@ mod entry;
 mod inline;
 mod paragraphs;
 mod refresh;
+mod share;
+pub use share::compile_share;
 pub(crate) mod values;
 pub use refresh::{bake_app, bake_app_with_warnings, check_refreshes, entries, source_plan};
 

@@ -229,3 +229,65 @@ fn an_entry_refresh_waits_for_a_watch_import_and_never_asks_its_source_inside_on
         }
     }
 }
+
+/// The share handler's entry (LLP 1133.024 D4, amended 2026-11-22) boots a plan
+/// with no view, hands its source the share's members from the input buffer,
+/// returns the source's answer, and takes the share sheet's 10 s bound where a
+/// widget's refresh takes 900 ms.
+#[test]
+fn the_share_handler_boots_without_a_view_and_answers_the_share() {
+    struct Handler;
+    impl exact_runner::DataSource for Handler {
+        fn app_id(&self) -> &str {
+            "dev.test.share"
+        }
+        fn query(&mut self, source: &str, args: &[Value]) -> Result<Value, DataError> {
+            assert_eq!(source, "submitShared");
+            let [Value::Record(members)] = args else {
+                panic!("{args:?}")
+            };
+            let text = match &members[1] {
+                Value::Option(Some(text)) => text.as_str().unwrap().to_owned(),
+                other => panic!("{other:?}"),
+            };
+            assert_eq!(members[0], Value::Option(None), "an absent title is none");
+            Ok(Value::record(vec![
+                Value::str(if text.starts_with("Puzzle") {
+                    "done"
+                } else {
+                    "refused"
+                }),
+                Value::Option(Some(std::rc::Rc::new(Value::str(&format!("Got {text}"))))),
+            ]))
+        }
+    }
+    let plan = contract::snapshot::compile_share("dev.test.share", "submitShared")
+        .unwrap()
+        .encode();
+    let mut bridge = Bridge::<Handler>::new();
+    bridge.input_write(&[plan.as_slice(), b"share"].concat());
+    let n = bridge.boot_entry(plan.len(), 5, 0, 0, Handler, Hooks::none(), 1.0, 1.0);
+    let boot: serde_json::Value = serde_json::from_slice(bridge.output_bytes(n as usize)).unwrap();
+    assert!(boot["error"].is_null(), "{boot}");
+    let ask = |bridge: &mut Bridge<Handler>, share: &[u8], remaining: f64| {
+        bridge.input_write(share);
+        let n = bridge.entry_timeline_module(0.0, remaining, share.len(), &[], &[]);
+        serde_json::from_slice::<serde_json::Value>(bridge.output_bytes(n as usize)).unwrap()
+    };
+    assert_eq!(
+        ask(
+            &mut bridge,
+            br#"{"text":"Puzzle 0:39","url":null}"#,
+            9_000.0
+        ),
+        serde_json::json!({"outcome": "done", "message": "Got Puzzle 0:39"})
+    );
+    assert_eq!(
+        ask(&mut bridge, br#"{"text":"hello"}"#, 9_000.0)["outcome"],
+        "refused"
+    );
+    assert!(
+        ask(&mut bridge, br#"{"text":"Puzzle"}"#, 10_001.0)["error"].is_string(),
+        "past the bound"
+    );
+}

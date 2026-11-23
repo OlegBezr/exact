@@ -19,7 +19,9 @@ pub fn entries(app: &Path) -> Result<BTreeMap<String, Entry>, String> {
 /// Check immediate refresh answers; pending and unavailable answers are checked
 /// by their source declarations. No host executes requests during this check.
 /// Epoch zero is the bake's unknown date, as on the app's data seam, and a
-/// configured widget's refresh is asked with its defaults.
+/// configured widget's refresh is asked with its defaults. The share handler
+/// is asked with an empty share; a throw there is its `open` on the device
+/// (LLP 1133.024 D4), so only a missing source or a wrong answer fails.
 pub fn check_refreshes(
     entries: &BTreeMap<String, Entry>,
     data: &mut impl DataSource,
@@ -31,21 +33,28 @@ pub fn check_refreshes(
         };
         let signature = plan.source(refresh);
         let name = plan.str(signature.name);
+        let share = exact_runner::entry::is_share_handler(plan);
+        let kind = if share {
+            "share_target.handle".to_owned()
+        } else {
+            format!("widget {kind}")
+        };
         data.bind(plan);
         let mut store = Store::new(data.grants(), []);
         let args = exact_runner::entry::refresh_args(plan, 0.0, None)
-            .map_err(|e| format!("widget {kind}: refresh `{name}`: {e}"))?;
+            .map_err(|e| format!("{kind}: refresh `{name}`: {e}"))?;
         match data.answer(&mut store, name, &args) {
             Ok(Answer::Now(value)) => {
                 if let Some(mismatch) = mismatch(plan, signature.ty, &value, "result") {
-                    return Err(format!("widget {kind}: refresh `{name}` {mismatch}; repair the data module to match its declared source signature"));
+                    return Err(format!("{kind}: refresh `{name}` {mismatch}; repair the data module to match its declared source signature"));
                 }
             }
             Err(DataError::UnknownSource(_)) => {
                 return Err(format!(
-                "widget {kind}: unknown refresh `{name}`; implement the declared refresh source"
-            ))
+                    "{kind}: unknown refresh `{name}`; implement the declared refresh source"
+                ))
             }
+            Err(DataError::Failed(..)) if share => {}
             Ok(Answer::Later(request)) => {
                 if let Some(token) = request.continuation {
                     data.discard(token);
@@ -59,7 +68,7 @@ pub fn check_refreshes(
                 | DataError::Failed(_, why, _),
             ) => {
                 return Err(format!(
-                    "widget {kind}: refresh `{name}` failed at bake: {why}; repair the data module"
+                    "{kind}: refresh `{name}` failed at bake: {why}; repair the data module"
                 ));
             }
             // An async source or a Rust source seeded away in the dev producer

@@ -54,13 +54,26 @@ pub fn slots(
 
 /// A snapshot entry's refresh arguments: the date and, for a configured
 /// widget, its placement's chosen values, decoded as [`slots`] decodes them.
-/// No configuration is every parameter's default.
+/// No configuration is every parameter's default. The share handler's entry
+/// takes the share in `configuration`'s place ([`share_arg`]) and no date.
 pub fn refresh_args(
     plan: &Plan,
     now: f64,
     configuration: Option<&[u8]>,
 ) -> Result<Vec<Value>, String> {
     let refresh = plan.source(plan.snapshot_refresh.ok_or("not a snapshot entry")?);
+    if is_share_handler(plan) {
+        let param = refresh
+            .params
+            .iter()
+            .next()
+            .ok_or("the share handler takes the share")?;
+        return Ok(vec![share_arg(
+            plan,
+            plan.source_param(param).ty,
+            configuration,
+        )?]);
+    }
     let mut args = vec![Value::Number(now)];
     if let Some(parameter) = refresh.params.iter().nth(1) {
         args.push(chosen(
@@ -70,6 +83,53 @@ pub fn refresh_args(
         )?);
     }
     Ok(args)
+}
+
+/// Whether `plan` is the share handler's entry (LLP 1133.024 D4, amended
+/// 2026-11-22): its kind, and a source that takes a record where a widget's
+/// refresh takes the date, so a widget an app named `share` is still one.
+pub fn is_share_handler(plan: &Plan) -> bool {
+    plan.snapshot_entry == exact_plan::SHARE_ENTRY
+        && plan.snapshot_refresh.is_some_and(|id| {
+            plan.source(id).params.iter().next().is_some_and(|param| {
+                plan.type_(plan.source_param(param).ty).kind == TypeKind::Record
+            })
+        })
+}
+
+/// The share handler's argument (LLP 1133.024 D4, amended 2026-11-22): the
+/// share's members as JSON, `{"title", "text", "url"}`, as the record of
+/// optional strings its source takes. A member absent, null or not a string
+/// is none; none of them is a share with nothing in it.
+fn share_arg(plan: &Plan, ty: TypesId, share: Option<&[u8]>) -> Result<Value, String> {
+    let json: serde_json::Value = match share {
+        Some(bytes) => serde_json::from_slice(bytes).map_err(|e| format!("share: {e}"))?,
+        None => serde_json::Value::Null,
+    };
+    let shape = plan.type_(ty);
+    if shape.kind != TypeKind::Record {
+        return Err("the share handler's argument is not a record".into());
+    }
+    shape
+        .fields
+        .iter()
+        .map(|id| {
+            let field = plan.field(id);
+            let row = plan.type_(field.ty);
+            let string = row.elem.map(|e| plan.type_(e).kind) == Some(TypeKind::String);
+            if row.kind != TypeKind::Option || !string {
+                return Err(format!(
+                    "share: `{}` is not an optional string",
+                    plan.str(field.name)
+                ));
+            }
+            let member = json.get(plan.str(field.name)).and_then(|v| v.as_str());
+            Ok(Value::Option(
+                member.map(|m| std::rc::Rc::new(Value::str(m))),
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map(Value::record)
 }
 
 /// A configuration record of type `ty` from a placement's JSON. LLP 1126:

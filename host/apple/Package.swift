@@ -222,9 +222,11 @@ let tests: [Target] = [
     // The video arm's media session coordinator (LLP 1098 D7), driven by the
     // tests over stand-in players; the arm itself is build.mjs's dylib.
     .target(name: "ExactNowPlaying", path: "videoarm", exclude: ["VideoArm.swift", "PictureInPicture.swift"], sources: ["NowPlaying.swift"]),
-    // The share extension's Swift (LLP 1133.024 D4), which links no Exact runtime; build.mjs compiles the appex itself,
-    // with the reading of Safari's page details only for an app that maps `url`.
-    .target(name: "ExactShare", path: "share", exclude: ["SharePage.js"], swiftSettings: [.define("EXACT_SHARE_PAGE")]),
+    // The share extension's Swift (LLP 1133.024 D4); build.mjs compiles the appex itself, with the reading of Safari's
+    // page details only for an app that maps `url`, and the handler and the runtime it links only for an app that
+    // names one (D4, amended 2026-11-22). The tests compile both.
+    .target(name: "ExactShare", dependencies: ["ExactCore", "ExactSnapshot"], path: "share", exclude: ["SharePage.js"],
+            swiftSettings: [.define("EXACT_SHARE_PAGE"), .define("EXACT_SHARE_HANDLE")]),
     // The inbox as an app that maps no `url` compiles it, without `EXACT_SHARE_PAGE`.
     .target(name: "ExactSharePlain", path: "tests/ExactSharePlain"),
     // The test bundle installs the composition as it loads, before any test
