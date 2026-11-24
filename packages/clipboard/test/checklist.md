@@ -4,6 +4,15 @@ The fixture is `packages/clipboard/test/fixture`, made into an app by
 `fixture.mjs` (`EXACT_CLIPBOARD_FIXTURE=<dir>` keeps it). Build it from the
 commit under test. Each step says what you should see.
 
+## iOS paste permission
+
+Build the fixture on an iOS simulator with `bun exact.mjs ios --sim <udid>`.
+Put text on its pasteboard with `printf %s 'External paste' | xcrun simctl pbcopy <udid>`.
+Open the fixture and tap **Paste**. On iOS 26.5 the system names both apps in its
+paste prompt. **Allow Paste** displays the seeded text. Tap **Copy with Contract**
+and then **Paste**. The fixture displays “Contract copy” without another prompt.
+The agent round trip uses a private pasteboard and needs no system permission.
+
 ## macOS, the real pasteboard
 
 Run the fixture with `EXACT_DEVICE=real` (`bun exact.mjs agent macos`
