@@ -16,7 +16,12 @@ import { liveById, installFits, installSymbolEffects } from './navigation.js';
 export { animationClocks, launchVisits } from './navigation.js';
 import { launchLocation as browserLocation } from './navigation.js';
 /** The browser's location once it is the page's own (mount.js `checkpoint`). */
-export const launchLocation = () => (checkpoint(), browserLocation());
+function pageLocation() {
+  const { alias } = checkpoint();
+  if (!alias || location.pathname !== alias.from) return browserLocation();
+  return browserLocation({ location: { pathname: alias.to, search: location.search, hash: location.hash }, performance });
+}
+export const launchLocation = pageLocation;
 export { fontFamily } from './font-family.js';
 export { cssNames } from './regions.js';
 import { Head, markDocument, projectRoots, Tabs, unopened, tp } from './document.js';

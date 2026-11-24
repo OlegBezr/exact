@@ -384,15 +384,33 @@ export async function iosTestRuns({ pkg, derived, destination, udid, env, canvas
   // (AgentAccessibility.axRuntimeLoaded): on for the hosted run, then as it was.
   if (hostedOnly.length) {
     const ax = ['com.apple.Accessibility', 'ApplicationAccessibilityEnabled'];
-    let before;
+    const { markHostedAccessibility, withAccessibilityLock } = await import('./touches.mjs');
+    let before, unmark;
     try {
       run('xcrun', ['simctl', 'bootstatus', udid, '-b']);
-      before = read('xcrun', ['simctl', 'spawn', udid, 'defaults', 'read', ...ax]);
-      run('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', ...ax, '-bool', 'true']);
+      await withAccessibilityLock(udid, () => {
+        before = read('xcrun', ['simctl', 'spawn', udid, 'defaults', 'read', ...ax]);
+        if (before.status === 0 && before.stdout.trim() === '1') return;
+        unmark = markHostedAccessibility(udid, before.status === 0 ? '0' : undefined);
+        run('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', ...ax, '-bool', 'true']);
+      });
       testRun(hosted, hostedOnly.map(t => `-only-testing:${t}`), env);
     } catch (error) { failures.push(error); }
     finally {
-      if (before) read('xcrun', ['simctl', 'spawn', udid, 'defaults', ...(before.status === 0 ? ['write', ...ax, '-bool', before.stdout.trim() === '1' ? 'true' : 'false'] : ['delete', ...ax])]);
+      if (unmark) {
+        const restore = () => {
+          const release = unmark;
+          unmark = null;
+          try { read('xcrun', ['simctl', 'spawn', udid, 'defaults', ...(before.status === 0 ? ['write', ...ax, '-bool', 'false'] : ['delete', ...ax])]); }
+          catch (error) { failures.push(error); }
+          finally { release(); }
+        };
+        try { await withAccessibilityLock(udid, restore); }
+        catch (error) {
+          if (unmark) restore(); // A busy display must not strand the setting or the hosted marker.
+          else failures.push(error);
+        }
+      }
     }
   }
   if (touchOnly.length) {

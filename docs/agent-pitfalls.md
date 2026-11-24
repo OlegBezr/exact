@@ -1860,6 +1860,9 @@ price: answers arrive `Later`, outside the action's transaction (LLP 1027.002 D1
   `scripts/agent.mjs` for dates that read as intended and stay reproducible; in a test
   file, `epoch "…"` and `time-zone "…"` lines, so a run without the flags still means it.
   Against a live backend, `--epoch now` (`epoch now`) instead.
+- **Every app launches slowly on the same iOS simulator.** An XCTest UI session can leave accessibility enabled
+  across reboots. `test ios` reports the existing settings and the commands to
+  clear them. [Timing an installed build](recipes/porting-and-release.md).
 - **A simulator measurement shows a 100–200 ms stall the app never makes.** A
   plain launch's frames hold 16.7 ms, but a run driven with `axe` shows one
   stall with no batch applied about 0.4 s after `axe` first reads the screen

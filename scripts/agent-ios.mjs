@@ -68,15 +68,15 @@ export async function openIOS({
     return await withSoftwareKeyboard(dev, () =>
       exclusiveIOS(dev.udid, id, () =>
         // An AX drive turns UIKit's accessibility runtime on for its launch (`withAccessibilityRuntime`).
-        withAccessibilityRuntime(dev.udid, touch === 'agent' && ax, () => // `ax`, not a bool of it: verify's is 'try'
-          openIOSOwned({ a, bundle, id, dev, plan, size, extra, session, hostFixture, touch, onProcess }).catch(error => {
+        withAccessibilityRuntime(dev.udid, touch === 'agent' && ax, accessibility => // `ax`, not a bool of it: verify's is 'try'
+          openIOSOwned({ a, bundle, id, dev, plan, size, extra, session, hostFixture, touch, onProcess, accessibility }).catch(error => {
             if (dev.cachedBooted) {
               try {
                 if (simulators().find(d => d.udid === dev.udid)?.state !== 'Booted') error.retrySimulator = true;
               } catch { /* preserve the launch error */ }
             }
             throw error;
-          }),
+          }), { check: !hostFixture && ax !== 'try', touches: touch !== 'agent' },
         ),
       ),
     );
@@ -103,7 +103,7 @@ function stuckLaunch(udid, pid) {
     io.status === 0 ? `the simulator's display is in ${shot}` : "the simulator's display could not be captured",
   ].join('; ');
 }
-async function openIOSOwned({ a, bundle, id, dev, plan, size, extra, session, hostFixture, touch, onProcess }) {
+async function openIOSOwned({ a, bundle, id, dev, plan, size, extra, session, hostFixture, touch, onProcess, accessibility }) {
   showSimulator(dev, true); // a person watching sees what is driven, and keeps the focus
   // Real touches (LLP 1080.000, `--touch platform`; `drag`, an authored test's drag alone): the runner starts first, so
   // its own launch never backgrounds the app.
@@ -111,6 +111,7 @@ async function openIOSOwned({ a, bundle, id, dev, plan, size, extra, session, ho
     touch !== 'agent'
       ? await openTouches({
           udid: dev.udid,
+          accessibility,
           appId: id ?? bundleId(a.crate('apple')),
           foldable: dev.type === 'iPhone-Duo',
         })

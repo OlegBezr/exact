@@ -20,7 +20,7 @@ import { boundSettings, isSettingInput, settingInputs, sourceInputChanges } from
 export { bakedSettingChanges, builtSettingLines } from '../js/bake/src/__exact_env.mjs';
 import { backendOriginSelection, literalBackendOrigin, selectBackendOrigin } from '../js/bake/src/typescript.mjs';
 import { besidePattern } from '../host/web/beside.mjs';
-import { chooseSimulator, phone, simulatorLaunch } from '../host/apple/devices.mjs';
+import { chooseSimulator, phone, simulatorLaunch, simulatorTempDirectory } from '../host/apple/devices.mjs';
 import { androidDevice } from './agent-android.mjs';
 import { bakeOutput, gpuModules, linuxBinary, moduleDirectory, pendingBuildInputs, readBuilds, resolveApp, windowsFile, shaderWatchRoots, webDist } from './app.mjs';
 import { directoryInputSnapshot, outputRoots, packageTests, watchedTree, watchOutput } from './cargo-dep-info.mjs';
@@ -1401,7 +1401,7 @@ export const cdpEscape = (call) => async () => { for (const type of ['rawKeyDown
 
 /** The lock file of a simulator's display (`['display', udid]`) or of one app on it (`[udid, bundle]`). */
 const simulatorLock = (key) => createHash('sha256').update(JSON.stringify(key)).digest('hex') + '/.lock';
-
+export const simulatorDisplayLockPath = udid => resolve(simulatorTempDirectory(), 'exact-ios-drives', simulatorLock(['display', udid]));
 /** Runs `fn` holding the simulator lock `key`, trying again every 100 ms while another process holds it: `waiting`
  *  is called at the first refusal, and after `timeout` the error says `busy(seconds)`. */
 async function holdSimulator(key, fn, { directory, timeout, busy, waiting = () => {} }) {
@@ -1420,7 +1420,7 @@ async function holdSimulator(key, fn, { directory, timeout, busy, waiting = () =
 
 /** One simulator's display, across every drive and checkout: a capture that reads it (`withDisplay`) holds it, and so
  *  does a launch, which brings its app to the front over another drive's. Runs `fn` holding it. */
-export async function simulatorDisplay(udid, fn, { directory = resolve(tmpdir(), 'exact-ios-drives'), timeout = 60000 } = {}) {
+export async function simulatorDisplay(udid, fn, { directory = resolve(simulatorTempDirectory(), 'exact-ios-drives'), timeout = 60000 } = {}) {
   return holdSimulator(['display', udid], fn, { directory, timeout, busy: (s) => `simulator ${udid}'s display busy: another drive still held it after ${s}s` });
 }
 
