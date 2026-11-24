@@ -585,6 +585,18 @@ intents; the web's Launch Handler; Windows' and Linux's system search and
 Windows App Actions; a content index larger than 5,000 entries; and remote
 icons.
 
+**Standing rule (Charlie, 2026-11-24, "recs ok"; LLP 1133.023 D7a).**
+Host observations of a showing page run as the app's, including a warm
+relaunch reported only as a showing. On a hidden page they keep the
+installed cause, with no cause or grant outside other work. Two gaps
+remain while the page shows. Later events from media a restricted call
+started and a remote Play's later reports run as the app's. Both follow
+the hidden-page rule while hidden. An identified remote Play or Pause
+handler runs as an `action`.
+
+**Out (Charlie, 2026-11-24, "recs ok"; LLP 1133.023 D7a).** Carrying
+the initiating cause with every observed event.
+
 **Expanded (Charlie, 2026-11-12, #212; LLP 1126 and LLP 1133.023):**
 Apple widgets declare fixed enum parameters for Edit Widget and watchOS
 complication recommendations. Each placement's choices reach only its snapshot
@@ -2437,5 +2449,9 @@ toolbar on the display that holds the pointer and capturing before showing
 its window, without its own Win32 monitor and capture code.
 Take: none offered; waived by Charlie, 2026-11-14, after the panel (decision
 D5: all three seats chose to build both). Still out: `getDisplayMedia`, one
-display, a region, a named window, window placement, and the desktop Linux,
-iPadOS and Android cells.
+display, a region, a named window, placing another window, and the desktop Linux, iPadOS and Android cells.
+
+**Expanded (Charlie, 2026-11-24, "recs ok").** Float may read its own window's
+`screenX`, `screenY`, `outerWidth` and `outerHeight` on macOS and the web,
+and dock, expand and constrain it on macOS with `setBounds(bounds, animate)`
+and `setAspectRatio(ratio)` (LLP 1178 D1). AppKit saves the resulting frame.
