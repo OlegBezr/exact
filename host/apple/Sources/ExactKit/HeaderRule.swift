@@ -132,19 +132,29 @@ extension NodeView {
         return childNodes
     }
 
+    package var authoredFontFamily: Int? { wrote("font_family") ? Int(number("font_family")) : nil }
+
     /// The platform's title font `base` with the typography the author
     /// wrote on this heading in its place: `font-family`, `font-weight`,
     /// `font-style` and, where `sized`, `font-size` (LLP 1115 §2, "what the
     /// author writes wins"). A row the author left unsaid stays `base`'s, so
-    /// a family alone keeps the title's size and weight. Nil when the author
-    /// wrote none of them: the title keeps the platform's own font. A written
-    /// size is the kernel's number, with Dynamic Type already applied.
-    package func authoredTitleFont(over base: PlatformFont, sized: Bool = true) -> PlatformFont? {
-        let size = sized && wrote("font_size"), weight = wrote("font_weight"), family = wrote("font_family"), slant = wrote("font_style")
-        guard size || weight || family || slant, let engine = text else { return nil }
+    /// a family alone keeps the title's size and weight. The route header
+    /// supplies its family where the heading leaves it unsaid. The kernel
+    /// has already scaled an authored size for Dynamic Type.
+    package func authoredTitleFont(over base: PlatformFont, sized: Bool = true, fallbackFamily: Int? = nil) -> PlatformFont? {
+        let size = sized && wrote("font_size"), weight = wrote("font_weight"), family = authoredFontFamily ?? fallbackFamily, slant = wrote("font_style")
+        guard size || weight || family != nil || slant, let engine = text else { return nil }
+        var baseWeight = TextEngine.cssWeight(of: base) ?? 400
+        var italic = slant && style["font_style"]?.string == "italic"
+        #if os(iOS)
+        if fallbackFamily != nil {
+            baseWeight = TextEngine.controlWeight(base)
+            if !slant { italic = base.fontDescriptor.symbolicTraits.contains(.traitItalic) }
+        }
+        #endif
         return engine.font(size: size ? number("font_size", base.pointSize) : base.pointSize,
-                           weight: weight ? min(1000, Int(number("font_weight", 400))) : TextEngine.cssWeight(of: base) ?? 400,
-                           family: family ? Int(number("font_family")) : 0,
-                           italic: slant && style["font_style"]?.string == "italic")
+                           weight: weight ? min(1000, Int(number("font_weight", 400))) : baseWeight,
+                           family: family ?? 0,
+                           italic: italic)
     }
 }

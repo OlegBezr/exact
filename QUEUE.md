@@ -2065,3 +2065,6 @@ and the Linux headless CPU renderer without claiming display frame timing.
 - The form keyboard fixture returns HTTP 404 for `drag-in.js`. Run `bun test host/web/tests/form-chrome.test.mjs -t "cancelling a prompt Return at window keydown"`.
 - The iframe message fixture serves HTML for `/rt.js`, so Chromium rejects the module before the test mounts its three frames. Run `bun test ./host/web/frame-messages.test.mjs`.
 - The press fixture serves `input-glue.js` for `/drag-in.js`. Chromium reports that the module has no `receive` export. Run `bun test ./host/web/tests/press.test.mjs -t "only the innermost pressable"`.
+- On macOS, open a route with `header font-family="Georgia"`, a heading and a text button. The native window title and toolbar item keep AppKit’s fonts (#1324).
+- On Android, open a route with `header font-family="Georgia"`, a heading and a text action. The Material top app bar draws both in its own family (#1324).
+- On tvOS, open a route with `header font-family="Georgia"`, a heading and a text button. The native bar keeps its own title and item fonts (#1324).

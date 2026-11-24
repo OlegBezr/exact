@@ -15,6 +15,7 @@ import ExactKit
 /// change projects it again.
 struct BarSource: Equatable {
     let bar: NavigationRules.Bar
+    var family: Int? = nil
     let authored: [UInt32], placed: [UInt32]
     let header: UInt32?, heading: UInt32?, title: String, level: Int, leading: [String], trailing: [String], group: String, canGoBack: Bool
 }
@@ -386,6 +387,8 @@ final class BarPress: NSObject {
     weak var host: NavigationHost?
     struct SavedForeground { let value: Any? }
     var activeForeground: SavedForeground?
+    var installedFonts: [UInt: UIFont] = [:]
+    var savedFonts: [UInt: UIFont] = [:]
     init(_ id: UInt32, _ host: NavigationHost) { self.id = id; self.host = host }
     @objc func press() {
         guard let host, let node = host.presenter.views[id] else { return }
@@ -594,6 +597,15 @@ extension NavigationHost {
         stack.faceTint.changed = { [weak self, weak nav] in
             if let nav { self?.retintBarFaces(in: nav) }
         }
+        #if os(iOS)
+        nav.navigationBar.registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self]) { [weak self, weak nav, weak stack] (_: UINavigationBar, _: UITraitCollection) in
+            guard let self, let nav, let stack, stacks[ObjectIdentifier(nav)] === stack else { return }
+            let routes = nav.stackRoutes.compactMap { $0 as? RouteController }
+            if routes.contains(where: { $0.titleInk.hasHeaderFamily }), routes.allSatisfy({ self.controllers[$0.node.id] === $0 }) {
+                prepareRoutes(routes, in: nav)
+            }
+        }
+        #endif
         nav.navigationBar.addSubview(stack.faceTint)
         return stack
     }
@@ -661,7 +673,7 @@ extension NavigationHost {
             let scroller = contentScroller(of: c), scroll = contentScrollView(of: c)
             let dataset = c.node.props["dataset"]
             func barSource(_ key: (HeaderShape.Item) -> String) -> BarSource {
-                BarSource(bar: bar, authored: shape?.authored.map(\.id) ?? [], placed: shape?.placed.map(\.id) ?? [], header: shape?.header.id, heading: shape?.heading?.id, title: shape?.title ?? "", level: shape?.level ?? 0, leading: shape?.leading.map(key) ?? [],
+                BarSource(bar: bar, family: shape?.family, authored: shape?.authored.map(\.id) ?? [], placed: shape?.placed.map(\.id) ?? [], header: shape?.header.id, heading: shape?.heading?.id, title: shape?.title ?? "", level: shape?.level ?? 0, leading: shape?.leading.map(key) ?? [],
                           trailing: shape?.trailing.map(key) ?? [], group: shape?.group?.source ?? "", canGoBack: canGoBack)
             }
             let source = barSource(\.source)
@@ -693,11 +705,11 @@ extension NavigationHost {
             segmentedTitle(shows ? shape?.segments : nil, in: c)
             richTitle(shows ? shape : nil, in: c)
             #if os(iOS)
-            let fonts = shows ? NavigationTitleInk.fonts(of: shape?.heading, level: shape?.level ?? 0, traits: c.traitCollection) : nil
+            let fonts = shows ? NavigationTitleInk.fonts(of: shape, traits: nav?.navigationBar.traitCollection ?? c.traitCollection) : nil
             #else
             let fonts: NavigationTitleInk.Fonts? = nil // tvOS's bar title font is not measured: its own stays.
             #endif
-            c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, fonts: fonts, item: c.navigationItem, bar: nav?.navigationBar, transparent: transparent)
+            c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, fonts: fonts, shape: shape, item: c.navigationItem, bar: nav?.navigationBar, transparent: transparent)
             guard c.projected != signature || !c.hatched else { continue }
             c.projected = signature
             guard presenter.session?.natives.hatchesConnected == true else { continue }
@@ -721,7 +733,7 @@ extension NavigationHost {
     /// The header shape and the bar a route shows in its stack
     private func barShape(of c: RouteController, in nav: UINavigationController?) -> (HeaderShape?, NavigationRules.Bar) {
         guard nav.map(barShows) ?? false else { return (nil, .hidden) }
-        return (HeaderShape.bar(of: c.node, back: container?.props["navigationBack"], backIsUIKits: c.pushed), bar(of: c.node, pushed: c.pushed))
+        return (HeaderShape.bar(of: c.node, back: container?.props["navigationBack"], backIsUIKits: c.pushed, traits: nav?.navigationBar.traitCollection), bar(of: c.node, pushed: c.pushed))
     }
 
     /// An app changed `c`'s top or bottom selection, from a hatch, a menu action or anywhere else,
@@ -1419,13 +1431,7 @@ extension NavigationHost {
         item.tintColor = i.hasPaintedFace ? nil : color ?? i.accent
         // UIKit's font where none is written, also once a kept item's author removes theirs.
         let font = image == nil ? i.font : nil
-        if item.titleTextAttributes(for: .normal)?[.font] as? UIFont != font {
-            for state: UIControl.State in [.normal, .highlighted, .disabled, .selected, .focused] {
-                var attributes = item.titleTextAttributes(for: state) ?? [:]
-                attributes[.font] = font
-                item.setTitleTextAttributes(attributes.isEmpty ? nil : attributes, for: state)
-            }
-        }
+        press.apply(font: font, to: item, family: i.family, source: presenter.views[i.id])
         var highlighted = item.titleTextAttributes(for: .highlighted) ?? [:]
         if let value = i.activeTitleColor, let button = presenter.views[i.id] {
             if press.activeForeground == nil { press.activeForeground = .init(value: highlighted[.foregroundColor]) }

@@ -57,10 +57,11 @@ struct HeaderShape: Equatable {
         /// is a new colour (`applyAccentTint`), so `face` names it by identity.
         let accent: UIColor?
         /// A native button's title font where its face's rows give a size or
-        /// a weight (LLP 1069.011.001 D4), as its in-page control draws it:
+        /// a weight (LLP 1069.011.001 D4), or the route header gives a family:
         /// the item's title in it, so its glass fits those words. Nil is
         /// UIKit's bar title font.
         let font: UIFont?
+        let family: Int?
         let active: NativeButtonState
         let activeTitleColor: BatchValue?
         var supportsActiveColor: Bool { symbol == nil && !hasPaintedFace && !hosted }
@@ -73,11 +74,26 @@ struct HeaderShape: Equatable {
         /// `testTheUnsaidTitleFontIsUIKits`); regular before it, semibold
         /// under Bold Text. A row its author left unsaid keeps this one's
         /// size or weight; the kernel has stepped the weights it sends.
-        static func titleFont(bold: Bool) -> UIFont {
-            if #available(iOS 26.0, *), LinkedDesign.liquidGlass { return .systemFont(ofSize: 17, weight: bold ? .bold : .medium) }
-            return .systemFont(ofSize: 17, weight: bold ? .semibold : .regular)
+        static func titleFont(bold: Bool, size: CGFloat = 17) -> UIFont {
+            if #available(iOS 26.0, *), LinkedDesign.liquidGlass { return .systemFont(ofSize: size, weight: bold ? .bold : .medium) }
+            return .systemFont(ofSize: size, weight: bold ? .semibold : .regular)
         }
-        init(_ button: NodeView, hosted: Bool = false) {
+        #if os(iOS)
+        static func familyFont(_ family: Int, engine: TextEngine, traits: UITraitCollection, prominent: Bool = false, rows: NodeStyle = [:]) -> UIFont {
+            let headline = UIFont.preferredFont(forTextStyle: .headline, compatibleWith: traits.inlineBarTraits)
+            let base: UIFont
+            if #available(iOS 26.0, *), prominent { base = headline }
+            else { base = titleFont(bold: traits.legibilityWeight == .bold, size: headline.pointSize) }
+            return familyFont(family, engine: engine, base: base, rows: rows)
+        }
+        static func familyFont(_ family: Int, engine: TextEngine, base: UIFont, rows: NodeStyle = [:]) -> UIFont {
+            return engine.font(size: rows["font_size"]?.number.map { CGFloat($0) } ?? base.pointSize,
+                               weight: rows["font_weight"]?.number.map(Int.init) ?? TextEngine.controlWeight(base),
+                               family: family, italic: base.fontDescriptor.symbolicTraits.contains(.traitItalic))
+        }
+        #endif
+        init(_ button: NodeView, hosted: Bool = false, family: Int? = nil, barTraits: UITraitCollection? = nil) {
+            self.family = family
             var symbol: String?, text = "", ink: (NodeView, String)?
             func walk(_ node: NodeView) {
                 for child in Self.shown(node) {
@@ -136,8 +152,12 @@ struct HeaderShape: Equatable {
             font = nil
             #else
             let rows = face?.rows.title ?? [:]
-            font = rows["font_size"] != nil || rows["font_weight"] != nil
-                ? ButtonConfigurationIOS.font(Self.titleFont(bold: button.traitCollection.legibilityWeight == .bold), rows: rows) : nil
+            if let family, let engine = button.text, !hosted, symbol == nil, !hasPaintedFace {
+                font = Self.familyFont(family, engine: engine, traits: barTraits ?? button.traitCollection, prominent: prominent, rows: rows)
+            } else {
+                font = rows["font_size"] != nil || rows["font_weight"] != nil
+                    ? ButtonConfigurationIOS.font(Self.titleFont(bold: button.traitCollection.legibilityWeight == .bold), rows: rows) : nil
+            }
             #endif
             // The platform's tint unless the author said otherwise (LLP
             // 1115.000 D2): a `color` written on the symbol, else on the title's
@@ -208,6 +228,7 @@ struct HeaderShape: Equatable {
         }
     }
     let header: NodeView
+    let family: Int?
     let heading: NodeView?
     package let title: String
     let level: Int
@@ -236,7 +257,7 @@ struct HeaderShape: Equatable {
     /// `back` names the stack's Back control, left to UIKit's back button
     /// when there is one (`backIsUIKits`): the root of a presented stack
     /// has none, so there it is an item like the others.
-    init?(route: NodeView, back: String?, backIsUIKits: Bool = true, projected: Bool = false) {
+    init?(route: NodeView, back: String?, backIsUIKits: Bool = true, projected: Bool = false, barTraits: UITraitCollection? = nil) {
         // What is header-shaped is the kernel's rule, read over this route's views (`HeaderRule`, LLP 1115.001 D11).
         guard let rule = HeaderRule(route: route, back: back, backIsPlatforms: backIsUIKits, projected: projected) else { return nil }
         // Every role the header rule assigns can remain authored. In
@@ -265,6 +286,13 @@ struct HeaderShape: Equatable {
         let segments = rule.segments.flatMap { projects($0) ? $0 : nil }
         let tap = rule.tap.flatMap { projects($0) ? $0 : nil }
         header = rule.header
+        #if os(iOS)
+        // Only a route projects its header family onto a navigation bar.
+        let family = barTraits == nil ? nil : rule.header.authoredFontFamily
+        #else
+        let family: Int? = nil
+        #endif
+        self.family = family
         // A heading of only white space names nothing (accname trims it);
         // UIKit would take it as a title and show a pair of quotes
         let text = heading?.accessibleText ?? ""
@@ -275,7 +303,7 @@ struct HeaderShape: Equatable {
         // the title's to read either.
         let readouts = rule.readouts.filter(projects)
         let apart = rule.items + rule.readouts + [rule.search, rule.segments].compactMap { $0 } + authored
-        let group = heading.flatMap { HeaderTitle(header: rule.header, heading: $0, tap: tap, apart: apart, kept: authored) }
+        let group = heading.flatMap { HeaderTitle(header: rule.header, heading: $0, tap: tap, apart: apart, kept: authored, family: family) }
         #if os(tvOS)
         // tvOS's bar has no item that focus passes by undimmed: none hosted.
         let hosted: [NodeView] = []
@@ -287,7 +315,7 @@ struct HeaderShape: Equatable {
         self.hosted = hosted
         let item = { (node: NodeView) -> Item? in
             if hosted.contains(where: { $0 === node }) { return Item(node, hosted: true) }
-            return rule.hosted.contains(where: { $0 === node }) ? nil : Item(node)
+            return rule.hosted.contains(where: { $0 === node }) ? nil : Item(node, family: family, barTraits: barTraits)
         }
         leading = rule.leading.filter(projects).compactMap(item)
         trailing = rule.trailing.filter(projects).compactMap(item)
@@ -316,8 +344,35 @@ struct HeaderShape: Equatable {
     }
 
     static func == (a: HeaderShape, b: HeaderShape) -> Bool {
-        a.header === b.header && a.authoredBack == b.authoredBack && a.title == b.title && a.level == b.level && a.leading == b.leading && a.trailing == b.trailing && a.search === b.search && a.segments === b.segments && a.group == b.group && a.authored.map(\.id) == b.authored.map(\.id) && a.hosted.map(\.id) == b.hosted.map(\.id)
+        a.header === b.header && a.family == b.family && a.authoredBack == b.authoredBack && a.title == b.title && a.level == b.level && a.leading == b.leading && a.trailing == b.trailing && a.search === b.search && a.segments === b.segments && a.group == b.group && a.authored.map(\.id) == b.authored.map(\.id) && a.hosted.map(\.id) == b.hosted.map(\.id)
     }
 }
 
+
+extension BarPress {
+    /// Keep a hatch's state-specific font metrics while branding the item, and restore its fonts on opt-out.
+    func apply(font: UIFont?, to item: UIBarButtonItem, family: Int?, source: NodeView?) {
+        guard font != nil || !installedFonts.isEmpty else { return }
+        for state: UIControl.State in [.normal, .highlighted, .disabled, .focused] {
+            let key = state.rawValue
+            var attributes = item.titleTextAttributes(for: state) ?? [:]
+            let current = attributes[.font] as? UIFont
+            if current != installedFonts[key] { savedFonts[key] = current }
+            var target = font
+            #if os(iOS)
+            if font != nil, let base = savedFonts[key], let family, let engine = source?.text {
+                let rows = source?.face?.rows.title ?? [:]
+                target = HeaderShape.Item.familyFont(family, engine: engine, base: base, rows: rows)
+            }
+            #endif
+            installedFonts[key] = target
+            target = target ?? savedFonts[key]
+            if current != target {
+                attributes[.font] = target
+                item.setTitleTextAttributes(attributes.isEmpty ? nil : attributes, for: state)
+            }
+        }
+        if font == nil { savedFonts.removeAll() }
+    }
+}
 #endif

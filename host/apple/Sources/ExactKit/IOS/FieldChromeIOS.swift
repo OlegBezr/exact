@@ -4,6 +4,14 @@ import UIKit
 import CExact
 import CoreText
 
+extension UITraitCollection {
+    /// UIKit bounds inline navigation titles and bar items to 17–21 pt on iOS 26.5.
+    package var inlineBarTraits: UITraitCollection {
+        let asked = preferredContentSizeCategory == .unspecified ? .large : preferredContentSizeCategory
+        return modifyingTraits { $0.preferredContentSizeCategory = min(max(asked, .large), .extraExtraLarge) }
+    }
+}
+
 final class FieldChromeCache: @unchecked Sendable {
     struct Traits: Hashable {
         let category: String
@@ -62,12 +70,7 @@ final class FieldChromeCache: @unchecked Sendable {
     /// size held between the default text size's, 17 points, and the extra-extra-large's, 21
     /// (`BarItemFontIOSTests` compares the two as drawn). Read at regular legibility: Exact applies Bold Text.
     static func barItemFont(_ traits: UITraitCollection) -> UIFont {
-        let asked = traits.preferredContentSizeCategory == .unspecified ? .large : traits.preferredContentSizeCategory
-        let size = min(max(asked, .large), .extraExtraLarge)
-        let held = traits.modifyingTraits {
-            $0.legibilityWeight = .regular
-            $0.preferredContentSizeCategory = size
-        }
+        let held = traits.inlineBarTraits.modifyingTraits { $0.legibilityWeight = .regular }
         return .systemFont(ofSize: UIFont.preferredFont(forTextStyle: .body, compatibleWith: held).pointSize, weight: .medium)
     }
     func key(_ request: ExactFieldChromeRequest, font: UIFont) -> Key {
