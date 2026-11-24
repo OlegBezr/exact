@@ -120,9 +120,13 @@ final class NavigationCollapseIOSTests: XCTestCase {
         view.frame.size.width = full
         view.layoutIfNeeded()
         for width in [full - 22, full, full - 42, full] {
-            waitFor("the previous layout is idle") { !session.ownerInFlight && !Agent(session: session).nativeInFlight() }
-            waitForMainQueue("the previous reports")
-            let batches = session.appliedBatches, syncs = p.navigationHost.syncCalls
+            // UIKit can lay its bars out again some frames after a resize, which a batch answers
+            var batches = -1, since = Date()
+            waitFor("no batch for 0.2 s") {
+                if session.appliedBatches != batches { (batches, since) = (session.appliedBatches, Date()) }
+                return Date().timeIntervalSince(since) > 0.2 && !session.ownerInFlight && !Agent(session: session).nativeInFlight()
+            }
+            let syncs = p.navigationHost.syncCalls
             let start = CACurrentMediaTime()
             view.frame.size.width = width
             view.setNeedsLayout()
@@ -622,8 +626,13 @@ final class NavigationCollapseIOSTests: XCTestCase {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: wasLandscape ? .landscapeLeft : .portrait))
         }
         for landscape in [true, false] {
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeLeft : .portrait))
-            waitFor("the scene rotates") { scene.interfaceOrientation.isLandscape == landscape }
+            var refusal: Error?
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeLeft : .portrait)) { refusal = $0 }
+            waitFor("the scene rotates", giveUp: { refusal != nil }, onFailure: { if refusal == nil { XCTFail($0) } }) {
+                scene.interfaceOrientation.isLandscape == landscape
+            }
+            // An open iPhone Duo's scene does not turn for its app
+            if let refusal { throw XCTSkip(refusal.localizedDescription) }
             window.frame = scene.coordinateSpace.bounds
             for fraction: CGFloat in [0.75, 1] {
                 host.additionalSafeAreaInsets = UIEdgeInsets(top: 7, left: 11, bottom: 13, right: 17)
@@ -700,8 +709,10 @@ final class NavigationCollapseIOSTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(elapsed, 0.5)
         XCTAssertEqual(scroll.contentOffset.y - origin, 300, accuracy: 0.5)
         XCTAssertEqual((reply["scrolledBy"] as? [Double])?[1] ?? -1, 300, accuracy: 0.5)
-        for band in [0.05..<0.2, 0.2..<0.35, 0.35..<0.5] {
-            XCTAssertTrue(offsets.contains { band.contains($0.time) && $0.y > 0 && $0.y < 300 }, "no intermediate offset in \(band): \(offsets)")
+        // From its first movement, as the agent can start a drag some frames after it is asked to
+        let moved = try XCTUnwrap(offsets.first { $0.y > 0 }, "the drag moves: \(offsets)").time
+        for band in [0..<0.15, 0.15..<0.3, 0.3..<0.45] {
+            XCTAssertTrue(offsets.contains { band.contains($0.time - moved) && $0.y < 300 }, "no intermediate offset in \(band): \(offsets)")
         }
         XCTAssertTrue(zip(offsets, offsets.dropFirst()).allSatisfy { $0.y <= $1.y }, "the drag follows the finger")
         let capture = native.snapshot()

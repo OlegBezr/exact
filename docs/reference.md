@@ -3373,8 +3373,8 @@ something better than the placeholder. Browser storage uses app-scoped IndexedDB
 and loads SQLite WASM in a dedicated worker on the first database operation.
 A database uses OPFS (`opfs-sahpool`) when the worker can open a synchronous
 access handle. Without that capability it opens IndexedDB images and creates
-new databases in IndexedDB. Opening an existing OPFS database requires OPFS. SQLite uses DELETE journaling and
-FULL synchronization on OPFS. The app has no store or durability setting.
+new databases in IndexedDB. Opening an existing OPFS database requires OPFS.
+SQLite uses DELETE journaling and FULL synchronization on OPFS. The app has no store or durability setting.
 Use HTTPS or localhost for Web Locks. Data persists across reloads within the
 same browser origin, subject to browser storage retention and quota policies.
 An open database exclusively locks its path. When the first tab closes the
@@ -3981,9 +3981,16 @@ On OPFS, SQLite writes the changed pages. In IndexedDB, a mutation saves
 the whole database image in one transaction. When the worker can use OPFS,
 it imports any existing IndexedDB image under the path lock. The worker
 checks the stored byte count and runs SQLite’s integrity check before it
-replaces the source record. An interrupted import retries at the next open. Filesystem operations on OPFS database paths currently return
-`unsupported`. SQLite integer results
-are `bigint`: convert them to a Contract-compatible value before returning.
+replaces the source record. An interrupted import retries at the next open.
+
+On either store, `storage.fs.readFile` and `copyFile` can read the last
+committed image of an open database, including one open in another tab.
+An OPFS read returns `EBUSY` if the owning worker cannot answer or release
+the pool within ten seconds. A tab running an older worker releases it on close.
+Writing, deleting or renaming an open database, or moving or removing its
+directory, returns `EBUSY`. After close, the database can be read, replaced,
+copied, renamed or removed like any other file. SQLite integer results are
+`bigint`: convert them to a Contract-compatible value before returning.
 
 ### Sign in through the system browser (`openAuthSession`)
 
