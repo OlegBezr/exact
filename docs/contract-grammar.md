@@ -1300,9 +1300,9 @@ reloading at that URL, run
 `bun exact.mjs agent linux --url /item/7 --test app.test.contract`
 (or use `windows`, `macos` or `ios`). That opens a fresh stack at `/item/7`
 on each reload; it does not preserve the stack the test built through navigation.
-Android's APK reader refuses a path or app scheme `--url` and a leading `at`
-path other than `/`, where it boots. `agent android --headless` runs the Linux
-host on Android and accepts both.
+Android's APK reader opens a path or app scheme `--url` and a leading `at`
+path as its launching intent's data, as a link opens the app. `agent android
+--headless` runs the Linux host on Android and accepts both.
 
 `close` presses the window's close button as ⌘W or the red button does (the
 driver's `close`): its

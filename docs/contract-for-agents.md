@@ -7214,9 +7214,9 @@ its no-link cold launch location:
 the manifest's `start_url` on Apple, `/` on Linux and Windows; an HTTP(S)
 `--url` selects a development server, not a launch location. Native reload
 builds a fresh navigation stack; `at` changes only the first launch, so
-assert a detail-route launch before reloading. Android's APK reader refuses
-these launch URLs and a leading `at` path other than `/`, where it boots;
-`agent android --headless` runs
+assert a detail-route launch before reloading. Android's APK reader opens
+these launch URLs and a leading `at` path as its launching intent's data, as a
+link opens the app; `agent android --headless` runs
 the Linux host on Android and accepts both. See
 [reload and native launch tests](contract-grammar.md#authored-tests)),
 `close` (the window's close button, as ⌘W: a `beforeunload` that

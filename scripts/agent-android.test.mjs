@@ -277,12 +277,19 @@ test('the Android reader uses a variant\'s package for lookup, launch and drive 
   }
 });
 
-test('the Android reader takes a launch at the root, where it boots, and refuses any other launch URL', async () => {
+test('the Android reader launches at a launch URL as its intent\'s data, and at the root with none', async () => {
   const { androidDeploy } = await import('./agent-android.mjs');
   const fixture = androidDriveFixture(true);
+  // The relay's vars are its third argument after `relay`; EXACT_AGENT_INTENT is appended to its `am start`.
+  const intent = (deploy) => {
+    const child = deploy.spawn();
+    child.kill();
+    return JSON.parse(child.spawnargs[child.spawnargs.indexOf('relay') + 3]).EXACT_AGENT_INTENT;
+  };
   try {
-    expect(() => androidDeploy(fixture.app, fixture.bin, { ...fixture.env, EXACT_LAUNCH_URL: '/demo/typography' })).toThrow(/a launch URL does not reach the reader/);
-    expect(androidDeploy(fixture.app, fixture.bin, { ...fixture.env, EXACT_LAUNCH_URL: '/' }).dir).toBe(`/data/local/tmp/exact/${fixture.app.id}`);
+    expect(intent(androidDeploy(fixture.app, fixture.bin, { ...fixture.env, EXACT_LAUNCH_URL: '/demo/typography' }))).toBe("-d '/demo/typography'");
+    expect(intent(androidDeploy(fixture.app, fixture.bin, { ...fixture.env, EXACT_LAUNCH_URL: '/' }))).toBeUndefined();
+    expect(() => androidDeploy(fixture.app, fixture.bin, { ...fixture.env, EXACT_WORLD: 'w.json' })).toThrow(/--world does not reach the reader/);
   } finally {
     fixture.dispose();
   }
