@@ -425,7 +425,15 @@ component declares, the root or a child: `resource v = exactViewport() as shape
 V` (or `exactPage()`), with no arguments and no `else`, opens no request, and
 every instance reads the root's one answer (`EmptyState` reads
 `accessibilityTextSize`). A `derive` reads the resource's field (`v.width`), never
-`exactViewport().width`. A task's body has exactly one schedule. Each child's task starts with
+`exactViewport().width`. A viewport shape can declare either of the screen
+orientation fields. The resource updates when the screen turns.
+
+| Field on the viewport shape | Value |
+| --- | --- |
+| `orientationType: string` | `portrait-primary`, `portrait-secondary`, `landscape-primary` or `landscape-secondary` |
+| `orientationAngle: number` | Degrees from the screen’s natural orientation, one of 0, 90, 180 or 270 |
+
+A task's body has exactly one schedule. Each child's task starts with
 its instance, stops when the instance is destroyed and runs its action in that
 instance's frame. A hidden tab or covered screen can remain alive: gate its
 work on activity. Frame tasks are allowed, with one action per armed instance

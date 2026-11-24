@@ -62,6 +62,7 @@ struct App<'a, D: DataSource> {
 }
 
 struct Live<D: DataSource> {
+    output_surface: Option<Arc<dyn smithay_client_toolkit::reexports::client::backend::ObjectData>>,
     surface: softbuffer::Surface<Rc<Window>, Rc<Window>>,
     window: Rc<Window>,
     presenter: Presenter<D>,
@@ -126,6 +127,11 @@ impl<D: DataSource + Default> App<'_, D> {
         self.config.scale = scale;
         self.config.clock_started = Some(self.started);
         let defaults = self.config.preferences;
+        let output_surface = crate::rotation::surface_data(&window);
+        self.config
+            .preferences
+            .get_or_insert_with(Default::default)
+            .orientation = crate::rotation::screen(&window, output_surface.as_deref());
         if let Some(dark) = dark {
             self.config
                 .preferences
@@ -147,6 +153,7 @@ impl<D: DataSource + Default> App<'_, D> {
         presenter.set_window_closer(move || closed.set(true));
         window.request_redraw();
         Ok(Live {
+            output_surface,
             surface,
             window,
             presenter,
@@ -175,6 +182,12 @@ impl<D: DataSource + Default> ApplicationHandler<Event> for App<'_, D> {
         };
         let at = Instant::now();
         let now = at.duration_since(self.started).as_secs_f64() * 1000.0;
+        let orientation = crate::rotation::screen(&live.window, live.output_surface.as_deref());
+        let mut prefs = live.presenter.host().runner().viewport().preferences;
+        if prefs.orientation != orientation {
+            prefs.orientation = orientation;
+            warn(live.presenter.set_preferences(prefs));
+        }
         live.turn(now);
         if self.closed.get() {
             events.exit();

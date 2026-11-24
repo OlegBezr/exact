@@ -60,6 +60,7 @@ impl<D: DataSource + Default> CanvasHost<D> {
         }
         let mut config = crate::app::Config::from_env_static(plan, compat);
         config.preferences = device::configured().map(|d| exact_runner::Preferences {
+            orientation: d.orientation,
             screen_reader: if config.agent {
                 exact_runner::ScreenReader::Unknown
             } else {

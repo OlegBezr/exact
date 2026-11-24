@@ -1,7 +1,7 @@
 # Queue
+- On iPhone 17 with iOS 26.5, add an inline “Detail” heading and a trailing “View the complete record” button to the pushed header in #1519. UIKit draws a leading chevron and shifts the title left. On 1915bddd9, `layout back` returns a hidden 0×0 box for the visible chevron.
 - On an iPhone 17 running iOS 26.5, `AgentBarPointerIOSTests.testAHostedItemBubblesPointersWithoutPressing` hits the navigation bar over the readout. `SplitIOSTests.testTheDetailColumnsTransitionIsItsBases` finds row-a outside the list port after expanding the split. Both reproduce on b77df3b3d.
 - Check the closed Duo’s system Back and ambiguous tab items on device. On iPhone 17, give two tabs the same title and omit the first control’s identifier. Only identifiable tabs can supply a frame. A disabled sibling strip can let the hit through to a different item under it (`NavigationBarIOSTests.testAnUnnamedControlBesideTheBarWithTheItemsBoxIsTheItemsButton`).
-- Check the containing block of pressed translations in Chromium. `bun test host/web-js/cleared-styles.test.mjs -t 'JS chromium: active translate'` measures 44 px where both containing-block cases expect 40 px.
 - Match the window-opacity diagnostic to its runtime behavior. A literal `setWindowOpacity(2)` fails to build, while an action that reads 2 from state clamps the window to 1.
 - Revisit the page-drawn Mac title bar’s Fill action when AppKit exposes it. With “Fill” selected in System Settings, a double click on the row calls `performZoom` (LLP 1039 D8).
 - Both Chromium targets admit a virtualized lift with duplicate keys. Give a list the keys Account, Account, Display and drop the first Account with Space, Down and Enter. A handler that removes the source by key removes both Accounts.
@@ -13,8 +13,6 @@
 
 - Reconcile the current LLP count with its ceiling. On main, `bun scripts/gate.mjs` reports 16 current LLPs against a cap of 15.
 - Check hyphens before digits in authored data attributes against LLP 1075.003 §3.3. Building a text node with `data-v-2="x"` reports `syntax-expected-expression`.
-- Supply the host clock in the Wasm body-to fixture. On the parent of the OPFS change, `bun test ./host/web/body-to.test.mjs -t 'a wasm request uses'` fails with `now is not defined`.
-- Restore the worker environment in the storage lease recovery fixture. On the parent of the OPFS change, `bun test --isolate ./host/web/module-storage-recovery.test.mjs` reports unhandled rejections from `prepareWorker` reading `document.baseURI`.
 - Decide whether a settings list may spell `listStyle="inset-grouped"` alone when it has no drop handler. Removing only `reorderdrop` from the eight-row fixture with that spelling makes the compiler require `appearance="auto"` (LLP 1084 D1).
 - Give a grouped list with `reorderGroup` a diagnostic that names the cross-list restriction. Compile `list id="settings" appearance="auto" reorderdrop=drop reorderGroup="board"` inside the eight-row fixture for #1409. The compiler suggests `virtualized=true`, which the grouped list also refuses.
 - Give authors readable errors for rejected plan inputs and first frames. The web static-tree builder, snapshot commands and bake still print Rust Debug representations of bridge, decoding and layout errors.
@@ -1457,6 +1455,8 @@ sits on that list carries the trade it would take.
 
 - An app-set window frame is saved like any other (#1412). Expand with `setBounds`, quit and relaunch: the window reopens expanded. To restore the saved compact frame after quitting during or after expansion, the host needs to distinguish a person’s move or resize (including through Accessibility) from AppKit correcting the app’s animation between vertically offset displays. Only the person’s change should replace the saved frame.
 - An embedder's plain `NSWindow` still freezes page layout during an animated `setFrame` inside `native.call`. Run the window-frame fixture's 300-by-200 resize in an embedder window and compare the root and viewport at each resize notification (#1412).
+- Snapshot viewport injection rejects `safeAreaTop: number` as a string field. Declare it on a widget’s `snapshot_viewport` shape and compile the widget.
+- The viewport test in `host/web-js/facts.test.mjs` leaves `globalThis.matchMedia` installed. Run that file with a Bun `afterAll` hook comparing `matchMedia` with its value before the tests.
 - Restore the LLP working set to 15 documents. `bun scripts/caps.mjs` reports 16 in `llp/current` on main.
 - On macOS, pressing `link href="#keys" target="other"` at `/shortcuts` leaves the ordinary named window unopened. Resolve the fragment against the current visit before choosing its target (LLP 1153 D5, LLP 1030.004 D1).
 - An ordinary named Mac window with a toolbar reopens lower on the screen (LLP 1030.004 D3). Close and reopen it from a two-route app with `window-controls-overlay`. On macOS 27 its 480 × 322 frame moved down 52 points each time.

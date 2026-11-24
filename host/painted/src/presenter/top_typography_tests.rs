@@ -17,6 +17,7 @@ fn a_surface_follows_the_scheme_the_font_scale_and_a_reader_made_again() {
     let phone = Device {
         night: true,
         font_scale: 1.0,
+        orientation: None,
         screen_reader: exact_runner::ScreenReader::Unknown,
         locale: "en-US".into(),
         rtl: false,
@@ -67,6 +68,7 @@ fn material_surfaces_refresh_when_bold_text_changes_in_both_directions() {
         let mut device = Device {
             night: false,
             font_scale: 1.0,
+            orientation: None,
             screen_reader: exact_runner::ScreenReader::Unknown,
             locale: "en-US".into(),
             rtl: false,

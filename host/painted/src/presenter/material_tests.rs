@@ -269,6 +269,7 @@ fn materials_radio_and_touch_target_reach_past_the_drawn_control() {
     let phone = Device {
         night: false,
         font_scale: 1.0,
+        orientation: None,
         screen_reader: exact_runner::ScreenReader::Unknown,
         locale: "en-US".into(),
         rtl: false,
