@@ -14,7 +14,7 @@ import { withLook } from '../web/look.mjs';
 import { serveBuildTree } from '../web/serve.mjs';
 import { engineTests, need } from '../../scripts/coverage.mjs';
 
-const engineTest = await engineTests(['chromium', 'webkit']);
+const engineTest = await engineTests(['chromium', 'firefox', 'webkit']);
 const test = need('chrome', chromium().unavailable, { test: bunTest });
 
 const SOURCE = `component App
@@ -910,6 +910,55 @@ test('a resized box accepts presses after its spring ends on either clock', asyn
     await page.getByText('Press me', { exact: true }).click();
     expect(await page.locator('[data-testid=repro-said]').textContent()).toBe('Last: Pressed');
   } finally { await browser?.close(); server?.close(); rmSync(dir, { recursive: true, force: true }); }
+}, 30000);
+
+for (const engine of ['chromium', 'firefox', 'webkit']) engineTest[engine](`${engine}: a commit preserves departing boxes and the survivor’s starting position`, async () => {
+  const app = await exitApp(engine, `keyframes out
+  to opacity=0
+
+component App
+  state long = true
+  action toggle
+    long = not long
+  view
+    column padding=20 gap=12
+      button "Toggle" press=toggle testId="toggle"
+      row margin-left=80 position=(long ? "static" : "relative")
+        if long
+          box width=30 height=20
+        for c in (long ? "abcxyz" : "abc").split("") key=c
+          if c == "y"
+            text c testId=c font-size=24 -exact-exit-animation=(long ? "out 400ms linear both" : "none")
+          else
+            text c testId=c font-size=24 -exact-exit-animation="out 400ms linear both"
+        text "!" testId="last" -exact-layout-transition="400ms linear"
+`);
+  try {
+    const shown = await app.page.evaluate(async () => {
+      const get = id => document.querySelector(`[data-testid="${id}"]`);
+      const letters = ['x', 'y', 'z'].map(get), last = get('last');
+      const positions = nodes => nodes.map(el => el.getBoundingClientRect().left);
+      const before = positions(letters), start = positions([last])[0];
+      get('toggle').click();
+      const moves = last.getAnimations();
+      for (const a of moves) { a.pause(); a.currentTime = 0; }
+      const from = positions([last])[0];
+      for (const el of letters) for (const a of el.getAnimations()) { a.pause(); a.currentTime = 80; }
+      for (const a of moves) a.currentTime = 80;
+      await new Promise(requestAnimationFrame);
+      const ghosts = letters.filter(el => el.isConnected && el.hasAttribute('data-exiting'));
+      const during = positions(ghosts), opacity = ghosts.map(el => Number(getComputedStyle(el).opacity));
+      const middle = positions([last])[0];
+      moves.forEach(a => a.finish());
+      return { before, during, opacity, start, from, middle, end: positions([last])[0] };
+    });
+    expect(shown.during).toHaveLength(3);
+    for (const opacity of shown.opacity) expect(opacity).toBeCloseTo(0.8, 2);
+    expect(Math.abs(shown.from - shown.start)).toBeLessThan(1);
+    shown.during.forEach((x, i) => expect(Math.abs(x - shown.before[i])).toBeLessThan(1));
+    expect(shown.middle).toBeLessThan(shown.start);
+    expect(shown.middle).toBeGreaterThan(shown.end);
+  } finally { await app.close(); }
 }, 30000);
 
 /** `source` compiled to the JS target and opened in `engine` with presence loaded. `drop(button)` presses `button`,

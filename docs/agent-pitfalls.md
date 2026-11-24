@@ -794,6 +794,7 @@ What a port writes from habit, what the compiler says, and what to write (the eu
 | `backgroundColor`, `flexDirection`, `onPress`, `activeOpacity` | `lower-unknown-attr` | `background-color`, `flex-direction`, `press`, `-exact-press-opacity` |
 | `paddingHorizontal=16` | `lower-unknown-attr` | `padding-left=16 padding-right=16`, or `padding="0px 16px"` |
 | `marginVertical=8` | `lower-unknown-attr` | `margin-top=8 margin-bottom=8`, or `margin="8px 0px"` |
+| `useWindowDimensions().width` used as a pane's width | nothing: the window and pane can differ | `exactViewport().width` is the window's; use `resize=<action>` on the pane for its content-box width. A sidebar, sheet or split view can make it narrower ([viewport units](contract-for-agents.md#viewport-and-container-units)) |
 | `shadowColor`, `shadowOpacity`, `shadowRadius`, `shadowOffset`, `elevation` | `lower-unknown-attr`, `lower-attr-tag` | one `box-shadow="<x>px <y>px <2 × radius>px <colour>"` (below); nothing when the same style has `overflow: "hidden"`, which iOS draws without its shadow |
 | `` line-height=`${28 / 17}` ``, `` width=`${n}` `` for numeric `n` | `lower-attr-value` | `line-height=(28 / 17)` for a multiplier, `width=n` for pixels or `` width=`${n}px` `` |
 | `font-weight="bold"`, `"600"` | `lower-attr-value` | `font-weight=700`, `font-weight=600` |

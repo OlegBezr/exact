@@ -1,5 +1,5 @@
-export { px, lt, presenceUse } from './presence-bindings.js';
-// Bound exits and layout transitions: presence-bindings.js's probes, which the compiler hands over only when a plan
+export { fixedExit, px, lt, presenceUse } from './presence-bindings.js';
+// Exits and bound layout transitions: presence-bindings.js's probes, which the compiler hands over only when a plan
 // binds one (LLP 1047.002 D1)
 export let Probes = null;
 export function usePresenceBindings(b) {
@@ -605,7 +605,11 @@ export function commit(f, what = 'commit', finished) {
     for (const f of Before) f();
     // presence measures what it tracks, and what may gain the row, before the tree changes (LLP 1063); when the flush
     // will run no effect it writes nothing, and presence measures nothing (`still`)
-    Pres?.before({ ops: Probes?.gains() ?? [], still: !due() }, Views);
+    if (Pres) {
+      const ops = Probes?.gains() ?? [], still = !due();
+      const regions = !still && Queue.some(n => !n.gone && (n.$r || n.$listRows));
+      Pres.before({ ops, still }, Views, regions ? Probes?.departures?.() : undefined);
+    }
     try {
       flush();
       Tabs.open?.();
