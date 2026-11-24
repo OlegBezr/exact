@@ -6322,10 +6322,10 @@ A Mac build signed ad hoc leaves out the share extension
 
 ### Clipboard images
 
-A press can start a data-code clipboard read on macOS and the web. With
+A press can start a data-code clipboard read on macOS, iOS and the web. With
 the `clipboard.read` grant, `await readText()` returns plain text (up to
-1 MiB of UTF-8), or an empty string when there is none. On a Mac it takes
-the first item with plain text. `await read()`
+1 MiB of UTF-8), or an empty string when there is none. On Apple platforms it takes
+the first item with plain text. iOS controls permission to paste from another app. `await read()`
 returns clipboard items. Inspect `item.types` and call
 `await item.getType("text/plain")` for text or `await item.getType("image/png")`
 for a temporary `app:/tmp/` PNG path. The host sanitizes each image within

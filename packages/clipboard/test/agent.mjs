@@ -26,7 +26,6 @@ const holds = (got, want) => JSON.stringify(got?.types) === JSON.stringify(want.
   && (!want.image || (got?.image?.width === want.image.width && got?.image?.height === want.image.height && /^[0-9a-f]{64}$/.test(got?.image?.sha256 ?? '')));
 
 for (const host of hosts.length ? hosts : ['web']) {
-  const supportsRead = host === 'web' || host === 'macos';
   if (host === 'web') run('bun', ['exact.mjs', 'web-build'], app, env);
   if (host === 'macos') run('bun', ['exact.mjs', 'mac'], app, env);
   if (host === 'ios') run('bun', ['exact.mjs', 'ios', ...(sim ? ['--sim', sim] : [])], app, env);
@@ -35,10 +34,8 @@ for (const host of hosts.length ? hosts : ['web']) {
     await s.clock('data');
     const supports = (await texts(s)).supports;
     check(host, 'ClipboardItem.supports answers from the declaration', supports === 'image/png=true text/plain=true text/html=false image/svg+xml=false', supports);
-    if (supportsRead) {
-      const denied = (await texts(s)).mount;
-      check(host, 'mount cannot read', denied === 'NotAllowedError: clipboard.readText: NotAllowedError: person-required', denied);
-    }
+    const denied = (await texts(s)).mount;
+    check(host, 'mount cannot read', denied === 'NotAllowedError: clipboard.readText: NotAllowedError: person-required', denied);
     let writes = 0, sha = {};
     for (const [kind, answer, landed] of KINDS) {
       await s.tap(kind);
@@ -48,7 +45,7 @@ for (const host of hosts.length ? hosts : ['web']) {
       const own = (await s.state()).extensions?.clipboard?.implementation ?? {};
       if (landed) writes++;
       check(host, `${kind}: ${landed ? 'lands' : 'leaves the clipboard as it was'}`, own.writes === writes && (!landed || holds(own.lastWrite, landed)), JSON.stringify(own));
-      if (kind === 'both' && supportsRead) {
+      if (kind === 'both') {
         for (const [id, expected] of [['paste', 'https://example.com/red.png | png 137 80'], ['open-url', 'https://example.com/red.png'], ['read-pair', 'https://example.com/red.png | https://example.com/red.png']]) {
           await s.tap(id);
           await s.clock('data');

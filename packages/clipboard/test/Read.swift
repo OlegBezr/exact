@@ -43,6 +43,12 @@ struct ReadTests {
             precondition(item.setData("héllo".data(using: encoding)!, forType: .init(type.identifier)))
             check([item], ["héllo"])
         }
+        let legacyType = "com.apple.traditional-mac-plain-text"
+        let legacy = NSPasteboardItem()
+        precondition(legacy.setData("café".data(using: .macOSRoman)!, forType: .init(legacyType)))
+        check([legacy], ["café"])
+        precondition((try? ClipboardModule.decodeText(Data([0xff, 0x80]), type: UTType.utf8PlainText.identifier)) == nil)
+        precondition((try? ClipboardModule.decodeText(Data([0xff]), type: UTType.utf16PlainText.identifier)) == nil)
         let pixels = CGContext(data: nil, width: 8, height: 4, bitsPerComponent: 8, bytesPerRow: 32,
                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
         let jpeg = NSMutableData()

@@ -50,10 +50,8 @@ public final class ClipboardModule: ExactPackage {
 
     public func later(_ name: String, _ args: [String: Any], preferred: Any?, reply: @escaping ([String: Any]) -> Void) {
         switch name {
-        #if os(macOS)
         case "read", "readText":
             read(textOnly: name == "readText", reply: reply)
-        #endif
         case "write":
             guard let items = args["data"] as? [Any] else { return reply(refused("TypeError", "write takes a list of ClipboardItem")) }
             write(items, reply: reply)
@@ -172,15 +170,91 @@ public final class ClipboardModule: ExactPackage {
         substituting ? NSPasteboard(name: NSPasteboard.Name(privateName)) : .general
     }
 
+    private typealias ReadItem = NSPasteboardItem
+
+    private func readItems() throws -> [ReadItem] {
+        guard let items = board.pasteboardItems else { throw readFailure() }
+        return items
+    }
+
+    private func preferredImageType(_ item: ReadItem) -> String? { item.availableType(from: [.png, .tiff])?.rawValue }
+
+    private func readFailure(text: Bool = false, loaded: Bool = false) -> FileRefusal {
+        if #available(macOS 15.4, *), [.ask, .alwaysDeny].contains(board.accessBehavior) {
+            return FileRefusal(code: "NotAllowedError", message: "pasteboard access was refused")
+        }
+        return text ? FileRefusal(code: "NotFoundError", message: "could not load plain text")
+                    : FileRefusal(code: "NotReadableError", message: "could not read clipboard contents")
+    }
+
+    private func types(_ item: ReadItem) -> [String] { item.types.map(\.rawValue) }
+    private func text(_ item: ReadItem, _ type: String) throws -> String? { item.string(forType: .init(type)) }
+    private func data(_ item: ReadItem, _ type: String) throws -> Data? { item.data(forType: .init(type)) }
+    #else
+    private var board: UIPasteboard? {
+        substituting ? UIPasteboard(name: .init(privateName), create: true) : .general
+    }
+
+    private struct ReadItem {
+        let board: UIPasteboard
+        let index: IndexSet
+        let types: [String]
+        let change: Int
+    }
+
+    private func readItems() throws -> [ReadItem] {
+        guard let board else { throw FileRefusal(code: "NotReadableError", message: "private pasteboard unavailable") }
+        let change = board.changeCount
+        let offered = board.types(forItemSet: nil)
+        guard board.changeCount == change else { throw FileRefusal(code: "NotReadableError", message: "clipboard changed during read") }
+        guard let types = offered else {
+            if board.numberOfItems == 0 { return [] }
+            throw readFailure()
+        }
+        return types.enumerated().map { ReadItem(board: board, index: IndexSet(integer: $0.offset), types: $0.element, change: change) }
+    }
+
+    private func preferredImageType(_ item: ReadItem) -> String? {
+        [UTType.png.identifier, UTType.tiff.identifier].first(where: item.types.contains)
+    }
+
+    private func readFailure(text: Bool = false, loaded: Bool = false) -> FileRefusal {
+        // UIKit returns nil without a reason when the person denies the paste.
+        if !substituting && !loaded { return FileRefusal(code: "NotAllowedError", message: "pasteboard contents unavailable") }
+        return text ? FileRefusal(code: "NotFoundError", message: "could not load plain text")
+                    : FileRefusal(code: "NotReadableError", message: "could not read clipboard contents")
+    }
+
+    private func types(_ item: ReadItem) -> [String] { item.types }
+    private func text(_ item: ReadItem, _ type: String) throws -> String? {
+        try checkCurrent(item)
+        let value = item.board.values(forPasteboardType: type, inItemSet: item.index)?.first
+        try checkCurrent(item)
+        if let text = value as? String { return text }
+        guard let value else { return nil }
+        guard let bytes = value as? Data else { throw TextError.invalidEncoding }
+        return try Self.decodeText(bytes, type: type)
+    }
+    private func data(_ item: ReadItem, _ type: String) throws -> Data? {
+        try checkCurrent(item)
+        let bytes = item.board.data(forPasteboardType: type, inItemSet: item.index)?.first
+        try checkCurrent(item)
+        return bytes
+    }
+
+    private func checkCurrent(_ item: ReadItem) throws {
+        guard item.board.changeCount == item.change else { throw FileRefusal(code: "NotReadableError", message: "clipboard changed during read") }
+    }
+    #endif
+
     private static let imageTypes = Set(CGImageSourceCopyTypeIdentifiers() as! [String])
 
     private func read(textOnly: Bool, reply: @escaping ([String: Any]) -> Void) {
-        let board = self.board
         do {
-            guard let items = board.pasteboardItems else { throw readFailure(board) }
+            let items = try readItems()
             if textOnly {
                 for item in items {
-                    if let text = try plainText(item, board) { return reply(["exact:answer": text]) }
+                    if let text = try plainText(item) { return reply(["exact:answer": text]) }
                 }
                 return reply(["exact:answer": ""])
             }
@@ -190,17 +264,16 @@ public final class ClipboardModule: ExactPackage {
             do {
                 for item in items {
                     var record: [String: String] = [:]
-                    if let text = try plainText(item, board) {
+                    if let text = try plainText(item, loaded: !records.isEmpty) {
                         textBytes += text.utf8.count
                         guard textBytes <= Self.mostText else { throw FileRefusal(code: "DataError", message: "text/plain is over 1 MiB") }
                         record["text/plain"] = text
                     }
-                    if let type = item.availableType(from: [.png, .tiff]) ?? item.types.first(where: {
-                        Self.imageTypes.contains($0.rawValue) && UTType($0.rawValue)?.conforms(to: .image) == true
-                    }), let format = UTType(type.rawValue) {
-                        guard let data = item.data(forType: type) else {
-                            throw readFailure(board)
-                        }
+                    let offered = types(item)
+                    if let type = preferredImageType(item) ?? offered.first(where: {
+                        Self.imageTypes.contains($0) && UTType($0)?.conforms(to: .image) == true
+                    }), let format = UTType(type) {
+                        guard let data = try data(item, type) else { throw readFailure(loaded: !record.isEmpty || !records.isEmpty) }
                         let (path, url) = try keepPNG(data, type: format, total: &imageBytes)
                         files.append(url)
                         record["image/png"] = path
@@ -219,37 +292,51 @@ public final class ClipboardModule: ExactPackage {
         }
     }
 
-    private func readFailure(_ board: NSPasteboard) -> FileRefusal {
-        if #available(macOS 15.4, *), [.ask, .alwaysDeny].contains(board.accessBehavior) {
-            return FileRefusal(code: "NotAllowedError", message: "pasteboard access was refused")
-        }
-        return FileRefusal(code: "NotReadableError", message: "could not read clipboard contents")
-    }
-
-    private func plainText(_ item: NSPasteboardItem, _ board: NSPasteboard) throws -> String? {
-        let plain = item.types.filter { UTType($0.rawValue)?.conforms(to: .plainText) == true }
+    private func plainText(_ item: ReadItem, loaded: Bool = false) throws -> String? {
+        let plain = types(item).filter { UTType($0)?.conforms(to: .plainText) == true }
         if plain.isEmpty { return nil }
-        for type in (plain.contains(.string) ? [.string] : []) + plain.filter({ $0 != .string }) {
-            let text: String?
-            if [UTType.utf16PlainText.identifier, UTType.utf16ExternalPlainText.identifier].contains(type.rawValue) {
-                guard let data = item.data(forType: type) else { continue }
-                guard data.count <= 2 * Self.mostText + 2 else { throw FileRefusal(code: "DataError", message: "text/plain is over 1 MiB") }
-                text = Self.utf16(data, type: type.rawValue)
-            } else {
-                text = item.string(forType: type)
+        let standard = UTType.utf8PlainText.identifier
+        var invalid = false
+        for type in (plain.contains(standard) ? [standard] : []) + plain.filter({ $0 != standard }) {
+            do {
+                let value: String?
+                if type == UTType.utf16PlainText.identifier || type == UTType.utf16ExternalPlainText.identifier
+                    || type == "com.apple.traditional-mac-plain-text" {
+                    guard let bytes = try data(item, type) else { continue }
+                    value = try Self.decodeText(bytes, type: type)
+                } else {
+                    value = try text(item, type)
+                }
+                if let value { return try boundedText(value) }
+            } catch TextError.invalidEncoding {
+                invalid = true
             }
-            if let text { return try boundedText(text) }
         }
-        if #available(macOS 15.4, *), [.ask, .alwaysDeny].contains(board.accessBehavior) { throw readFailure(board) }
-        throw FileRefusal(code: "NotFoundError", message: "could not load plain text")
+        if invalid { throw FileRefusal(code: "NotFoundError", message: "could not decode plain text") }
+        throw readFailure(text: true, loaded: loaded)
     }
 
-    // The external UTI defaults to big endian. The native UTI uses the host's byte order without a BOM.
-    private static func utf16(_ data: Data, type: String) -> String? {
-        if type == UTType.utf16ExternalPlainText.identifier || data.starts(with: [0xff, 0xfe]) || data.starts(with: [0xfe, 0xff]) {
-            return String(data: data, encoding: .utf16)
+    private enum TextError: Error { case invalidEncoding }
+
+    static func decodeText(_ bytes: Data, type: String) throws -> String {
+        let wide = type == UTType.utf16PlainText.identifier || type == UTType.utf16ExternalPlainText.identifier
+        guard bytes.count <= (wide ? 2 * mostText + 2 : mostText) else {
+            throw FileRefusal(code: "DataError", message: "text/plain is over 1 MiB")
         }
-        return String(data: data, encoding: UInt16(littleEndian: 1) == 1 ? .utf16LittleEndian : .utf16BigEndian)
+        let encoding: String.Encoding
+        if wide {
+            guard bytes.count.isMultiple(of: 2) else { throw TextError.invalidEncoding }
+            // External UTF-16 defaults to big endian. Native UTF-16 without a BOM uses host byte order.
+            if type == UTType.utf16ExternalPlainText.identifier || bytes.starts(with: [0xff, 0xfe]) || bytes.starts(with: [0xfe, 0xff]) {
+                encoding = .utf16
+            } else {
+                encoding = UInt16(littleEndian: 1) == 1 ? .utf16LittleEndian : .utf16BigEndian
+            }
+        } else {
+            encoding = type == "com.apple.traditional-mac-plain-text" ? .macOSRoman : .utf8
+        }
+        guard let string = String(data: bytes, encoding: encoding) else { throw TextError.invalidEncoding }
+        return string
     }
 
     private func boundedText(_ text: String) throws -> String {
@@ -274,6 +361,7 @@ public final class ClipboardModule: ExactPackage {
         return (path, url)
     }
 
+    #if os(macOS)
     private func paste(text: String?, image: Sanitized?) -> (name: String, types: [String])? {
         let board = self.board
         board.clearContents()
@@ -295,7 +383,7 @@ public final class ClipboardModule: ExactPackage {
     #else
     /// Nil when the session's private pasteboard could not be made: never the person's in its place.
     private func paste(text: String?, image: Sanitized?) -> (name: String, types: [String])? {
-        guard let board = substituting ? UIPasteboard(name: UIPasteboard.Name(privateName), create: true) : UIPasteboard.general else { return nil }
+        guard let board else { return nil }
         var item: [String: Any] = [:]
         if let image { item[UTType.png.identifier] = image.png }
         if let text { item[UTType.utf8PlainText.identifier] = text }

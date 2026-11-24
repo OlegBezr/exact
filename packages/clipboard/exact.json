@@ -30,7 +30,7 @@
       "origin": "input",
       "grants": ["clipboard.read"],
       "substitute": {
-        "unsupported": ["android", "ios", "linux", "tvos", "windows"]
+        "unsupported": ["android", "linux", "tvos", "windows"]
       }
     },
     {
@@ -42,7 +42,7 @@
       "origin": "input",
       "grants": ["clipboard.read"],
       "substitute": {
-        "unsupported": ["android", "ios", "linux", "tvos", "windows"]
+        "unsupported": ["android", "linux", "tvos", "windows"]
       }
     },
     {
