@@ -338,8 +338,14 @@ function binding(name, declaration, implementations, dom=()=>[], members={}, tar
     // Positional parameters (`params`), and a call that takes keyed shapes or is one of a `sequence` (LLP 1133.006 D8
     // item 1, D2): its order is taken when it is made, its views' bytes copied then, its promised data awaited after.
     const params=Array.isArray(entry.params) ? entry.params : null;
-    const signature=params ? params.map(p=>{ const [q,ts]=optional(entry.options[p]); return `${p}${q}: ${ts}`; }).join(', ') : `options: ${type}${required ? '' : ' = {}'}`;
-    const args=params ? `{ ${params.join(', ')} }` : 'options';
+    const positional = params?.map(p => { const [q,ts] = optional(entry.options[p]); return `${p}${q}: ${ts}`; });
+    const platformOptions = params && implementations.some(i => Object.keys(i.options?.[fn] ?? {}).length);
+    if (platformOptions) {
+      const keys = params.map(p => JSON.stringify(p)).join(' | ') || 'never';
+      positional.push(`options: Omit<${type}, ${keys}> = {}`);
+    }
+    const signature = positional ? positional.join(', ') : `options: ${type}${required ? '' : ' = {}'}`;
+    const args = params ? `{ ${platformOptions ? '...options, ' : ''}${params.join(', ')} }` : 'options';
     const body=`{ extension: ${JSON.stringify(extension)}, ${imported}${verb}: ${JSON.stringify(fn)}, args: ${args} }`;
     const takesKeyed=Object.values(entry.options ?? {}).some(t=>keyed(pathless(t)));
     const made=takesKeyed || entry.sequence ? `ordered(${JSON.stringify(entry.sequence ?? null)}, ${body}${decoded})` : `call(${body}${decoded})`;

@@ -1874,7 +1874,10 @@ reading. Nothing that isn't HTML is added by it.
   need reads from a person's action. Exact provides them on macOS, the web and iOS (LLP 1133.006 D6).
   **Formatted clipboard writes (Charlie, 2026-11-24, "recs ok").** Pocket Lab
   can write sanitized `text/html` on macOS, iOS and the web (LLP 1133.006 D1).
-  The iOS write options await implementation. Still out: Windows clipboard reads, Windows HTML writes, `text/uri-list` until a
+  **Device-local and expiring copies (Charlie, 2026-11-24, "recs ok").**
+  Pocket Lab can pass `apple.localOnly` and `apple.expirationDate` to an iOS
+  write (LLP 1133.006 D4). Still out: `apple.currentHostOnly`,
+  `android.isSensitive`, Windows clipboard reads, Windows HTML writes, `text/uri-list` until a
   second consumer asks, RTF, custom formats, file
   promises, several items in one write, a Contract `write`, a
   clipboard-change event, and the Linux and Android cells.

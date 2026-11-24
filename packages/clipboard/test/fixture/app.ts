@@ -52,6 +52,10 @@ const sources: Sources = {
           'text/html': '<p><b onclick="void 0">Résumé</b> <a href="javascript:void(0)">note</a><script type="application/json">discard</script></p>',
           'text/plain': 'Plain fallback',
         })]); break;
+        case 'expiry':
+          // January 2000 in milliseconds would be in the future if read as seconds.
+          await write([new ClipboardItem({ 'text/plain': 'ephemeral note' })], { apple: { localOnly: true, expirationDate: Date.UTC(2000, 0, 1) } });
+          break;
         case 'text': await writeText('Copied from the fixture'); break;
         case 'both': await write([new ClipboardItem({ 'image/png': await file('red.png', RED), 'text/plain': 'https://example.com/red.png' })]); break;
         case 'bad': await write([new ClipboardItem({ 'image/png': new TextEncoder().encode('not a png') })]); break;
