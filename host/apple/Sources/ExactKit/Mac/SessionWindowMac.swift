@@ -15,6 +15,8 @@ import ExactCore
 /// any means, wins. A window that is not on screen shows no steps and takes
 /// its frame at once.
 open class ExactSessionWindow: NSWindow {
+    /// The requested level while a test drive keeps every window behind other apps.
+    public internal(set) var requestedFloating = false
 
     open override func setFrame(_ frameRect: NSRect, display flag: Bool, animate animateFlag: Bool) {
         guard animateFlag, isVisible, Owner.shared.isServingMain else {

@@ -1,4 +1,6 @@
 # Queue
+- Match the window-opacity diagnostic to its runtime behavior. A literal `setWindowOpacity(2)` fails to build, while an action that reads 2 from state clamps the window to 1.
+- Revisit the page-drawn Mac title bar’s Fill action when AppKit exposes it. With “Fill” selected in System Settings, a double click on the row calls `performZoom` (LLP 1039 D8).
 - Reconcile the current LLP count with its ceiling. On main, `bun scripts/gate.mjs` reports 16 current LLPs against a cap of 15.
 - Check hyphens before digits in authored data attributes against LLP 1075.003 §3.3. Building a text node with `data-v-2="x"` reports `syntax-expected-expression`.
 - Supply the host clock in the Wasm body-to fixture. On the parent of the OPFS change, `bun test ./host/web/body-to.test.mjs -t 'a wasm request uses'` fails with `now is not defined`.
@@ -1433,6 +1435,7 @@ sits on that list carries the trade it would take.
 
 ## Cheap, any time
 
+- An app-set window frame is saved like any other (#1412). Expand with `setBounds`, quit and relaunch: the window reopens expanded. To restore the saved compact frame after quitting during or after expansion, the host needs to distinguish a person’s move or resize (including through Accessibility) from AppKit correcting the app’s animation between vertically offset displays. Only the person’s change should replace the saved frame.
 - An embedder's plain `NSWindow` still freezes page layout during an animated `setFrame` inside `native.call`. Run the window-frame fixture's 300-by-200 resize in an embedder window and compare the root and viewport at each resize notification (#1412).
 - Restore the LLP working set to 15 documents. `bun scripts/caps.mjs` reports 16 in `llp/current` on main.
 

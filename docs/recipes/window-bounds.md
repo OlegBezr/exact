@@ -21,3 +21,5 @@ two commands by name.
 AppKit saves the frame after either the app or the person changes it.
 Quitting while expanded can reopen the window expanded. Float's Swift
 implementation keeps its compact frame across that quit.
+
+See [floating window controls](floating-window.md) for drag regions, level and click-through.

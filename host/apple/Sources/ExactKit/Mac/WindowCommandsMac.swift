@@ -120,9 +120,7 @@ public final class ExactWindowPlacement: NSObject {
 }
 
 public enum ExactWindowCommands {
-    /// Run `exitFullscreen()` or `setWindowOpacity(opacity)` on `window`;
-    /// false for any other command. A refusal is a `log` line. Called on
-    /// the main thread, as the delegate's commands are.
+    /// An app command for this window. The caller handles names this returns false for.
     public static func perform(_ name: String, _ args: [Any], on window: NSWindow, log: (String) -> Void) -> Bool {
         switch name {
         case "exitFullscreen":
@@ -131,6 +129,16 @@ public enum ExactWindowCommands {
             if window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
         case "setBounds":
             window.placement.setBounds(args, on: window, log: log)
+        case "setWindowAlwaysOnTop", "setWindowIgnoreMouseEvents":
+            guard args.count == 1, let n = args.first as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() else {
+                log("\(name) refused: expected one boolean")
+                return true
+            }
+            if name == "setWindowIgnoreMouseEvents" { window.ignoresMouseEvents = n.boolValue }
+            else {
+                (window as? ExactSessionWindow)?.requestedFloating = n.boolValue
+                window.level = AgentLink.windowsBehind ? .agentBehind : n.boolValue ? .floating : .normal
+            }
         case "setAspectRatio":
             guard args.count == 1, let n = args.first as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(),
                   n.doubleValue.isFinite, n.doubleValue >= 0 else {
@@ -141,11 +149,27 @@ public enum ExactWindowCommands {
             else { window.contentAspectRatio = NSSize(width: n.doubleValue, height: 1) }
         case "setWindowOpacity":
             // `alphaValue`: a window at 0 is unseen but stays key and hears keys.
-            guard let opacity = (args.first as? NSNumber)?.doubleValue, args.count == 1, opacity.isFinite else {
+            guard let number = args.first as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.isFinite, (1...2).contains(args.count) else {
                 log("setWindowOpacity refused: the opacity is a number from 0 to 1")
                 return true
             }
-            window.alphaValue = CGFloat(min(1, max(0, opacity)))
+            var duration = 0.0
+            if args.count == 2 {
+                guard let ms = args[1] as? NSNumber, CFGetTypeID(ms) != CFBooleanGetTypeID(),
+                      ms.doubleValue.isFinite, ms.doubleValue >= 0 else {
+                    log("setWindowOpacity refused: duration is a nonnegative number of milliseconds")
+                    return true
+                }
+                duration = ms.doubleValue / 1000
+            }
+            let opacity = CGFloat(min(1, max(0, number.doubleValue)))
+            if duration > 0 && !ExactEnv.agentFreezes && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = duration
+                    window.animator().alphaValue = opacity
+                }
+            } else { window.alphaValue = opacity }
         default:
             return false
         }

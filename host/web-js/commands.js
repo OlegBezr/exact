@@ -106,6 +106,8 @@ export const setRootFontSize = say => v => v === "medium" || (typeof v === "numb
 export const exitFullscreen = say => () => { if (document.fullscreenElement) document.exitFullscreen().catch(e => say(`exitFullscreen: refused: ${e.name}`)); };
 export const setBounds = say => () => say("setBounds refused: a browser page cannot set its outer frame atomically");
 export const setAspectRatio = say => () => say("setAspectRatio refused: a browser page cannot constrain its window's aspect ratio");
+export const setWindowAlwaysOnTop = say => () => say("setWindowAlwaysOnTop refused: a browser page cannot set its window level");
+export const setWindowIgnoreMouseEvents = say => () => say("setWindowIgnoreMouseEvents refused: a browser page cannot pass mouse events through its window");
 export const setWindowOpacity = say => () => say("setWindowOpacity refused: a page cannot change its window's opacity");
 // A page cannot put its window away and keep running (LLP 1133.025 D4).
 export const hideWindow = say => () => say("hideWindow refused: a page cannot hide its window");

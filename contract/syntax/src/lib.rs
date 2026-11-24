@@ -234,6 +234,8 @@ pub const HOST_COMMANDS: &[&str] = &[
     // drawn at that opacity, 0 to 1, as Electron's `BrowserWindow.setOpacity`.
     // The Mac's; the web refuses it (a page has no window to fade).
     "setWindowOpacity",
+    "setWindowAlwaysOnTop",
+    "setWindowIgnoreMouseEvents",
     "setBounds",
     "setAspectRatio",
     // @ref LLP 1133.025 D4 — `hideWindow()`: the session's window is put
