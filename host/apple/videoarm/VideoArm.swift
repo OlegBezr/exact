@@ -335,8 +335,11 @@ private final class VideoArm: NSObject, NowPlayingPlayer {
             DispatchQueue.main.async { [weak self] in self?.emit(event, payload: payload) }; return
         }
         if Self.moves.contains(event) { NowPlaying.shared.moved(self) }
+        // Once a remote command asked, a `play` or `pause` may be its report
+        // (LLP 1133.023 D7a): each is read as one until the app sets `paused`.
+        let remote = remoteAsked && (event == "play" || event == "pause")
         guard event == "snapshot" || listeners.contains(event) else { return }
-        send(["event": event, "payload": payload])
+        send(remote ? ["event": event, "payload": payload, "byRemote": true] : ["event": event, "payload": payload])
     }
     /// One message to ExactKit, with the state snapshot and this player's media session.
     func send(_ message: [String: Any]) {
@@ -347,6 +350,10 @@ private final class VideoArm: NSObject, NowPlayingPlayer {
         guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
         data.withUnsafeBytes { callback(context, $0.bindMemory(to: UInt8.self).baseAddress, data.count) }
     }
+    /// A remote command asked to play or pause since the app last set
+    /// `paused`: a report may be the command's, and the element's reports
+    /// cannot say which, so each is read as one.
+    private var remoteAsked = false
     /// The reports that move the published position or state (LLP 1098 D4).
     static let moves: Set<String> = ["loadedmetadata", "durationchange", "play", "pause", "ratechange", "seeked", "ended"]
 
@@ -364,11 +371,17 @@ private final class VideoArm: NSObject, NowPlayingPlayer {
     func sessionPlay() {
         guard !invalidated else { return }
         send(["remote": "play"])
+        remoteAsked = true
         wantsPlay = true
         loadIfNeeded()
         if lastError == nil { play() }
     }
-    func sessionPause() { guard !invalidated else { return }; wantsPlay = false; player.pause() }
+    func sessionPause() {
+        guard !invalidated else { return }
+        remoteAsked = true
+        wantsPlay = false
+        player.pause()
+    }
     func sessionAction(_ name: String, payload: String) { emit(name, payload: payload) }
     func sessionAVKitPublishes(_ on: Bool) {
         avkitPublishes = on
@@ -503,6 +516,8 @@ private final class VideoArm: NSObject, NowPlayingPlayer {
             loadSource()
         }
         if changed("paused"), let value = props["paused"] {
+            // The app's own play or pause ends a remote command's ask.
+            remoteAsked = false
             wantsPlay = value == "false"
             if wantsPlay {
                 loadIfNeeded()

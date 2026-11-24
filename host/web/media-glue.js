@@ -19,6 +19,8 @@ function syncPlayback(el) {
   const paused = !state.latched && (props.paused === 'true' || state.visibilityBlocked);
   if (paused !== state.paused || props.src !== state.applied.src) {
     state.paused = paused;
+    // The app's own play or pause ends a remote command's ask.
+    state.remoteAsked = false;
     if (paused) el.pause();
     // A play interrupted by a pause or a new load (AbortError) is no error,
     // and a refused source is the element's own `error` (jukebox F6): only
@@ -100,7 +102,7 @@ globalThis.exact.installMedia = (el, send) => {
     // Whether it was sent: the host answers false for a report it cannot take yet.
     return !state.retired && el.isConnected && el.exactMedia.handlers.includes(name) && send(`${name}\n${payload}`) !== false;
   };
-  const state = { applied: {}, seek: null, threshold: null, visibilityBlocked: false, retired: false, latched: false, offsets: { seekbackwardOffset: 10, seekforwardOffset: 10 }, emit, error(code, message) { if (!state.retired) console.warn(`exact: ${el.localName} ${code}: ${message}`); emit('error', code); } };
+  const state = { applied: {}, remoteAsked: false, seek: null, threshold: null, visibilityBlocked: false, retired: false, latched: false, offsets: { seekbackwardOffset: 10, seekforwardOffset: 10 }, emit, error(code, message) { if (!state.retired) console.warn(`exact: ${el.localName} ${code}: ${message}`); emit('error', code); } };
   states.set(el, state);
   // What the glue reported for itself on attaching (below) and the host took:
   // HTML sets `readyState` before its queued event fires, so the event may
@@ -108,11 +110,14 @@ globalThis.exact.installMedia = (el, send) => {
   // unless the duration has changed since. A new load (`emptied`) forgets them.
   const early = new Set();
   let attachedDuration = NaN;
-  el.addEventListener('emptied', () => early.clear());
+  el.addEventListener('emptied', () => { early.clear(); });
   for (const name of mediaEvents) el.addEventListener(name, () => {
     if (name === 'loadedmetadata' && state.seek !== null) { el.currentTime = state.seek; state.seek = null; }
     if (early.delete(name) && (name !== 'durationchange' || el.duration === attachedDuration)) return;
-    const payload = name === 'timeupdate' ? el.currentTime : name === 'durationchange' ? el.duration : name === 'error' ? errorCodes[el.error?.code] ?? 'src-not-supported' : name === 'fullscreenchange' ? String(document.fullscreenElement === el) : '';
+    // Once a remote command asked, a `play` or `pause` may be its report, an
+    // `action` (LLP 1133.023 D7a): each is read as one until the app sets `paused`.
+    const remoteMade = state.remoteAsked && (name === 'play' || name === 'pause');
+    const payload = remoteMade ? 'remote' : name === 'timeupdate' ? el.currentTime : name === 'durationchange' ? el.duration : name === 'error' ? errorCodes[el.error?.code] ?? 'src-not-supported' : name === 'fullscreenchange' ? String(document.fullscreenElement === el) : '';
     if (typeof payload !== 'number' || Number.isFinite(payload)) emit(name, String(payload));
     if (!state.retired) played(el, name); // a retired element publishes nothing more (LLP 1098 D6)
   });
@@ -244,8 +249,8 @@ function publish(position = false) {
 // `seekOffset seekTime fastSeek`, the element's offset when the platform gives
 // none; a `seekto` without its time is not dispatched (D2).
 const remote = {
-  play() { const el = owner, state = el && states.get(el); if (!state || state.retired) return null; state.latched = true; state.latchedFrom = el.exactMedia.props.paused; state.paused = false; el.play().catch(error => { if (!state.retired && error.name === 'NotAllowedError') state.error('not-allowed', error.message); }); return {}; },
-  pause() { const el = owner; if (!el || states.get(el)?.retired) return null; el.pause(); return {}; },
+  play() { const el = owner, state = el && states.get(el); if (!state || state.retired) return null; state.remoteAsked = true; state.latched = true; state.latchedFrom = el.exactMedia.props.paused; state.paused = false; el.play().catch(error => { if (!state.retired && error.name === 'NotAllowedError') state.error('not-allowed', error.message); }); return {}; },
+  pause() { const el = owner, state = el && states.get(el); if (!state || state.retired) return null; state.remoteAsked = true; el.pause(); return {}; },
 };
 for (const name of actions) remote[name] = (d = {}) => {
   const el = owner, state = el && states.get(el);

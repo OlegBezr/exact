@@ -1026,6 +1026,15 @@ impl<D: DataSource> Runner<D> {
             },
             event => event,
         };
+        // A remote Play or Pause the host carried out for the element; a
+        // `play` or `pause` carries nothing else, so anything else is read as
+        // one too, never as the app's.
+        if let Event::Media(EventKind::Play | EventKind::Pause, how) = &event {
+            if !how.is_empty() {
+                let cause = super::provenance::Cause::remote_control();
+                return self.as_cause(cause, |r| r.arrived(|r| r.dispatch_event(view, event)));
+            }
+        }
         // The person's act in the app's own UI is an `app` cause. What the
         // host observes of the page and a package view's message are the
         // person's while the page shows (`as_shown`).

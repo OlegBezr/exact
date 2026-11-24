@@ -147,8 +147,8 @@ pub trait Tools<D: DataSource> {
     fn call_superseded(&self, _: &mut Runner<D>, _: u64, _: bool) {}
     /// A name that needs a person was called by the running call's work.
     fn call_person_required(&self, _: &mut Runner<D>) {}
-    /// Take off this commit's commands from `first` that a call does not run.
-    fn skip_in_call(&self, _: &mut Runner<D>, _: usize) {}
+    /// The running call's work skipped host command `name`.
+    fn call_skipped(&self, _: &mut Runner<D>, _: &str) {}
     /// Whether a running call is in a session no one sees.
     fn call_stops_timers(&self, _: &Runner<D>) -> bool {
         false
@@ -454,11 +454,6 @@ impl<D: DataSource> Runner<D> {
     pub(in crate::runner) fn call_person_required(&mut self) {
         let t = self.links_tools();
         t.call_person_required(self)
-    }
-
-    pub(in crate::runner) fn skip_in_call(&mut self, first: usize) {
-        let t = self.links_tools();
-        t.skip_in_call(self, first)
     }
 
     pub(in crate::runner) fn call_stops_timers(&self) -> bool {

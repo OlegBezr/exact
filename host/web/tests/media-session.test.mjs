@@ -220,6 +220,9 @@ for (const engine of engines) {
       out.before = v.paused;
       handlers.play();
       await until(() => !v.paused); out.played = !v.paused;
+      // The play the remote command made is reported as its (LLP 1133.023 D7a).
+      await until(() => v.sent.some(t => t.startsWith('play\n')));
+      out.report = v.sent.find(t => t.startsWith('play\n'));
       // A commit that leaves `paused` (a `play` handler that writes something else) and an intersection callback.
       change(v, { mediaTitle: 'V2' }); await frames(4);
       change(v, { playbackVisibilityThreshold: '0.6' }); await frames(4); // a new observer's first callback
@@ -227,8 +230,11 @@ for (const engine of engines) {
       // The app's mirror, then its pause.
       change(v, { paused: 'false' }); await frames(); out.mirrored = !v.paused;
       change(v, { paused: 'true' }); await until(() => v.paused); out.ended = v.paused;
+      // The app's own pause is the app's.
+      await until(() => v.sent.some(t => t.startsWith('pause\n')));
+      out.paused = v.sent.find(t => t.startsWith('pause\n'));
       return out;
     });
-    expect(got).toEqual({ before: true, played: true, through: true, mirrored: true, ended: true });
+    expect(got).toEqual({ before: true, played: true, report: 'play\nremote', through: true, mirrored: true, ended: true, paused: 'pause\n' });
   }), 60_000);
 }
