@@ -5,6 +5,74 @@ import UIKit
 @testable import ExactNavigation
 
 extension NavigationBarIOSTests {
+    func testRemovingTheFamilyKeepsANativeItemFont() throws {
+        let session = try fixture("family-native-item", module: false, plan: "HEADER_FAMILY")
+        let host = session.presenter.navigationHost
+        let nav = try XCTUnwrap(host.primaryNavigation)
+        session.presenter.press(try node(session, "open").id)
+        until("the Notes route is visible") {
+            nav.topViewController?.navigationItem.title == "Notes" && nav.transitionCoordinator == nil
+        }
+        let route = try XCTUnwrap(nav.topViewController as? RouteController)
+        let kept = try XCTUnwrap(route.navigationItem.rightBarButtonItems?.first { $0.title == "Save" })
+        let font = try XCTUnwrap(UIFont(name: "Menlo", size: 23))
+        kept.setTitleTextAttributes([.font: font], for: .normal)
+        host.prepareRoutes(nav.viewControllers.compactMap { $0 as? RouteController }, in: nav)
+        XCTAssertEqual(kept.titleTextAttributes(for: .normal)?[.font] as? UIFont, font)
+        let header = try node(session, "header")
+        session.presenter.apply(wireBatch([["op": "style", "id": header.id, "style": ["written": []]]]))
+        XCTAssertEqual(kept.titleTextAttributes(for: .normal)?[.font] as? UIFont, font)
+    }
+
+    func testAnUnknownFamilyFollowsLiveBarChanges() throws {
+        let session = try fixture("family-live-bar", module: false, plan: "HEADER_FAMILY")
+        let nav = try XCTUnwrap(session.presenter.navigationHost.primaryNavigation)
+        session.presenter.press(try node(session, "open").id)
+        until("the Notes route is visible") {
+            nav.topViewController?.navigationItem.title == "Notes" && nav.transitionCoordinator == nil
+        }
+        let route = try XCTUnwrap(nav.topViewController)
+        for _ in 0..<3 { session.presenter.press(try node(session, "save").id) }
+        let blue = try XCTUnwrap(nav.navigationBar.standardAppearance.copy() as? UINavigationBarAppearance)
+        blue.backgroundColor = .blue
+        nav.navigationBar.standardAppearance = blue
+        nav.view.layoutIfNeeded()
+        let effective = route.navigationItem.standardAppearance ?? nav.navigationBar.standardAppearance
+        XCTAssertEqual(effective.backgroundColor, .blue, "an unavailable family keeps the live bar appearance")
+    }
+
+    func testKeptItemDropsAnEarlierSizeWhileTheHeaderHasAFamily() throws {
+        let session = try fixture("header-family-item-size", module: false, plan: "HEADER_FAMILY")
+        let presenter = session.presenter
+        let nav = try XCTUnwrap(presenter.navigationHost.primaryNavigation)
+        presenter.press(try node(session, "open").id)
+        until("the Notes route is visible") {
+            nav.topViewController?.navigationItem.title == "Notes" && nav.transitionCoordinator == nil
+        }
+        let route = try XCTUnwrap(nav.topViewController as? RouteController)
+        let header = try node(session, "header"), save = try node(session, "save")
+        let family = Int(header.number("font_family"))
+        let readFace = presenter.buttonFace
+        var face = ButtonFace()
+        face.title = "Save"
+        face.rows.title = ["font_size": .number(12)]
+        presenter.buttonFace = { $0 == save.id ? face : readFace?($0) ?? ButtonFace() }
+        func prepare(_ hasFamily: Bool) {
+            let rows: [String: Any] = hasFamily ? ["font_family": family, "written": ["font_family"]] : ["written": []]
+            presenter.apply(facesBatch())
+            presenter.apply(wireBatch([["op": "style", "id": header.id, "style": rows]]))
+            presenter.navigationHost.prepareRoutes(nav.viewControllers.compactMap { $0 as? RouteController }, in: nav)
+        }
+        prepare(false)
+        let kept = try XCTUnwrap(route.navigationItem.rightBarButtonItems?.first { $0.title == "Save" })
+        XCTAssertEqual((kept.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.pointSize, 12)
+        prepare(true)
+        XCTAssertEqual((kept.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.familyName, "Georgia")
+        face.rows.title = [:]
+        prepare(true)
+        XCTAssertNil(kept.titleTextAttributes(for: .normal)?[.font], "the item inherits the bar's font after its written size is removed")
+    }
+
     func testAHeaderWithoutAFamilyLeavesTheAppearancesInPlace() throws {
         let session = try fixture("stock-header-appearances", module: false, plan: "HEADER_FAMILY")
         let host = session.presenter.navigationHost
@@ -182,6 +250,18 @@ extension NavigationBarIOSTests {
                 XCTAssertEqual(try weight(title), expected, accuracy: 0.001, "\(title), \(legibility == .bold ? "bold" : "regular") legibility")
             }
         }
+    }
+}
+extension NavigationBasicsIOSTests {
+    func testAnUnbrandedRichTitleKeepsItsHatchFontWhenLegibilityChanges() throws {
+        let session = try fixture("plain-rich-hatch")
+        let (_, _, route) = try chat(session)
+        let view = try XCTUnwrap(route.navigationItem.titleView as? HeaderTitleView)
+        let font = try XCTUnwrap(UIFont(name: "Menlo", size: 23))
+        view.title.font = font
+        view.traitOverrides.legibilityWeight = view.traitCollection.legibilityWeight == .bold ? .regular : .bold
+        view.updateTraitsIfNeeded()
+        XCTAssertEqual(view.title.font, font)
     }
 }
 #endif
