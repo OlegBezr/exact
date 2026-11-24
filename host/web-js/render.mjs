@@ -161,8 +161,12 @@ export function deferredAnswers(hash) {
 export const deferredPath = path => /^\/\.exact\/checkpoint\/([0-9a-f]{32})\.json$/.exec(path)?.[1] ?? null;
 
 /** `read(path)`: a file of the build by its path in it, the bytes (`sitePages` binds it to one generation); `generation`:
- * the generation each composed head names in its base (generations.mjs `withGenerationBase`). */
-export function renderer(dist, { closed = false, read = path => readFileSync(resolve(dist, path)), generation = null } = {}) {
+ * the generation each composed head names in its base (generations.mjs `withGenerationBase`).
+ * The absolute HTTP(S) page URL passed to the returned function is the allow-list for `net.fetch self`.
+ * The embedder validates that URL against its own tenants and never derives it from Host or forwarded headers. */
+export function renderer(dist, { closed = false, buildOrigin, read = path => readFileSync(resolve(dist, path)), generation = null } = {}) {
+  const published = buildOrigin == null ? null : new URL(buildOrigin);
+  if (published && !['http:', 'https:'].includes(published.protocol)) throw new TypeError('build origin must be HTTP(S)');
   const script = new vm.Script(read('.gen/server.js').toString('utf8'), { filename: 'server.js' });
   let shell;
   try { shell = read('shell.html').toString('utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; shell = read('index.html').toString('utf8'); }
@@ -226,6 +230,7 @@ export function renderer(dist, { closed = false, read = path => readFileSync(res
   // and every render still has a realm of its own (LLP 1048.000 D10, as the render host's `make_realm`).
   const realm = () => {
     const document = createDocument(shell);
+    let pageOrigin;
     // The bake's page facts (runner/src/page.rs): visible, online, focused, no share sheet or pickers. The
     // base is the shell's mount, against which the runtime checks that a link navigates (rt.js `navigable`).
     Object.assign(document, { visibilityState: 'visible', hasFocus: () => true, baseURI: `http://render.invalid${base}` });
@@ -320,6 +325,8 @@ export function renderer(dist, { closed = false, read = path => readFileSync(res
           if (hops >= 20) throw new TypeError('fetch exceeded 20 redirects');
           const from = new URL(request.url), target = new URL(to, from);
           if (target.username || target.password) throw new TypeError('fetch cannot redirect to a URL with credentials');
+          if (request.mode === 'same-origin' && target.origin !== from.origin)
+            throw Object.assign(new Error(`same-origin fetch redirected to ${target.origin}`), { kind: 'Refused' });
           if (!(admits ? admits(target.href, true) : target.origin === from.origin)) {
             if (admits?.(target.href, false))
               throw Object.assign(new Error("fetch() redirected outside the render server's grants"), { renderDeferred: true, unavailable: 'a network grant held by the reader' });
@@ -371,6 +378,7 @@ export function renderer(dist, { closed = false, read = path => readFileSync(res
       ...(closed ? { __exactMarkdown: new Map() } : {}),
       __exactMarkdownBuilt: JSON.parse(builtMarkdown(shell, seen)),
     }, { codeGeneration: { strings: false } });
+    Object.defineProperty(fetchOwned, 'admitsPageOrigin', { value: origin => pageOrigin !== undefined && (origin === undefined || origin === pageOrigin) });
     ctx.globalThis = ctx; ctx.self = ctx;
     if (!process.listeners('unhandledRejection').includes(unhandledRejection)) process.on('unhandledRejection', unhandledRejection);
     for (const prototype of realmPrototypes.runInContext(ctx)) rejectionOwners.set(prototype, failedCallback);
@@ -381,7 +389,8 @@ export function renderer(dist, { closed = false, read = path => readFileSync(res
     const at = (path) => {
       const explicit = URL.canParse(path) ? new URL(path) : null;
       if (explicit && !['https:', 'http:'].includes(explicit.protocol)) throw new TypeError('render needs a page path or an absolute HTTP(S) URL');
-      const trusted = explicit?.origin ?? ctx.__exactRenderOrigin;
+      pageOrigin = explicit?.origin ?? published?.origin;
+      const trusted = pageOrigin ?? ctx.__exactRenderOrigin;
       const page = new URL(path, 'http://render.invalid');
       // Only a complete URL from the embedder supplies an authority. A request target, even
       // one starting with two slashes, contributes only its path and query.
@@ -391,7 +400,8 @@ export function renderer(dist, { closed = false, read = path => readFileSync(res
       document.baseURI = new URL(base, url.origin).href;
       return page;
     };
-    at(base);
+    const mount = new URL(base, 'http://render.invalid');
+    at(mount.pathname + mount.search);
     return { ctx, at, read, prefers, dispose, errors };
   };
   // The next render's realm, made once the last render is done and nothing waits (`render.ahead` false turns it off).
@@ -674,10 +684,11 @@ if (import.meta.main) {
     const { serve } = await import('../web/serve.mjs');
     process.exitCode = await serve([dist, '--port', String(port), '--loopback'], { js: true, sitePages });
   } else {
-    const render = renderer(dist);
+    const buildRoutes = args.includes('--build') ? JSON.parse(readFileSync(resolve(dist, 'routes.json'), 'utf8')) : null;
+    const render = renderer(dist, { buildOrigin: buildRoutes?.origin });
     if (args.includes('--build')) {
       const listed = JSON.parse(readFileSync(resolve(dist, '.gen/pages.json'), 'utf8')), pages = [], docs = [];
-      const routes = JSON.parse(readFileSync(resolve(dist, 'routes.json'), 'utf8')).routes;
+      const { routes } = buildRoutes;
       render.ahead = false;
       // A build reports every refusal in its one run: it lists and renders every page, then fails
       let failed = false;

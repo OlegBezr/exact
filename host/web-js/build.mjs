@@ -791,7 +791,7 @@ writeFileSync(resolve(gen, 'grant-network.js'), await bundleHostModule(root, 'na
 // A source declared in Contract carries its origin as its grant (fetches.js, LLP 1162.001 D3).
 const declared = plan.includes('from"./fetches.js"');
 const admitsNothing = production && !tsGrantSet.error && tsGrantSet.entries.length === 0 && !rustLinked && !Object.keys(moduleFlag.extensions).length && !pageModules && !declared;
-// Whether any source holds a network grant (the kinds grant-admission.js's `networkGrants`, `schemeGrants` and `localGrants` name).
+const fetchSelfGranted = [tsGrantSet, rustGrantSet].some(set => set.entries?.some(([, , grant]) => grant?.[0] === 'fetch-self'));
 const netGranted = [tsGrantSet, rustGrantSet].some(set => (set.entries ?? []).some(([, , grant]) => /^(fetch|websocket)(-|$)/.test(grant?.[0] ?? '')));
 const streams = !!captured?.facts.streams;
 const fetchRefused = production && ts && !netGranted && !streams;
@@ -800,7 +800,7 @@ const emptyGrantAdmission = () => {
     bundledAsset: bundledAsset.toString(), trimGrant: trimGrant.toString(), grantWords: grantWords.toString(), knownFolderPath: knownFolderPath.toString(),
     createGrantSet: '() => EMPTY', scopedGrantSet: '() => EMPTY', unionGrantSets: '() => EMPTY',
     grantError: '() => null', rawGrantText: "() => ''", hasGrant: '() => false',
-    admittingGrant: '() => null', admitsNetwork: '() => false', admitsSecret: '() => false', coversPath: '() => false',
+    sameOriginRequest: 'request => request', admitsFetchHop: '() => false', isSelfGrant: '() => false', selfWithoutPage: '() => false', admittingGrant: '() => null', admitsNetwork: '() => false', admitsSecret: '() => false', coversPath: '() => false',
     // Scoped to any source name, the empty set declares what it declares whole: nothing.
     sameGrantDeclaration: "(set, source) => typeof source === 'string'",
     // No grant admits a WebSocket stream, so no protocol is ever offered to one.
@@ -1053,7 +1053,7 @@ const scopedModule = (code, id) => {
   // stand-in: an import, so a parameter or local named `globalThis` cannot stand between. Rolldown's type comment says
   // define runs after inject; in one transform as here (rolldown 1.2.9), inject still imports the name define wrote.
   // Pinned by host/web-js/build.test.mjs "a page rendered at build runs no code from a string…".
-  const result = transformSync(id, transformed.code, { tsconfig: false, define: { eval: evalName }, inject: { ...Object.fromEntries(bound.map(name => [name, [resolve(gen, name === 'fetch' && fetchRefused ? 'ts-fetch-refused.js' : 'ts-fetch.js'), name]])),
+  const result = transformSync(id, transformed.code, { tsconfig: false, define: { eval: evalName, 'import.meta.exactPageAdmits': 'undefined' }, inject: { ...Object.fromEntries(bound.map(name => [name, [resolve(gen, name === 'fetch' && fetchRefused ? 'ts-fetch-refused.js' : 'ts-fetch.js'), name]])),
     ...Object.fromEntries(absent.map(name => [name, [resolve(gen, 'ts-fetch.js'), 'absent']])),
     [evalName]: [resolve(gen, 'ts-fetch.js'), 'eval'], globalThis: [resolve(gen, 'ts-fetch.js'), 'appGlobal'] } });
   if (result.errors.length) throw new Error(result.errors.map(e => e.message).join('\n'));
@@ -1078,7 +1078,7 @@ const onLog = (level, log) => {
 const markdownReaders = existsSync(resolve(gen, 'markdown.flag'));
 // What this build is, for exactDelivery(): the version the build names, and whether it is a production one (`--production`).
 const version = { version: process.env.EXACT_VERSION ?? '', buildNumber: process.env.EXACT_BUILD_NUMBER ?? '', production };
-const versionDefines = { 'globalThis.__exactVersion': JSON.stringify(version.version), 'globalThis.__exactBuildNumber': JSON.stringify(version.buildNumber), 'globalThis.__exactProduction': JSON.stringify(version.production) };
+const versionDefines = { 'globalThis.__exactFetchSelf': String(fetchSelfGranted), 'globalThis.__exactVersion': JSON.stringify(version.version), 'globalThis.__exactBuildNumber': JSON.stringify(version.buildNumber), 'globalThis.__exactProduction': JSON.stringify(version.production) };
 const literalModuleURLs = code => [...code.matchAll(/new\s+URL\(\s*['"]([^'":/#][^'"]*)['"]\s*,\s*import\.meta\.url\s*\)/g)].map(match => match[1]);
 const moduleImports = code => new Bun.Transpiler({ loader: 'js' }).scanImports(code).map(entry => entry.path).filter(path => path.startsWith('.'));
 const publicDependency = (from, specifier) => posix.resolve('/', posix.dirname(from), specifier).slice(1);
@@ -1192,7 +1192,7 @@ function cutSheet(chunks) {
 }
 if (how !== 'none' || markdownReaders) {
   const b = await rolldown({ ...bundleOptions, input: resolve(gen, 'main-server.js'), ...(ts ? { tsconfig: resolve(tsStage, '__exact_tsconfig.json') } : {}),
-    transform: { ...bundleOptions.transform, define: { ...bundleOptions.transform.define, ...versionDefines, 'globalThis.__exactRender': 'true', 'import.meta.url': JSON.stringify(pathToFileURL(resolve(out, 'app.js')).href) } },
+    transform: { ...bundleOptions.transform, define: { ...bundleOptions.transform.define, ...versionDefines, 'globalThis.__exactRender': 'true', 'import.meta.exactPageAdmits': 'globalThis.fetch.admitsPageOrigin', 'import.meta.url': JSON.stringify(pathToFileURL(resolve(out, 'app.js')).href) } },
     plugins: [...scopedPlugins(), contentNames(contentFiles, exactModule)], logLevel: 'warn', onLog });
   try { shipped.push(...(await b.write({ file: resolve(gen, 'server.js'), format: 'iife', codeSplitting: false })).output.filter(file => file.type === 'chunk')); }
   finally { await b.close(); }
@@ -1230,7 +1230,7 @@ const prepareChunks = { name: 'exact-prepare-chunks', renderChunk(code, chunk, _
   return sizes ? { code: edits.toString(), map: edits.generateMap({ source: chunk.fileName, hires: 'boundary', includeContent: false }).toString() } : edits.toString();
 } };
 {
-  const b = await rolldown({ ...bundleOptions, input: resolve(gen, 'main.js'), ...(ts ? { tsconfig: resolve(tsStage, '__exact_tsconfig.json') } : {}), transform: { ...bundleOptions.transform, define: { ...bundleOptions.transform.define, ...versionDefines, 'globalThis.__exactRender': 'false' } },
+  const b = await rolldown({ ...bundleOptions, input: resolve(gen, 'main.js'), ...(ts ? { tsconfig: resolve(tsStage, '__exact_tsconfig.json') } : {}), transform: { ...bundleOptions.transform, define: { ...bundleOptions.transform.define, ...versionDefines, 'import.meta.exactPageAdmits': 'undefined', 'globalThis.__exactRender': 'false' } },
     plugins: [...scopedPlugins(), contentNames(contentFiles, exactModule), prepareChunks], logLevel: 'warn', onLog });
   // In a development reload build, put the TypeScript data module and every
   // helper it imports in one chunk the page really loads. Its emitted bytes,
@@ -1445,7 +1445,7 @@ const pages = JSON.parse(readFileSync(resolve(gen, 'pages.json'), 'utf8'));
 cpSync(resolve(out, 'index.html'), resolve(out, 'shell.html'));
 const routes = planRoutes.map(({ name, pattern, render, notfound }) => ({ name, pattern, render, notfound }));
 // And the files named by their content, which a host may keep for good (LLP 1153.004 D4, D6).
-writeFileSync(resolve(out, 'routes.json'), JSON.stringify({ ...(siteBase === '/' ? {} : { base: siteBase }), routes, files: contentFiles }, null, 2) + '\n');
+writeFileSync(resolve(out, 'routes.json'), JSON.stringify({ ...(siteBase === '/' ? {} : { base: siteBase }), origin: renderOrigin, routes, files: contentFiles }, null, 2) + '\n');
 // Compile known reader text even when the development build emits only a shell.
 if (markdownReaders) {
   const { markdownAt, renderer } = await import('./render.mjs');

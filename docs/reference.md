@@ -3041,19 +3041,28 @@ In the browser, a website's `fetch('/_data/page.json')` starts at the base URL's
 `fetch('data/page.json')` starts at the document base, including a `<base href>`.
 A stream uses the same base. The resolved URL needs an ordinary grant. For
 unrelated HTTPS sites, `net.fetch https:` admits every HTTPS origin in the browser.
-There is no grant spelling for just the current page's origin.
 
-For a JS request render, pass the trusted absolute page URL to `renderer(dist)`'s
-returned function. Both root-relative and directory-relative fetches resolve against that URL. A path-only render and a page made at build use `app.origin`
-in `app.json`. With neither source of an origin, write an absolute fetch URL.
-The renderer takes no origin from request headers. Grant each public API origin
-or an applicable subdomain wildcard for a server-side read, and use
+For a web app served on several domains, `net.fetch self` admits the document's
+HTTP(S) scheme, host and port. A `<base>` changes where the browser resolves
+a relative URL. The document still supplies the grant. Native hosts have no
+page origin, so this line grants them no access.
+
+For a JS request render, pass the trusted absolute page URL to the function
+returned by `renderer(dist)`. Relative fetches resolve against that URL, and
+its origin is the allow-list for `net.fetch self`. Validate the URL against
+your own tenant list. Never take it from a request header, including `Host`
+or a forwarded header. A path-only request render grants nothing under `self`.
+A page rendered at build time can use `app.origin` in `app.json` for `self`.
+To read an external API, grant its origin or a matching subdomain wildcard. Use
 `credentials: 'omit'` for public data. Visitor credentials and scheme-wide
 network grants wait for the browser. The internal wasm browser target ignores `credentials`. When a browser `Request` carries a body, that target needs the bytes explicitly: `fetch(req, {body: await req.arrayBuffer()})`.
 
 For `fetch` with the default `redirect: "follow"`, native hosts and the JS render server check each
 redirect target against the source's `net.fetch` grants before contacting it.
-In the browser, Exact checks the final response URL after the browser follows redirects. On
+When an ordinary browser fetch needs `self` for its starting URL, it stays
+on the page origin through redirects. If another grant admits the starting
+URL, the fetch uses those other grants through redirects. Exact checks the
+final response URL against them after the browser follows redirects. On
 render-server pages, CSP `connect-src` allows the page's own origin and the
 app's granted origins, while request admission uses the source's grants. A hop
 outside the page origin and app grants is blocked before contact (`Network` on
@@ -3778,7 +3787,9 @@ out (a limit, the grants, the local network's rule) was never sent, and
 
 It must be an `http:` or `https:` request other than GET or HEAD, without
 `exactLongPoll`, and with `redirect` left to follow (XMLHttpRequest can only
-follow), or it is a `TypeError`. On the web a cross-origin upload asks a CORS
+follow), or it is a `TypeError`. For all grants, browser progress uploads use
+XMLHttpRequest, which follows redirects before Exact can check the final response URL.
+On the web a cross-origin upload asks a CORS
 preflight, as any XMLHttpRequest with an upload listener does. Uploads are
 sent without consulting the browser's cache. `only-if-cached` fails with a
 network error and sends nothing; a forced ask overrides it, as for other

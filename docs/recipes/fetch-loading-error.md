@@ -77,6 +77,6 @@ launches. Keep [native access](native-module.md) out of fetch sources. Inspect
 retention in `state.resourceStatus`. `with` controls boot admission. For a
 launch-supplied endpoint, see `contract vocab env`.
 
-On the web JS target, use `fetch('/_data/page.json', {credentials: 'omit'})`.
-Grant the resolved origin. For server rendering, pass a trusted absolute page URL
-or set `app.origin` for build-time pages. Native sources need absolute fetch URLs.
+On the web, `net.fetch self` admits `fetch('/_data/page.json', {credentials: 'omit'})`
+on each tenant. Pass its validated absolute page URL to the renderer, or set
+`app.origin` at build time. Native sources need absolute URLs and their own network grants.

@@ -1,5 +1,5 @@
 import { rt } from './rt-link.js';
-import { bundledAsset, admitsNetwork, admitsSecret, coversPath, createGrantSet, grantError, grantWords, hasGrant, rawGrantText, scopedGrantSet, unionGrantSets } from '../web/grant-admission.js';
+import { bundledAsset, admittingGrant, admitsFetchHop, isSelfGrant, sameOriginRequest, selfWithoutPage, admitsNetwork, admitsSecret, coversPath, createGrantSet, grantError, grantWords, hasGrant, rawGrantText, scopedGrantSet, unionGrantSets } from '../web/grant-admission.js';
 import { answeredFetch, countFault, delayFixture, faultMessage, matchFault } from '../web/faults.js';
 import { redirectFor, reachRefusal, UNATTRIBUTED } from '../web/address-space.js';
 export { socketProtocols, admitsNetwork, admitsSecret, coversPath, createGrantSet, grantError, grantWords, hasGrant, rawGrantText, trimGrant, sameGrantDeclaration, scopedGrantSet, unionGrantSets } from '../web/grant-admission.js';
@@ -113,8 +113,11 @@ export async function fetchWith(set, input, init = {}, expires = null, redirect 
     throw new FetchError('Refused', 'host asset left the app origin');
   const invalid = grantError(set);
   if (invalid) throw new FetchError('Refused', invalid);
-  if (!asset && !admitsNetwork(set, value, 'fetch')) {
+  const grant = !asset && admittingGrant(set, value, 'fetch');
+  const self = globalThis.__exactFetchSelf !== false && isSelfGrant(set, grant);
+  if (!asset && !grant) {
     if (globalThis.__exactRender && admitsNetwork(set, value, 'fetch', false)) throw Object.assign(new Error("fetch() outside the render server's grants"), { renderDeferred: true, unavailable: 'a network grant held by the reader' });
+    if (globalThis.__exactFetchSelf !== false && selfWithoutPage(set, value)) throw new FetchError('Refused', "outside the app's grants (net.fetch): net.fetch self needs a trusted HTTP(S) page URL");
     throw new FetchError('Refused', refusal('net.fetch'));
   }
   // @ref LLP 1103 D1, D2 — a driver fault: the refused connection's failure, never sent.
@@ -162,8 +165,9 @@ export async function fetchWith(set, input, init = {}, expires = null, redirect 
     const requestInput = typeof Request === 'function' && input instanceof Request ? input : value;
     const options = { ...rest, ...(signal ? { signal } : {}), redirect };
     // The browser validates the request even when the driver supplies its response.
-    const checked = new Request(requestInput, options);
-    const admits = (url, render) => asset && bundledAsset(input, value, url) || admitsNetwork(set, url, 'fetch', render);
+    const asked = new Request(requestInput, options);
+    const checked = self && !globalThis.__exactRender ? sameOriginRequest(asked) : asked;
+    const admits = (url, render) => asset && bundledAsset(input, value, url) || admitsFetchHop(set, url, self, render, value);
     const response = fixture ? answeredFetch(fixture.response, checked) : await (globalThis.__exactRender
       ? browserFetch(checked, undefined, admits)
       : browserFetch(checked));
