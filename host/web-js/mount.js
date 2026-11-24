@@ -339,6 +339,8 @@ export function each(p, list, key, row, pure) {
           }
           r.frag = frag;
         }
+        r.start.$rowKey = k;
+        if (r.start !== r.end) r.start.$rowEnd = r.end;
         r.k = k;
         if (PrepareTasks && r.s) r.s.taskCurrent = () => (prepared()?.next ?? rows).get(k) === r;
         next.set(k, r);
@@ -489,6 +491,8 @@ function adoptLazy(x) {
     }
     old.replaceWith(frag);
   } finally {
+    r.start.$rowKey = r.k;
+    if (r.start !== r.end) r.start.$rowEnd = r.end;
     Adopt = a;
     p.$n = save;
   }

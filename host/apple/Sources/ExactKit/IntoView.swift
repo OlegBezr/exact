@@ -77,7 +77,7 @@ extension Presenter {
     }
 
     /// `given`: the node to align, found by its caller (a fragment's, in its route: `Fragment.swift`).
-    func scrollElementIntoView(_ args: [Any], target given: NodeView? = nil) {
+    package func scrollElementIntoView(_ args: [Any], target given: NodeView? = nil) {
         if given == nil { cancelFragment() }
         guard let name = args.first as? String,
               let target = given ?? views.values.sorted(by: { $0.id < $1.id }).first(where: { $0.props["id"] == name }),
@@ -303,7 +303,7 @@ extension Presenter {
     }
 
     /// `given`: the node to align, found by its caller (a fragment's, in its route: `Fragment.swift`).
-    func scrollElementIntoView(_ args: [Any], target given: NodeView? = nil) {
+    package func scrollElementIntoView(_ args: [Any], target given: NodeView? = nil) {
         if given == nil { cancelFragment() }
         guard let name = args.first as? String,
               let target = given ?? views.values.sorted(by: { $0.id < $1.id }).first(where: { $0.props["id"] == name }) else {

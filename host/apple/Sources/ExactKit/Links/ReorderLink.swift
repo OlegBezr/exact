@@ -9,6 +9,11 @@ import AppKit
 import UIKit
 #endif
 
+package protocol NativeListReorder: AnyObject {
+    func drop(before: UInt32?)
+    func cancel()
+}
+
 /// What the core asks of a presenter's reorders.
 package protocol ReorderHosting: AnyObject {
     /// Whether a List row is lifted, its contact unsettled.
@@ -19,6 +24,7 @@ package protocol ReorderHosting: AnyObject {
     var groupActive: Bool { get }
     /// Cancel the active drag from the list with this authored id (LLP 1094 D8).
     func cancel(_ id: String)
+    func nativeMovement(grip: NodeView, list: UInt32, finished: @escaping () -> Void) -> NativeListReorder?
     /// A batch's reorder ops, after it applies.
     func observe(_ ops: [BatchOp])
     /// The presenter's tree goes: every reorder ends.
@@ -41,6 +47,10 @@ package protocol ReorderHosting: AnyObject {
     /// not a reorder's.
     func shouldBegin(_ view: NodeView, _ gesture: UIGestureRecognizer) -> Bool?
     #endif
+}
+
+extension ReorderHosting {
+    package func nativeMovement(grip: NodeView, list: UInt32, finished: @escaping () -> Void) -> NativeListReorder? { nil }
 }
 
 /// No reorders.

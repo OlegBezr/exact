@@ -513,9 +513,15 @@ package final class Presenter {
         guard let scope else { return false }
         var listed: [NodeView] = [], start: Int? // where a focused member of a painted group that is no stop stands among them
         func walk(_ view: UIView) {
-            if view.isHidden || (view as? NodeView)?.props["inert"] == "true" { return }
-            if let node = view as? NodeView, views[node.id] === node, Self.tabbable(node),
-               !fields || node.field != nil || node.textArea != nil { listed.append(node) } else if view.isFirstResponder, (view as? NodeView)?.paintedGroup != nil { start = listed.count }
+            let node = view as? NodeView
+            if view.isHidden {
+                if !fields, let grip = node, grip.tabOrder >= 0,
+                   grip.projectedReorderResponder()?.canBecomeFirstResponder == true { listed.append(grip) }
+                return
+            }
+            if node?.props["inert"] == "true" { return }
+            if let node, views[node.id] === node, Self.tabbable(node),
+               !fields || node.field != nil || node.textArea != nil { listed.append(node) } else if view.isFirstResponder, node?.paintedGroup != nil { start = listed.count }
             (navigation.lifted?.focusChildren(of: view) ?? view.subviews).forEach(walk)
         }
         walk(scope)
@@ -525,12 +531,12 @@ package final class Presenter {
             return pa != pb ? pa < pb : a.offset < b.offset
         }.map(\.element)
         guard !order.isEmpty else { return false }
-        let focused = order.firstIndex { $0.isFirstResponder || $0.field?.isFirstResponder == true || $0.textArea?.isFirstResponder == true }
+        let focused = order.firstIndex { $0.isFirstResponder || $0.projectedReorderResponder()?.isFirstResponder == true || $0.field?.isFirstResponder == true || $0.textArea?.isFirstResponder == true }
         if fields, focused.map({ backward ? $0 == 0 : $0 == order.count - 1 }) ?? true { return false }
         let next = focused.map { (backward ? $0 - 1 + order.count : $0 + 1) % order.count } ?? (backward ? order.count - 1 : 0)
         // From a focused member of a painted group that is no stop (`tabindex=-1`, LLP 1166.000 D1), the stop after or before its place.
         let target = focused == nil ? start.map { backward ? ($0 > 0 ? listed[$0 - 1] : order[order.count - 1]) : ($0 < listed.count ? listed[$0] : order[0]) } ?? order[next] : order[next]
-        let responder: UIView = target.headerField ?? target.textArea ?? target.field ?? target
+        let responder: UIView = target.headerField ?? target.textArea ?? target.field ?? target.projectedReorderResponder() ?? target
         chooseFocus(target)
         let became = responder.becomeFirstResponder()
         if became, responder === target { target.showFocusRing(true) }
@@ -587,7 +593,8 @@ package final class Presenter {
         defer { authoredFocus = false }
         focusAsked = target
         let name = target.props["id"] ?? "#\(target.id)"
-        let shown: UIView = target.headerField ?? target
+        let projectedGrip = target.projectedReorderResponder()
+        let shown: UIView = target.headerField ?? projectedGrip ?? target
         // UIKit may not announce its next transition until after the outgoing
         // sheet starts dismissing. The selected route's editor already exists,
         // but cannot receive focus until its controller mounts it in a window.
@@ -609,12 +616,12 @@ package final class Presenter {
         // Require this session's window. Inert comes from the author or a
         // presentation that owns interaction (LLP 1123 D2).
         if let reason = NavigationRules.focusRefusal(mounted: shown.window != nil, disabled: target.formDisabled,
-                                                     zeroSize: !Self.sized(target),
+                                                     zeroSize: projectedGrip?.bounds.isEmpty ?? !Self.sized(target),
                                                      hiddenAncestor: hidden, inertAncestor: target.inert) {
             session?.log("focus \"\(name)\" refused: \(reason)")
             return
         }
-        let responder: UIView = target.headerField ?? textEditor ?? target
+        let responder: UIView = target.headerField ?? textEditor ?? projectedGrip ?? target
         if selectText, textEditor == nil {
             session?.log("selectText \"\(name)\" refused: not a text editor")
             return

@@ -338,8 +338,12 @@ export const classifications = [
     ["runner:runner/src/runner/device.rs", "Runner::answer_hold Runner::device_holds Runner::hold Runner::hold_frame_request Runner::hold_request Runner::hold#next_ticket:1 Runner::retire_holds_on"],
     ["runner:runner/src/runner/held.rs", "Runner::asked Runner::hold_facts"],
     ["runner:runner/src/runner/list_seam.rs",
-      "Runner::begin_group_reorder Runner::begin_reorder Runner::cancel_reorder Runner::drop_reorder Runner::finish_reorder Runner::has_reorder " +
+      "Runner::begin_group_reorder Runner::begin_reorder Runner::cancel_reorder Runner::drop_reorder Runner::finish_reorder Runner::grouped_reorder_rows Runner::has_reorder " +
       "Runner::preview_reorder Runner::preview_reorder_into Runner::reorder_binding Runner::reorder_frame Runner::reorder_geometry Runner::reorder_json Runner::reorder_step"],
+    ["runner:runner/src/list_api/reorder.rs", "ReorderBinding::unwrapped"],
+    ["runner:runner/src/runner/mounted_reorder.rs",
+      "MountedSection::before MountedSection::current MountedSection::new MountedSection::paint MountedSection::place MountedSection::preview " +
+      "MountedSection::restore MountedSection::step MountedSection::step#gap:1 Runner::native_section_gap Runner::preview_section_before Runner::section_step_anchor"],
     ["runner:runner/src/runner/reorder.rs", "Runner::begin_session#SERIAL.try_update:1"],
     ["web-js:host/web-js/motion/src/abi.rs", "m_begin m_end m_height m_held m_lower m_measured m_observe m_pair_begin m_pair_update m_pan_release m_pan_sample m_remove m_settle m_track m_transitions m_unheight m_update"],
     ["web:host/web/src/abi.rs", "exact_auth"],

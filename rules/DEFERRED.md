@@ -2016,6 +2016,9 @@ browser as the oracle, the same shape layout already has. In exchange, not in v1
   **Amended (Charlie, 2026-11-24, "recs ok"):** `cancelReorder(id)` runs D8's
   cancel on an active reorder from the named list. With no session, or once
   the drop was sent, it does nothing.
+  **Expanded (Charlie, 2026-11-24, "recs ok").** LLP 1084 and LLP 1094 admit
+  `reorderdrop` on a grouped list that builds every row. Unblocks reordering
+  a settings row within its section using `reorderFor` and `ReorderEvent`.
   **Expanded (LLP 1094.000; Charlie's waiver, no take; James Ide,
   2026-11-20: "Drags across apps are needed" and "We have a waiver"):** a
   node as a drag source to the system, `draggable` with

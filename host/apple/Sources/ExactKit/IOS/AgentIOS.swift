@@ -1129,13 +1129,14 @@ extension Agent {
             // A release focuses nothing: a Tab's down has already moved the
             // focus, which its up must not take back.
             let phase = req["phase"] as? String
+            let responder = v.projectedReorderResponder() ?? v
             if phase != "up" {
                 if let f = v.textArea { if !f.isFirstResponder { _ = f.becomeFirstResponder() } }
                 else if let f = v.selectionField { if !f.isFirstResponder { _ = f.becomeFirstResponder() } }
-                else if v.canBecomeFirstResponder, !v.isFirstResponder { _ = v.becomeFirstResponder() }
+                else if responder.canBecomeFirstResponder, !responder.isFirstResponder { _ = responder.becomeFirstResponder() }
             }
             // With nothing focused the first root hears it, as a keyboard's key reaches it (`ExactView`).
-            let focus = v.field != nil || v.textArea != nil || v.isFirstResponder || v.handlers.contains("press") ? v : presenter.focusedNode == nil ? presenter.keyRoot : nil
+            let focus = v.field != nil || v.textArea != nil || responder.isFirstResponder || v.handlers.contains("press") ? v : presenter.focusedNode == nil ? presenter.keyRoot : nil
             // The release's `keyup` handlers at the focus: after the
             // down, or when a held key comes up. A modifier's own keydown
             // holds it and its keyup no longer does, as DOM's.

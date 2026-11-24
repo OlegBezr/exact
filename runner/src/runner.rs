@@ -44,6 +44,7 @@ pub use host_kinds::{HistorySwipe, ScrollDrag};
 mod pointer;
 pub use pointer::{AtomEvent, DropEvent, MouseEvent, PointerEvent, WheelEvent};
 mod intersect;
+mod mounted_reorder;
 mod reorder;
 mod reorder_codec;
 mod reorder_group;
@@ -180,7 +181,6 @@ mod transport_tests;
 mod uploads;
 mod viewport;
 mod writes;
-
 use crate::instance::{Ids, InstanceError, InstanceStep, SurfaceUpdate, Tree, Update};
 use crate::request::{Answer, Dispatch, Outcome, Request, RequestClass, RequestOut};
 use crate::store::{Store, StoreWrite};

@@ -2771,9 +2771,12 @@ is the zoom as `scrollTop` is the offset: write it for Fit and 2× buttons (with
 bind is safe. Linux has no touch pinch or double tap, and a pinch on Windows
 has no bounce: `contract vocab -exact-max-zoom` says what each host lacks.
 
-`reorderdrop` belongs only on a vertical `list virtualized=true`
-(each row's handle names it with `reorderFor`); the compiler refuses it on any
-other element, where no host could drag. Lists that share a `reorderGroup`
+A vertical `list virtualized=true` takes `reorderdrop`. A grouped settings list
+(`appearance="auto"` or `listStyle="inset-grouped"`) also takes it when all
+its rows are mounted. Each handle names the list with `reorderFor`. A settings
+row moves within its own section. Its action gets the next keyed row in that
+section, or `none` at the end. Both event IDs name the settings list.
+Virtualized lists that share a `reorderGroup`
 (each with a `reorderdrop`, an `id` and string keys) exchange rows: the drop
 fires once, on the list the row lands in, with the dragged row's key, then the
 key it lands before (`none` at the end) and, for an action taking one more

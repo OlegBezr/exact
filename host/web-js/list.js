@@ -1316,7 +1316,7 @@ After.push(() => {
   remount(); release(); wake(); publish();
   Selection?.after();
 });
-function load() {
+export function load() {
   if (Loading || typeof requestAnimationFrame !== "function" || globalThis.__exactRender) return;
   runtime.collectionScrollPending = () => Controller?.scrollPending() ?? false;
   inflight.n++;
@@ -1336,7 +1336,7 @@ function load() {
       return intoView(`#${view}`, key, block, inline, null, view);
     }, intoView: intoViewState,
     // Arrange's preview, installed by reorder.js (the motion piece's chunk).
-    internals: { Collection, Lists, Views, find, minEpoch, settled, controller: () => Controller } };
+    internals: { Collection, SizeIndex, Lists, Views, viewId, noise, find, minEpoch, settled, controller: () => Controller } };
 }
 // A report from the browser half (runner/collection.rs `collection_feedback_filled`).
 function report(bytes, f, fill) {

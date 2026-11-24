@@ -743,7 +743,9 @@ uint32_t exact_reorder_end(ExactRuntime rt, uint64_t token, uint32_t drop, doubl
  * collection feedback reports it; inside zero (the centre in no grouped
  * port) keeps the certified gap. step: 1 earlier, 2 later, 3 the previous
  * grouped list, 4 the next. group_end drops into the session's target
- * (nonzero) or cancels; a holding drop ignores a cancel. Every reply, and
+ * (1), cancels (0), or accepts the native list's final position (2, one
+ * little-endian u32 successor view in the input buffer, zero at the end).
+ * A holding drop ignores a cancel. Every reply, and
  * every later batch that changes it, carries {"op":"reorder","group":true,
  * "token","list","wrapper","phase":"active"|"holding"|"cancelling"|
  * "settling"|"finished"|"refused","dispatched","ending":null|"landed"|"gone"|
