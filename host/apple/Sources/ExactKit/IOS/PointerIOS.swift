@@ -155,16 +155,11 @@ final class PointerRecognizer: UIGestureRecognizer {
             }
         }
     }
-    /// Up the authored tree (`Presenter.pointerParent`).
+    /// Up the authored tree (`Presenter.authoredNodes`).
     static func bubbling(from node: NodeView) -> [NodeView] {
-        var nodes: [NodeView] = []
-        var view: UIView? = node
-        let presenter = node.presenter
-        while let v = view {
-            if let n = v as? NodeView, !n.disabled, n.handlers.contains("pointerdown") || n.handlers.contains("pointerup") || n.handlers.contains("pointercancel") { nodes.append(n) }
-            view = presenter?.pointerParent(of: v) ?? v.superview
+        (node.presenter?.authoredNodes(from: node) ?? [node]).filter {
+            !$0.disabled && ($0.handlers.contains("pointerdown") || $0.handlers.contains("pointerup") || $0.handlers.contains("pointercancel"))
         }
-        return nodes
     }
     /// Still the tree's node: a handler further in may have removed it.
     private static func live(_ node: NodeView) -> Bool { node.presenter?.views[node.id] === node }
@@ -256,13 +251,27 @@ extension Presenter {
     /// What a touch's pointer events, long press and double tap bubble to
     /// from `view`, as DOM's bubble out of the top layer: a lifted popover's
     /// or a modal dialog's authored parent, though its view is in the top
-    /// layer or a sheet, a presented route's logical parent, else the
-    /// superview. `eventParent` stays inside a dialog's sheet: the walks on
-    /// it also read inertness and visibility, which a modal dialog escapes.
+    /// layer or a sheet, a grouped list's carried row's authored parent,
+    /// though its view is in a cell, a presented route's logical parent,
+    /// else the superview. `eventParent` stays inside a dialog's sheet: the
+    /// walks on it also read inertness and visibility, which a modal dialog
+    /// escapes.
     func pointerParent(of view: UIView) -> UIView? {
         if let parent = declaredParent(of: view) { return parent }
         if let node = view as? NodeView, let parent = dialogs.authoredParent(of: node) { return parent }
-        return menus.logicalParent(of: view) ?? eventParent(of: view)
+        return menus.logicalParent(of: view) ?? groupedLists?.logicalParent(of: view) ?? eventParent(of: view)
+    }
+
+    /// The nodes from `view` up the authored tree (`pointerParent`),
+    /// innermost first, as a pointer event and a drag's events bubble.
+    package func authoredNodes(from view: UIView) -> [NodeView] {
+        var nodes: [NodeView] = []
+        var next: UIView? = view
+        while let at = next {
+            if let node = at as? NodeView { nodes.append(node) }
+            next = pointerParent(of: at) ?? at.superview
+        }
+        return nodes
     }
 }
 

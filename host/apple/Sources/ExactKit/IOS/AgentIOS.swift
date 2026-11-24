@@ -470,8 +470,16 @@ extension Agent {
 
     func tap(_ req: [String: Any]) -> [String: Any] {
         if req["holdState"] != nil { return holdTap(req) } // a held state (LLP 1122 D8, HeldState.swift)
-        // A drag of files from outside the app is the Mac's and the web's (FileDragMac.swift).
-        if req["drop"] != nil || req["dragenter"] != nil || req["dragleave"] != nil { return ["delivery": "unsupported", "reason": "iOS has no drag of files from outside the app: no drop, dragenter or dragleave"] }
+        // A drag from another app, through the drop target the drag-in module keeps (LLP 1094.001 D6); tvOS has no drag
+        if req["drop"] != nil || req["dragenter"] != nil || req["dragleave"] != nil {
+            #if os(iOS)
+            guard let drops = presenter.dragIn else { return ["delivery": "unsupported", "reason": "this app links no drops (`drag_in`): no node hears drop, dragenter or dragleave"] }
+            guard let id = req["id"] as? Int, let view = presenter.views[UInt32(id)] else { return ["error": "a drag needs a target"] }
+            return drops.agentDrag(req, over: view)
+            #else
+            return ["delivery": "unsupported", "reason": "tvOS has no drag: no drop, dragenter or dragleave"]
+            #endif
+        }
         // A header node the app's navigation bar leaves out is not there to
         // tap, whatever the agent's chrome paints (LLP 1116 D2).
         if let id = req["id"] as? Int, let node = presenter.views[UInt32(id)], let why = presenter.navigation.unshownByBar()[node.id] {

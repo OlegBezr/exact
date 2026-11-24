@@ -156,6 +156,8 @@ package final class Presenter {
     #if os(iOS)
     /// The drag sources (LLP 1094.000 D4), when the module is linked.
     package lazy var dragOut: DragOutSources? = DragOutLink.installed?.sources(self)
+    /// The drop target (LLP 1094.001 D4), when the module is linked.
+    package lazy var dragIn: DragInTarget? = DragInLink.installed?.target(self)
     #endif
     /// A `dialog` that is not a confirmation, as UIKit's sheet (`DialogLink`).
     lazy package var dialogs: any DialogHosting = DialogLink.make?(self) ?? NoDialogs(self)
@@ -395,6 +397,7 @@ package final class Presenter {
         menus.reset()
         #if os(iOS)
         dragOut?.reset()
+        dragIn?.reset()
         #endif
         swipeActions.reset(); rowCells.reset()
         pool.reset()
@@ -789,7 +792,13 @@ package final class Presenter {
         }
     }
     package func key(_ id: UInt32, _ press: KeyPress) { send(id) { [self] in onKey?(id, press) } }
-    func clipboard(_ id: UInt32, _ kind: UInt32, _ text: String) { send(id) { [self] in onClipboard?(id, kind, text) } }
+    /// An event of `kind` with its line at node `id`: a clipboard's, a popover's toggle, a drag's (LLP 1094.001 D1).
+    /// False when no node `id` is there to hear it.
+    @discardableResult package func clipboard(_ id: UInt32, _ kind: UInt32, _ text: String) -> Bool {
+        guard textHost(id) != nil else { return false }
+        send(id) { [self] in onClipboard?(id, kind, text) }
+        return true
+    }
     package func contextmenu(_ id: UInt32) { send(id) { [self] in onContextmenu?(id) } }
     /// A `contextmenu` with its point (studio diary R22): kind 10 and its line.
     func contextmenu(_ id: UInt32, line: String) { send(id) { [self] in onClipboard?(id, 10, line) } }
@@ -1237,6 +1246,7 @@ package final class Presenter {
         ApplyProfile.time("pass.menus") { menus.sync() }
         #if os(iOS)
         ApplyProfile.time("pass.dragOut") { dragOut?.sync() }
+        ApplyProfile.time("pass.dragIn") { dragIn?.sync() }
         #endif
         glassGroups.reconcile()
         positionContexts()
