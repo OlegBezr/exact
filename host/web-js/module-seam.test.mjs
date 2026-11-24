@@ -740,3 +740,22 @@ test('a clock move runs what an implementation registered, never its own names',
     expect(await page.evaluate(() => { fixture.advance(100); return fixture.seen; })).toEqual(['clocked']);
   } finally { await browser.close(); server.stop(true); }
 });
+
+test('an input-gated read requires the calling source’s grant in a mixed app', async () => {
+  const server = moduleServer(), browser = await suiteBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.goto(server.url.href);
+    const refused = await page.evaluate(async () => {
+      const { clock, data, Origin } = await import('/host/web-js/rt.js');
+      const { modules } = await import('/host/web-js/modules.js');
+      const { unionGrantSets } = await import('/host/web-js/admission.js');
+      clock.agent = true;
+      data.grants = 'clipboard.read';
+      const row = ['clipboard.readText', true, { origin: 'input', implementation: true, nameGrants: ['clipboard.read'] }, 's'];
+      modules({ readText: row }, { clipboard: async () => { throw new Error('ungranted read reached the implementation'); } });
+      return Origin.callData({ extension: 'clipboard', send: 'readText', args: {} }, () => true, true, unionGrantSets());
+    });
+    expect(refused).toEqual({ error: 'NotAllowedError' });
+  } finally { await browser.close(); server.stop(true); }
+});

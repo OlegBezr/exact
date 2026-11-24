@@ -1,9 +1,9 @@
 import type { Answer, Sources } from './app.contract.d.ts';
-import { write, writeText, ClipboardItem } from '@exact/clipboard';
+import { read, readText, write, writeText, ClipboardItem } from '@exact/clipboard';
 
 // The suite writes the id `exact new` gave the app.
 export const appId = '__APP_ID__';
-export const grants = 'fs.read app:/tmp/copy\nfs.write app:/tmp/copy';
+export const grants = 'clipboard.read\nfs.read app:/tmp\nfs.write app:/tmp/copy';
 
 // An 8×8 red PNG carrying a `tEXt` chunk the sanitized write drops; an APNG whose default image (red) is not
 // part of its animation, frame 0 green and frame 1 blue; a PNG whose header declares 9000×9000 pixels; and the
@@ -17,11 +17,33 @@ const bytes = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 const said = (e: unknown) => { const x = e as { name?: string; message?: string }; return `${x.name}: ${x.message}`; };
 
 const sources: Sources = {
+  readOnMount: async () => {
+    try { await readText(); return { text: 'read on mount' }; } catch (e) { return { text: said(e) }; }
+  },
   supports: async () => ({ text: ['image/png', 'text/plain', 'text/html', 'image/svg+xml'].map(t => `${t}=${ClipboardItem.supports(t)}`).join(' ') }),
   copy: async ([kind], _store, storage) => {
     const file = async (name: string, b64: string) => { const path = `app:/tmp/copy/${name}`; await storage.fs.mkdir('app:/tmp/copy').catch(() => {}); await storage.fs.writeFile(path, bytes(b64)); return path; };
     try {
       switch (kind) {
+        case 'pair': {
+          const [items, text] = await Promise.all([read(), readText()]);
+          return { text: [await items[0].getType('text/plain'), text].join(' | ') };
+        }
+        case 'readText': return { text: await readText() };
+        case 'read': {
+          const items = await read();
+          const parts = [];
+          for (const item of items) {
+            for (const type of item.types) {
+              const value = await item.getType(type);
+              if (type === 'image/png') {
+                const bytes = new Uint8Array(await storage.fs.readFile(value));
+                parts.push(`png ${bytes[0]} ${bytes[1]}`);
+              } else parts.push(value);
+            }
+          }
+          return { text: parts.sort().join(' | ') };
+        }
         case 'png': await write([new ClipboardItem({ 'image/png': await file('red.png', RED) })]); break;
         case 'png-bytes': await write([new ClipboardItem({ 'image/png': bytes(RED) })]); break;
         case 'apng': await write([new ClipboardItem({ 'image/png': await file('anim.png', APNG) })]); break;

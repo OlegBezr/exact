@@ -41,7 +41,7 @@ async function firstFrame(bytes) {
 
 const hex = buffer => [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, '0')).join('');
 
-export function implementation({ agent, log, files }) {
+export function implementation({ agent, log, files, clipboard = { item: null } }) {
   const say = line => log?.(`clipboard: ${line}`);
   let latest = 0, inFlight = null, writes = 0, last = null, shownNumber = 0, browser = Promise.resolve();
   const refused = (error, message) => { say(`write refused: ${error} (${message})`); return { error, message }; };
@@ -85,11 +85,12 @@ export function implementation({ agent, log, files }) {
     // This write supersedes any still reading its file or decoding (D2), and
     // is superseded from here, before its own first wait.
     const number = ++latest;
+    const beforeCopy = clipboard.item;
     inFlight?.supersede();
     let superseded = null;
     const mine = { request: told.request, supersede: () => { superseded ??= refused('AbortError', 'a later write superseded it'); } };
     inFlight = mine;
-    const ended = () => superseded || number !== latest ? superseded ?? refused('AbortError', 'a later write superseded it') : null;
+    const ended = () => superseded || number !== latest || (agent && clipboard.item !== beforeCopy) ? superseded ?? refused('AbortError', 'a later write superseded it') : null;
     let png = null;
     try {
       if (typeof image === 'string') {
@@ -120,6 +121,7 @@ export function implementation({ agent, log, files }) {
         } catch (e) { return refused(e?.name ?? 'NotAllowedError', e?.message ?? String(e)); } finally { settled(); }
       }
     } finally { if (inFlight === mine) inFlight = null; }
+    if (agent) clipboard.item = { ...(text != null && { 'text/plain': text }), ...(png && { 'image/png': png.blob }) };
     writes++;
     const shown = { types: [...(text != null ? ['text/plain'] : []), ...(png ? ['image/png'] : [])], pasteboard: agent ? 'memory' : 'navigator.clipboard' };
     if (text != null) shown.text = text.slice(0, 200);
@@ -131,13 +133,73 @@ export function implementation({ agent, log, files }) {
     if (number > shownNumber) { shownNumber = number; last = shown; }
     return null;
   }
+  const reads = new Map();
+  async function read(textOnly, request) {
+    const token = {};
+    reads.set(request, token);
+    const cancelled = () => reads.get(request) !== token ? new DOMException('clipboard read cancelled', 'AbortError') : undefined;
+    try {
+      if (textOnly) {
+        if (!agent && !navigator.clipboard?.readText) return { error: 'NotSupportedError' };
+        const text = agent ? clipboard.item?.['text/plain'] ?? '' : await navigator.clipboard.readText();
+        if (cancelled()) return { error: 'AbortError' };
+        return text.length <= MOST_TEXT && new TextEncoder().encode(text).length <= MOST_TEXT ? text : { error: 'DataError', message: 'text/plain is over 1 MiB' };
+      }
+      if (!agent && !navigator.clipboard?.read) return { error: 'NotSupportedError' };
+      const own = clipboard.item;
+      const items = agent ? (own ? [{ types: Object.keys(own), getType: type => own[type] }] : []) : await navigator.clipboard.read();
+      const records = [], copies = [];
+      let textBytes = 0, imageBytes = 0;
+      for (const item of items) {
+        if (cancelled()) return { error: 'AbortError' };
+        const record = {};
+        for (const type of item.types.filter(type => TYPES.includes(type))) {
+          const data = await item.getType(type);
+          if (type === 'text/plain') {
+            const tooLarge = { error: 'DataError', message: 'text/plain is over 1 MiB' };
+            const remaining = MOST_TEXT - textBytes;
+            if ((agent ? data.length : data.size) > remaining) return tooLarge;
+            const text = agent ? data : new TextDecoder("utf-8", { ignoreBOM: true }).decode(await data.arrayBuffer());
+            textBytes += new TextEncoder().encode(text).length;
+            if (textBytes > MOST_TEXT) return tooLarge;
+            record[type] = text;
+          } else {
+            const blob = data;
+            const tooLarge = { error: 'DataError', message: 'image/png is over 64 MiB' };
+            if (blob.size > MOST_FILE) return tooLarge;
+            const image = await sanitized(new Uint8Array(await blob.arrayBuffer()));
+            if (image.error) return image;
+            imageBytes += image.png.length;
+            if (imageBytes > MOST_FILE) return tooLarge;
+            const path = `app:/tmp/clipboard-${crypto.randomUUID()}.png`;
+            copies.push({ path, blob: image.blob });
+            record[type] = path;
+          }
+        }
+        if (Object.keys(record).length) records.push(record);
+      }
+      if (cancelled()) return { error: 'AbortError' };
+      if (copies.length) {
+        await files.putAll(copies, cancelled);
+        if (cancelled()) {
+          await Promise.all(copies.map(({ path }) => files.remove(path)));
+          return { error: 'AbortError' };
+        }
+      }
+      return records;
+    } catch (error) { return { error: error.name ?? 'NotReadableError', message: error.message }; }
+    finally { if (reads.get(request) === token) reads.delete(request); }
+  }
+
   const disclosed = () => ({ writes, ...(last ? { lastWrite: last } : {}) });
 
   return {
+    read: (_, { request = Symbol() } = {}) => read(false, request),
+    readText: (_, { request = Symbol() } = {}) => read(true, request),
     write: ({ data }, told) => write(data, told),
     writeText: ({ data }, told) => typeof data === 'string' ? write([{ 'text/plain': data }], told) : refused('TypeError', 'writeText takes a string'),
-    cancel(request) { if (inFlight && inFlight.request === request) { latest++; inFlight.supersede(); } },
-    destroy() { inFlight?.supersede(); },
+    cancel(request) { reads.delete(request); if (inFlight && inFlight.request === request) { latest++; inFlight.supersede(); } },
+    destroy() { reads.clear(); inFlight?.supersede(); },
     /** `state.extensions.clipboard.implementation` (§7 item 3). */
     state: disclosed,
   };

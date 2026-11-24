@@ -77,3 +77,34 @@ test('Windows sends the path and text as one item through the generated binding'
   expect(sent).toHaveLength(1);
   expect(sent[0].args.data).toEqual([{ 'image/png': 'app:/tmp/capture.png', 'text/plain': 'caption' }]);
 });
+
+test('read returns ClipboardItems, omits absent representations and rejects a missing type', async () => {
+  const { read, ClipboardItem } = await load('web');
+  const before = globalThis.__exact_module;
+  globalThis.__exact_module = () => Promise.resolve([{ 'image/png': null, 'text/plain': 'pasted' }]);
+  try {
+    const [item] = await read();
+    expect(item).toBeInstanceOf(ClipboardItem);
+    expect(item.types).toEqual(['text/plain']);
+    expect(await item.getType('text/plain')).toBe('pasted');
+    expect(await outcome(item.getType('image/png'))).toBe('NotFoundError');
+  } finally { globalThis.__exact_module = before; }
+});
+
+test('native read responses carry a full MiB of escaped plain text', async () => {
+  const { read, readText } = await load('ios');
+  const text = '\u0001'.repeat(1 << 20);
+  const via = globalThis.__exact_module, fetch = globalThis.fetch;
+  delete globalThis.__exact_module;
+  globalThis.fetch = async (_url, init) => {
+    const list = JSON.parse(init.body).send === 'read';
+    const json = JSON.stringify(list ? [{ 'text/plain': text }] : text);
+    expect(json.length).toBeGreaterThan(6 << 20);
+    expect(json.length).toBeLessThanOrEqual(init.exactIndependentHttp.maxResponseBytes);
+    return new Response(json);
+  };
+  try {
+    expect(await readText()).toBe(text);
+    expect(await (await read())[0].getType('text/plain')).toBe(text);
+  } finally { globalThis.fetch = fetch; globalThis.__exact_module = via; }
+});

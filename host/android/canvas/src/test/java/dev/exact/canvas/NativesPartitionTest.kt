@@ -56,12 +56,14 @@ class NativesPartitionTest {
         companion object {
             var profiles = false
             var navigation = true
+            var documentStart = true
             var worlds = false
 
             @JvmStatic @Implementation fun isFeatureSupported(feature: String) = when (feature) {
                 WebViewFeature.NAVIGATION_LISTENER -> navigation
                 WebViewFeature.MULTI_PROFILE -> profiles
-                WebViewFeature.WEB_MESSAGE_LISTENER, WebViewFeature.DOCUMENT_START_SCRIPT -> !navigation
+                WebViewFeature.WEB_MESSAGE_LISTENER -> !navigation
+                WebViewFeature.DOCUMENT_START_SCRIPT -> documentStart
                 WebViewFeature.JS_INJECTION_IN_FRAME_AND_WORLD -> worlds
                 else -> false
             }

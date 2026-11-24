@@ -87,7 +87,9 @@ pub(crate) const RUST_ABI: u32 = exact_logic_abi::ABI;
 /// D11), which a prelude of 9 to 14 refuses, failing the stream. A bundle
 /// names the option alike on a socket, so every use needs 15.
 /// 16: per-source turn budgets. Older native hosts give every source 100 ms.
-pub(crate) const TYPESCRIPT_RUNTIME: u32 = 16;
+/// 17: browser automation uses document realms. An older binary ignores the
+/// target and could run the call in an unnamed frame.
+pub(crate) const TYPESCRIPT_RUNTIME: u32 = 17;
 
 /// What each runtime past the first added that a bundle names to use (see
 /// [`TYPESCRIPT_RUNTIME`]): a `fetch` option an older prelude would ignore,
@@ -163,14 +165,13 @@ pub fn typescript_runtime_of(bundle: &[u8], grants: &str) -> u32 {
         .iter()
         .find(|(_, option)| text.contains(option))
         .map_or(0, |(runtime, _)| *runtime);
-    let sqlite = grants.lines().map(str::trim).any(|line| {
-        !line.starts_with('#') && line.split_whitespace().next() == Some("sqlite.open")
-    });
-    if sqlite {
-        named.max(10)
-    } else {
-        named
-    }
+    grants.lines().fold(named, |runtime, line| {
+        match line.split_whitespace().next() {
+            Some("browser.automation") => runtime.max(17),
+            Some("sqlite.open") => runtime.max(10),
+            _ => runtime,
+        }
+    })
 }
 /// The domain separator over the canonical inputs.
 const DOMAIN: &str = "exact2 compatibility id v1\n";

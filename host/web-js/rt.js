@@ -430,13 +430,15 @@ export function C(name, args) {
 // under its own commit's origin.
 export const Origin = {
   now: () => Origin.ask ?? 'app',
-  run(origin, f) {
-    const was = this.ask;
+  run(origin, f, input = false) {
+    const was = this.ask, previousInput = this.input;
+    this.input = input;
     this.ask = origin;
     try {
       return f();
     } finally {
       this.ask = was;
+      this.input = previousInput;
     }
   },
 };
@@ -457,8 +459,8 @@ function settle() {
 // recommit, including what its caller does on refusal, under its own origin.
 export function deferForReplacement(f) {
   if (Writes || !DEVELOPMENT_STORE) return false;
-  const origin = Origin.now(), invocation = Invocation.id;
-  return globalThis.__exactDevReplacement?.defer(() => Origin.run(origin, () => Invocation.run(invocation, f))) ?? false;
+  const origin = Origin.now(), invocation = Invocation.id, input = Origin.input;
+  return globalThis.__exactDevReplacement?.defer(() => Origin.run(origin, () => Invocation.run(invocation, f), input)) ?? false;
 }
 /** One commit: `f` runs; its writes, sends and refreshes land; settlement
  * runs; a refusal anywhere up to here puts everything back and leaves the
@@ -556,7 +558,7 @@ export function commit(f, what = 'commit', finished) {
     }
   }
   const [out, cmds, landed, finishes] = [Out, Commands, Landed, Finishes],
-    changed = Sched?.changed(queued), invocation = Invocation.id, origin = Origin.now();
+    changed = Sched?.changed(queued), invocation = Invocation.id, origin = Origin.now(), input = Origin.input;
   Output?.made(cmds, invocation);
   // A key handler's preventDefault/stopPropagation act on its event before the dispatch ends, a tree update a view
   // transition defers too (review C3).
@@ -640,6 +642,7 @@ export function commit(f, what = 'commit', finished) {
         m.due = armedAt();
         m.thenInvocation = invocation;
         m.thenOrigin = origin;
+        m.thenInput = input;
         if (!clock.agent) drive();
       }
     Sched?.scan(true, Sched?.changed(queued) ?? changed); // a free queue's waiting send is due (LLP 1092 D3)

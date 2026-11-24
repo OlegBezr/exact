@@ -996,8 +996,8 @@ class Natives(
     }
 
     /** The automation of each iframe of this reader with this `id`: null for one without a kept partition. */
-    internal fun automations(id: String): List<FrameAutomation?> = elements.values
-        .filter { it.kind == 1 && JSONObject(it.wanted.ifEmpty { "{}" }).text("id") == id }.map { it.browser?.automation }
+    internal fun automations(id: String?): List<FrameAutomation?> = elements.values
+        .filter { it.kind == 1 && (id == null || JSONObject(it.wanted.ifEmpty { "{}" }).text("id") == id) }.map { it.browser?.automation }
 
     /** The profiles the frames shown now were made in ([Partitions.flush]). */
     fun profiles(): Set<String> = elements.values.mapNotNullTo(HashSet()) { it.profile }

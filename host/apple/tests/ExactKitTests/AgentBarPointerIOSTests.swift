@@ -146,6 +146,15 @@ final class AgentBarPointerIOSTests: XCTestCase {
         XCTAssertTrue(placed.contains("item-add") && placed.contains("Plain"), "the bar shows its first items: \(placed)")
         XCTAssertTrue(overflowed.contains("item-31") && overflowed.contains("Spare"), "the bar has no room for its last: \(overflowed)")
 
+        let omitted = try entry("item-31").node
+        let reply = agent.layout(["id": Int(omitted.id)])
+        let detail = try XCTUnwrap(reply["node"] as? [String: Any])
+        let space = try XCTUnwrap(detail["space"] as? [String: Any])
+        XCTAssertEqual((space["viewport"] as? [String: Double])?["w"], 0)
+        let row = (reply["nodes"] as? [[String: Any]])?.first { $0["id"] as? Int == Int(omitted.id) }
+        XCTAssertEqual(row?["w"] as? Double, 0)
+        XCTAssertEqual((detail["visible"] as? [String: Any])?["hidden"] as? Bool, true, "More is not the item's box")
+
         // Every item fits
         p.onPress = appPress
         p.press(try node(session, "trim-items").id)

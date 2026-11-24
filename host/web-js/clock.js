@@ -124,7 +124,7 @@ export function advance(to, wall, stop, timers = true) {
       };
     sample();
     Instant = wall ? (next?.wait || next?.change ? clock.now : at) : null;
-    const ok = fire(head ? () => Sched.next(head) : then ? () => Origin.run(then.thenOrigin, () => Invocation.run(then.thenInvocation, () => commit(then.then, `${then.name} then`))) : next.action);
+    const ok = fire(head ? () => Sched.next(head) : then ? () => Origin.run(then.thenOrigin, () => Invocation.run(then.thenInvocation, () => commit(then.then, `${then.name} then`)), then.thenInput) : next.action);
     Instant = null;
     sample();
     if (repeat && clock.timers.includes(next))

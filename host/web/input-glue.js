@@ -1,4 +1,4 @@
-import { suppressPointerClick, focusStack, viewChildren, viewParent } from './navigation.js';
+import { clickFromInput, suppressPointerClick, focusStack, viewChildren, viewParent } from './navigation.js';
 import { receive, takes } from './drag-in.js';
 // Input-only glue: loaded after the baked first pixel, independently of data readiness.
 import "./prompt-glue.js"; // a prompt's Return
@@ -75,7 +75,7 @@ function radioArrow(root, event) {
   event.preventDefault();
   const all = radiosOf(group), live = all.filter(r => r === el || radioUsable(r));
   const next = live[(live.indexOf(el) + step + live.length) % live.length];
-  if (next !== el) { rove(all, next); next.focus(); next.click(); }
+  if (next !== el) { rove(all, next); next.focus(); clickFromInput(next, event.isTrusted); }
   return true;
 }
 /** @ref LLP 1115.000 D4.5 — a `tablist`'s tabs and a `menu`'s items (a chooser's too, drawn as a menu) move by the
@@ -247,7 +247,7 @@ export function createInputHandlers({ root, views, retiredViews, ready, inertAnc
       if (!(el.getAttribute("aria-keyshortcuts") ?? "").split(/\s+/).some(matches)) continue;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (!event.repeat && !el.disabled) target.click();
+      if (!event.repeat && !el.disabled) clickFromInput(target, event.isTrusted);
       return;
     }
   }, true);
@@ -269,7 +269,7 @@ export function createInputHandlers({ root, views, retiredViews, ready, inertAnc
     if (el.closest(DISABLED)) return; // a disabled box takes no press by key either (LLP 1121 D8)
     if (event.key !== "Enter" && !(event.key === " " && el.getAttribute("role") !== "link")) return;
     event.preventDefault();
-    el.click();
+    clickFromInput(el, event.isTrusted);
     if (event.key === " " && !surface(el)) keyed(el);
   });
   // @ref LLP 1115.000 D6 — a pressable covering the window is a surface (a

@@ -156,6 +156,8 @@ pub struct Cause {
     /// A data-code call admitted under the causes in flight: it holds no
     /// press record (LLP 1126.004 D2).
     data: bool,
+    /// Every contributor began at an activation-triggering input in the app.
+    input: bool,
 }
 
 impl Cause {
@@ -255,6 +257,7 @@ impl Cause {
             call,
             owner: id,
             data: false,
+            input: false,
         }
     }
 
@@ -277,6 +280,24 @@ impl Cause {
     /// Whether `origin` is its only contributor's.
     pub(in crate::runner) fn only(self, origin: CallOrigin) -> bool {
         self.causes == Causes(Causes::bit(origin))
+    }
+
+    pub(in crate::runner) fn input_started(self) -> bool {
+        self.input && self.only(CallOrigin::App)
+    }
+
+    pub(in crate::runner) fn ordinary_app(self) -> bool {
+        Cause {
+            input: false,
+            ..self
+        } == Cause::person()
+    }
+
+    pub(in crate::runner) fn with_input_from(self, ticket: Cause) -> Cause {
+        Cause {
+            input: ticket.input_started(),
+            ..self
+        }
     }
 
     /// Whether D4a's command rules hold for its work.
@@ -428,6 +449,9 @@ impl<D: DataSource> Runner<D> {
     /// triggering one starts the window [`Self::user_activation`] reads.
     pub(in crate::runner) fn note_input(&mut self, event: &Event) {
         if self.cause().origin == CallOrigin::App && activates(event) {
+            if let Some(cause) = self.origins.current.as_mut() {
+                cause.input = !matches!(event, Event::Input(_) | Event::Change(_));
+            }
             self.origins.activated = Some(self.now_ms);
         }
     }
@@ -612,20 +636,24 @@ impl<D: DataSource> Runner<D> {
     /// invocation.
     pub(in crate::runner) fn cause_for(&self, target: Target) -> Cause {
         let o = &self.origins;
-        match target {
-            Target::Resource(i) if o.reasking || o.current.is_none() => {
+        let mut cause = self.cause();
+        if let Target::Resource(i) = target {
+            if o.reasking || o.current.is_none() {
                 let asked = o.asked.get(&i).copied();
                 let waiting = o.deferred.get(&i).map(|(c, _)| *c);
-                if asked.is_none() && waiting.is_none() {
-                    // Its first ask: the commit's own.
-                    return self.cause();
+                if asked.is_some() || waiting.is_some() {
+                    cause = asked
+                        .into_iter()
+                        .chain(waiting)
+                        .chain(o.current)
+                        .reduce(|a, b| self.join_causes(a, b))
+                        .unwrap()
+                        .unowned();
                 }
-                let cause = (asked.into_iter().chain(waiting).chain(o.current))
-                    .reduce(|a, b| self.join_causes(a, b));
-                cause.unwrap_or(Cause::none()).unowned()
             }
-            _ => self.cause(),
+            cause.input = false;
         }
+        cause
     }
 
     /// The join of two causes, for work that depends on both (LLP 1133.023
@@ -646,6 +674,7 @@ impl<D: DataSource> Runner<D> {
             causes: a.causes.union(b.causes),
             call: a.call || b.call,
             data: a.data || b.data,
+            input: a.input && b.input,
             owner: if a.owner == b.owner { a.owner } else { 0 },
             ..least
         }
@@ -879,6 +908,36 @@ mod tests {
         });
         r.fulfill(sent[0].ticket, ok).unwrap();
         assert!(r.origins.tickets.is_empty());
+    }
+
+    #[test]
+    fn a_press_only_marks_the_native_request_of_its_mutation() {
+        let source = "component App\n  resource mounted = load() as shape number\n  mutation m as shape number\n  action paste\n    send m = save(1)\n  view\n    text \"x\"\n";
+        let plan = contract::compile(source).unwrap();
+        let mut r = Runner::boot(
+            plan,
+            Later,
+            Kernel::with_monospace(),
+            Default::default(),
+            "/",
+        )
+        .unwrap();
+        let mount = r.take_requests().remove(0);
+        r.as_person(|r| {
+            r.note_input(&crate::Event::Press);
+            r.act_named("paste", vec![])
+        })
+        .unwrap();
+        let press = r.take_requests().remove(0);
+        assert_eq!(press.request.mutation_ticket, Some(press.ticket));
+        assert!(r.ticket_cause(press.ticket).input_started());
+        assert!(mount.request.mutation_ticket.is_none());
+        assert!(!r.ticket_cause(mount.ticket).input_started());
+        for origin in [CallOrigin::App, CallOrigin::Tool, CallOrigin::Wake] {
+            r.act_from(origin, "paste", vec![]).unwrap();
+            let request = r.take_requests().remove(0);
+            assert!(!r.ticket_cause(request.ticket).input_started());
+        }
     }
 
     /// LLP 1133.023 D7a: the device's re-ask of a resource an invocation

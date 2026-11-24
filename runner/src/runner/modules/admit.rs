@@ -471,10 +471,33 @@ impl<D: DataSource> Runner<D> {
         Some((name, held.cause))
     }
 
+    /// An input-gated read in a mixed app also requires the requesting source's grant.
+    pub(super) fn scoped_input_refusal(
+        &self,
+        row: &ModulesRow,
+        cause: Cause,
+        scope: Option<&str>,
+    ) -> Option<Json> {
+        let scope = scope?;
+        let sub = self.substitute(row);
+        if sub["origin"] != "input" || !cause.input_started() || self.page.hidden {
+            return None;
+        }
+        let names = sub["nameGrants"].as_array()?;
+        let granted = names
+            .iter()
+            .filter_map(Json::as_str)
+            .any(|name| scope.lines().any(|line| line.trim() == name));
+        (!names.is_empty() && !granted).then(|| json!({ "error": "NotAllowedError" }))
+    }
+
     /// The checks before any decision: why the call is refused, if it is.
     pub(super) fn admit(&self, row: &ModulesRow, args: &Json, cause: Cause) -> Result<(), String> {
         let origin = cause.origin();
         let sub = self.substitute(row);
+        if sub["origin"] == "input" && (!cause.input_started() || self.page.hidden) {
+            return Err(format!("person-required ({} origin)", origin.word()));
+        }
         let lines: Vec<&str> = (self.data.grants().lines())
             .filter_map(|l| l.split_whitespace().next())
             .collect();

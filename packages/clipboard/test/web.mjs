@@ -43,6 +43,8 @@ try {
     }
     return out;
   });
+  const mounted = await text('mount');
+  check('chrome', 'mount cannot read', mounted === 'NotAllowedError: clipboard.readText: NotAllowedError: person-required', mounted);
   const supports = await text('supports');
   check('chrome', 'ClipboardItem.supports answers from the declaration', supports === 'image/png=true text/plain=true text/html=false image/svg+xml=false', supports);
   const pixel = { png: '255,0,0', 'png-bytes': '255,0,0', both: '255,0,0', apng: '0,255,0' };
@@ -54,12 +56,25 @@ try {
     let got = before;
     while (Date.now() < end && (got = await text('wrote')) === before) await page.waitForTimeout(50);
     check('chrome', `${kind}: answers ${answer}`, got === answer, got);
+    if (kind === 'both') {
+      for (const [id, expected] of [['paste', 'https://example.com/red.png | png 137 80'], ['open-url', 'https://example.com/red.png'], ['read-pair', 'https://example.com/red.png | https://example.com/red.png']]) {
+        await page.getByTestId(id).click();
+        await page.waitForFunction(s => document.querySelector('[data-testid=wrote]')?.textContent === s, expected, { timeout: 5000 }).catch(() => {});
+        const seen = await text('wrote');
+        check('chrome', id, seen === expected, seen);
+      }
+    }
     const h = await held();
     if (!landed) { check('chrome', `${kind}: leaves the clipboard as it was`, h.text === 'before', JSON.stringify(h)); continue; }
     const ok = landed.types.every(t => h.types.includes(t)) && (landed.text === undefined || h.text === landed.text)
       && (!landed.image || (h.image?.width === 8 && h.image?.height === 8 && h.image.pixel === pixel[kind]));
     check('chrome', `${kind}: the clipboard holds ${JSON.stringify(landed)}${pixel[kind] ? ` in ${pixel[kind]}` : ''}`, ok, JSON.stringify(h));
   }
+  await page.evaluate(() => navigator.clipboard.writeText('Read from Return'));
+  await page.getByTestId('paste-key').press('Enter');
+  await page.waitForFunction(() => document.querySelector('[data-testid=wrote]')?.textContent === 'Read from Return', null, { timeout: 5000 }).catch(() => {});
+  const submitted = await text('wrote');
+  check('chrome', 'Return submits a person-started read', submitted === 'Read from Return', submitted);
 } finally {
   await browser.close();
   server.stop();

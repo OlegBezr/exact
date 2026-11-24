@@ -26,6 +26,7 @@ const holds = (got, want) => JSON.stringify(got?.types) === JSON.stringify(want.
   && (!want.image || (got?.image?.width === want.image.width && got?.image?.height === want.image.height && /^[0-9a-f]{64}$/.test(got?.image?.sha256 ?? '')));
 
 for (const host of hosts.length ? hosts : ['web']) {
+  const supportsRead = host === 'web' || host === 'macos';
   if (host === 'web') run('bun', ['exact.mjs', 'web-build'], app, env);
   if (host === 'macos') run('bun', ['exact.mjs', 'mac'], app, env);
   if (host === 'ios') run('bun', ['exact.mjs', 'ios', ...(sim ? ['--sim', sim] : [])], app, env);
@@ -34,6 +35,10 @@ for (const host of hosts.length ? hosts : ['web']) {
     await s.clock('data');
     const supports = (await texts(s)).supports;
     check(host, 'ClipboardItem.supports answers from the declaration', supports === 'image/png=true text/plain=true text/html=false image/svg+xml=false', supports);
+    if (supportsRead) {
+      const denied = (await texts(s)).mount;
+      check(host, 'mount cannot read', denied === 'NotAllowedError: clipboard.readText: NotAllowedError: person-required', denied);
+    }
     let writes = 0, sha = {};
     for (const [kind, answer, landed] of KINDS) {
       await s.tap(kind);
@@ -43,6 +48,23 @@ for (const host of hosts.length ? hosts : ['web']) {
       const own = (await s.state()).extensions?.clipboard?.implementation ?? {};
       if (landed) writes++;
       check(host, `${kind}: ${landed ? 'lands' : 'leaves the clipboard as it was'}`, own.writes === writes && (!landed || holds(own.lastWrite, landed)), JSON.stringify(own));
+      if (kind === 'both' && supportsRead) {
+        for (const [id, expected] of [['paste', 'https://example.com/red.png | png 137 80'], ['open-url', 'https://example.com/red.png'], ['read-pair', 'https://example.com/red.png | https://example.com/red.png']]) {
+          await s.tap(id);
+          await s.clock('data');
+          const seen = (await texts(s)).wrote;
+          check(host, id, seen === expected, seen);
+        }
+        await s.tap('contract-copy');
+        await s.tap('open-url');
+        await s.clock('data');
+        const copied = (await texts(s)).wrote;
+        check(host, 'Contract copy and the package share the private board', copied === 'Contract copy', copied);
+        const called = await s.op({ op: 'call', tool: 'readClipboard', args: '{}', door: 'agent' });
+        await s.clock('data');
+        const denied = (await texts(s)).wrote;
+        check(host, 'tool cannot read after a press', denied === 'NotAllowedError: clipboard.readText: NotAllowedError: person-required', JSON.stringify({ called, denied }));
+      }
       if (landed?.image) sha[kind] = own.lastWrite?.image?.sha256;
     }
     // The sanitized PNG of the red file and of its bytes are the same; the APNG's frame 0 (green) differs from both.

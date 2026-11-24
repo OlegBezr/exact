@@ -74,8 +74,15 @@ class FrameAutomationTest {
     }
 
     /** The world's script posting to its listener, as the main frame does. */
-    private fun post(web: WebView, world: String, data: String, proxy: Proxy) = compat.worldListeners.getValue(web).getValue(world)
-        .onPostMessage(web, WebMessageCompat(data), Uri.parse("https://example.com"), true, proxy)
+    private fun post(web: WebView, world: String, data: String, proxy: Proxy, source: Proxy = proxy) {
+        val text = if (data == "ready") data else {
+            val message = JSONObject(data)
+            val marker = proxy.scripts.lastOrNull()?.first?.let { Regex("""token (?:\?\?=|===) "([^"]+)""").find(it)?.groupValues?.get(1) }
+            message.put("marker", marker).toString()
+        }
+        compat.worldListeners.getValue(web).getValue(world)
+            .onPostMessage(web, WebMessageCompat(text), Uri.parse("https://example.com:443"), true, source)
+    }
 
     /** The last script [proxy] ran answers its value, as the world's script posts it. */
     private fun answer(web: WebView, proxy: Proxy, world: String, value: Any) {
@@ -110,9 +117,15 @@ class FrameAutomationTest {
         val web = compat.last()
         val title = call("evaluate", "expression" to "document.title")
         val shadow = shadowOf(web)
+        shadow.lastEvaluatedJavascriptCallback.onReceiveValue(JSONObject.quote("token\nhttps://example.com"))
         assertTrue(shadow.lastEvaluatedJavascript.contains("document.title"))
         shadow.lastEvaluatedJavascriptCallback.onReceiveValue(JSONObject.quote("\"Auto\""))
         assertEquals("Auto", title[0]!!.getString("result"))
+        assertEquals("https://example.com", title[0]!!.getString("origin"))
+        val realm = title[0]!!.getString("realm")
+        val targeted = call("evaluate", "id" to null, "target" to JSONObject().put("realm", realm), "expression" to "3")
+        shadow.lastEvaluatedJavascriptCallback.onReceiveValue("false")
+        assertEquals("no such frame", targeted.error())
         val promise = call("evaluate", "expression" to "Promise.resolve(7)")
         shadow.lastEvaluatedJavascriptCallback.onReceiveValue("""{"__exactPromise":true}""")
         assertEquals("NotSupportedError", promise.error())
@@ -144,6 +157,8 @@ class FrameAutomationTest {
         val seven = call("evaluate", "expression" to "new Promise(r => r(7))", "sandbox" to sb)
         answer(web, proxy, sb, "7")
         assertEquals(7, seven[0]!!.getInt("result"))
+        assertEquals("https://example.com", seven[0]!!.getString("origin"))
+        val firstRealm = seven[0]!!.getString("realm")
         val late = call("evaluate", "expression" to "Promise.reject(new TypeError('late'))", "sandbox" to sb)
         answer(web, proxy, sb, JSONObject().put("__exactThrown", true).put("name", "TypeError").put("message", "late"))
         assertEquals("TypeError", late.error())
@@ -157,6 +172,7 @@ class FrameAutomationTest {
         // The world was on the view before this document began: a call waits for its post, not the old proxy.
         val waits = call("evaluate", "expression" to "1", "sandbox" to sb)
         assertNull(waits[0])
+        assertEquals("no such frame", call("evaluate", "id" to null, "target" to JSONObject().put("realm", firstRealm), "expression" to "1").error())
         val second = Proxy()
         post(web, sb, "ready", second)
         answer(web, second, sb, "1")
@@ -177,6 +193,7 @@ class FrameAutomationTest {
 
         // A call that acts takes the frame; its record says so.
         val acts = call("evaluate", "expression" to "1", "userActivation" to true)
+        shadowOf(web).lastEvaluatedJavascriptCallback.onReceiveValue(JSONObject.quote("page\nhttps://example.com"))
         shadowOf(web).lastEvaluatedJavascriptCallback.onReceiveValue(JSONObject.quote("1"))
         assertNull(acts.error())
         settle()
@@ -184,6 +201,17 @@ class FrameAutomationTest {
 
         // A changed partition is a new frame: a call in flight ends, and the preload script goes with it.
         post(web, sb, "ready", proxy)
+        val original = call("evaluate", "expression" to "1", "sandbox" to sb)
+        val originalNumber = Regex("n: (\\d+)").find(proxy.scripts.last().first)!!.groupValues[1].toInt()
+        val replacement = Proxy()
+        post(web, sb, "ready", replacement)
+        val current = call("evaluate", "expression" to "2", "sandbox" to sb)
+        post(web, sb, JSONObject().put("n", originalNumber).put("r", "2").toString(), proxy, source = replacement)
+        assertNull("only the original AndroidX source can settle the call", original[0])
+        answer(web, replacement, sb, "2")
+        post(web, sb, JSONObject().put("n", originalNumber).put("r", "1").toString(), proxy)
+        assertEquals(1, original[0]!!.getInt("result"))
+        assertNotEquals(current[0]!!.getString("realm"), original[0]!!.getString("realm"))
         val held = call("evaluate", "expression" to "new Promise(() => {})", "sandbox" to sb)
         assertNull(held[0])
         natives.ensure(1, 1, 0, 0, props("tab", "persist:b"), 0)
@@ -195,6 +223,58 @@ class FrameAutomationTest {
         assertNull("the same id after the partition change", call("removePreloadScript", "script" to kept).error())
         assertFalse(compat.worldScripts.getValue(fresh).any { it.second.contains("window.isolated") })
         assertEquals("NotFoundError", call("removePreloadScript", "script" to kept).error())
+    }
+
+    @Test fun repeatedReadyKeepsTheSandboxAndOnlyAnAdmittedActTakesControl() {
+        val natives = natives()
+        natives.ensure(1, 1, 0, 0, props("tab"), 0)
+        val web = compat.last()
+        val world = "approval"
+        call("addPreloadScript", "sandbox" to world, "functionDeclaration" to "() => {}")
+        commit(web, "https://example.com/")
+        val proxy = Proxy()
+        fun read(): String {
+            post(web, world, "ready", proxy)
+            val read = call("evaluate", "expression" to "42", "sandbox" to world)
+            answer(web, proxy, world, "42")
+            return read[0]!!.getString("realm")
+        }
+        val realm = read()
+        val afterReady = read()
+        val arm = natives.automations("tab").single()!!
+        val target = JSONObject().put("realm", afterReady)
+        val route = call("evaluate", "id" to null, "target" to target, "expression" to "42")
+        proxy.scripts.last().second.onResult("true")
+        answer(web, proxy, world, "42")
+        assertEquals(afterReady, route[0]!!.getString("realm"))
+        // A delayed ready from another document must not displace this confirmed realm.
+        val other = Proxy()
+        post(web, world, "ready", other)
+        val act = call("evaluate", "id" to null, "target" to target, "sandbox" to null,
+            "userActivation" to true, "expression" to "42")
+        val beforeAdmission = arm.controller
+        proxy.scripts.last().second.onResult("false")
+        assertEquals("no such frame", act.error())
+        assertEquals("person", arm.controller)
+        assertEquals(listOf("person", realm), listOf(beforeAdmission, afterReady))
+        val entered = call("evaluate", "id" to null, "target" to target, "userActivation" to true, "expression" to "42")
+        proxy.scripts.last().second.onResult("true")
+        assertEquals("agent", arm.controller)
+        commit(web, "https://example.com/next")
+        assertEquals("AbortError", entered.error())
+    }
+
+    @Test fun aProviderWithoutDocumentStartStillEvaluatesInThePage() {
+        NativesPartitionTest.Features.documentStart = false
+        try {
+            val natives = natives()
+            natives.ensure(1, 1, 0, 0, props("tab"), 0)
+            val read = call("evaluate", "expression" to "42")
+            shadowOf(compat.last()).lastEvaluatedJavascriptCallback.onReceiveValue(JSONObject.quote("42"))
+            assertEquals(42, read[0]!!.getInt("result"))
+            assertFalse(read[0]!!.has("realm"))
+            assertFalse(read[0]!!.has("origin"))
+        } finally { NativesPartitionTest.Features.documentStart = true }
     }
 
     @Test fun withoutWorldsEverySandboxIsRefusedAndNoFrameButAPartitionedOneIsDriven() {

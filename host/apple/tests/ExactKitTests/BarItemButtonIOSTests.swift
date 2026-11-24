@@ -85,6 +85,11 @@ extension NavigationBarIOSTests {
         strip.addSubview(button)
         XCTAssertNil(agent.drawnCovered(compose), "the item's button beside the bar")
         XCTAssertFalse(refused())
+        nav.navigationBar.isUserInteractionEnabled = false
+        try assertBarLayout(agent, compose, button)
+        let detail = try XCTUnwrap(agent.layout(["id": Int(compose.id)])["node"] as? [String: Any])
+        XCTAssertEqual((detail["visible"] as? [String: Any])?["inert"] as? Bool, false)
+        nav.navigationBar.isUserInteractionEnabled = true
         button.accessibilityIdentifier = "compose-home"
         XCTAssertNil(agent.drawnCovered(compose), "named for its item")
         button.frame = button.frame.offsetBy(dx: 1, dy: 0)

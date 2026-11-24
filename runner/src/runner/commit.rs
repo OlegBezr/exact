@@ -1063,6 +1063,8 @@ impl<D: DataSource> Runner<D> {
         let name = self.target_name(target);
         let mut request = request;
         crate::canvas_capture::from_fetch(&mut request);
+        request.mutation_ticket =
+            (request.is_native() && !matches!(target, Target::Resource(_))).then_some(ticket);
         self.number_data_call(&mut request);
         request.reach = self.reach_of(self.cause_for(target));
         self.log(super::lines::enqueued(ticket, &name, &request));

@@ -220,6 +220,17 @@ extension UITabBarController {
 }
 #endif
 
+#if EXACT_AGENT
+package struct BarLayoutBox {
+    package let view: UIView, region: CGRect, name: String
+    package init(_ view: UIView, _ region: CGRect? = nil, _ name: String) {
+        self.view = view
+        self.region = region ?? view.bounds
+        self.name = name
+    }
+}
+#endif
+
 /// What the core asks of a presenter's navigation. Call sites keep their
 /// places, so the hook order is the presenter's source order: in `apply`,
 /// `modals.prepare`, then `prepare`, the op loop with `installInitialOwner`
@@ -328,6 +339,8 @@ package protocol NavigationHosting: AnyObject {
     func barItem(_ node: NodeView) -> Result<(bar: UIView, item: CGRect), BarItemMissing>?
     func tipItem(_ node: NodeView) -> (UIBarButtonItem, UIViewController)?
     #if os(iOS)
+    /// The bar's title that shows `node`, the pressable group the page hides for it, now
+    func titleSurface(for node: NodeView) -> (any UIView & TitleMenuSurface)?
     /// Whether `dialog`'s sheet would show its header as its bar now: its
     /// sheet is then presented in a navigation controller.
     func wantsDialogBar(_ dialog: NodeView) -> Bool
@@ -381,6 +394,8 @@ package protocol NavigationHosting: AnyObject {
     /// A list beside its detail as UIKit's split shows it, for `state window.split` (LLP 1127 D11).
     var splitObservation: [String: Any] { get }
     func activateChrome(_ node: NodeView, before: (CGPoint?) -> Bool) -> [String: Any]?
+    /// The boxes of the headers UIKit draws and the parts it places, in each view's coordinates.
+    func headerLayout(itemBox: (NodeView) -> BarLayoutBox?) -> [UInt32: BarLayoutBox]
     func drawnSearch(_ node: NodeView) -> UITextField?
     func barButtonItem(_ node: NodeView) -> (bar: UINavigationBar, item: UIBarButtonItem, of: UINavigationItem)?
     /// The tabs a route's search scope control shows, by segment; nil when
@@ -636,6 +651,7 @@ package final class NoNavigation: NavigationHosting {
     package func barItem(_ node: NodeView) -> Result<(bar: UIView, item: CGRect), BarItemMissing>? { nil }
     package func tipItem(_ node: NodeView) -> (UIBarButtonItem, UIViewController)? { nil }
     #if os(iOS)
+    package func titleSurface(for node: NodeView) -> (any UIView & TitleMenuSurface)? { nil }
     package func wantsDialogBar(_ dialog: NodeView) -> Bool { false }
     package func projectDialogBar(_ dialog: NodeView, on controller: UIViewController) -> Bool {
         controller.navigationController?.setNavigationBarHidden(true, animated: false)
@@ -675,6 +691,7 @@ package final class NoNavigation: NavigationHosting {
     package func agentBack() -> String? { nil }
     package var splitObservation: [String: Any] { ["installed": false] }
     package func activateChrome(_ node: NodeView, before: (CGPoint?) -> Bool) -> [String: Any]? { nil }
+    package func headerLayout(itemBox: (NodeView) -> BarLayoutBox?) -> [UInt32: BarLayoutBox] { [:] }
     package func drawnSearch(_ node: NodeView) -> UITextField? { nil }
     package func barButtonItem(_ node: NodeView) -> (bar: UINavigationBar, item: UIBarButtonItem, of: UINavigationItem)? { nil }
     package func searchScopeTabs(of segments: UISegmentedControl) -> [UInt32]? { nil }

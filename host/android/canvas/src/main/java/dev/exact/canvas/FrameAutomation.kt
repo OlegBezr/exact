@@ -1,5 +1,6 @@
 package dev.exact.canvas
 
+import android.net.Uri
 import android.annotation.SuppressLint
 import android.view.MotionEvent
 import android.webkit.WebView
@@ -15,12 +16,13 @@ import androidx.webkit.WebViewOutcomeReceiver
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.util.UUID
 
 /**
  * `@exact/browser-automation` on one kept partitioned frame (LLP 1020.002 D9, §11 "Android as built"), owned by its
  * [FrameBrowser] so it outlives a web view a renderer's end replaces.
  *
- * Nothing of Exact's is ever in the page's own world (D1). Without a `sandbox`, `evaluate` and `callFunction` are
+ * A page-world lexical binding records the document identity without exposing a bridge (D1). Without a `sandbox`, `evaluate` and `callFunction` are
  * `WebView.evaluateJavascript` in the page, which answers synchronously: a promise to await there is
  * `NotSupportedError`, as is a preload script there, since WebView injects one into every frame and only a script of
  * Exact's would keep it to the main one. A `sandbox` is an AndroidX execution world (`JS_INJECTION_IN_FRAME_AND_WORLD`):
@@ -47,20 +49,33 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
 
     /** The document the frame shows, and each world's reply proxy in each document, by the page it posted from. */
     private var page: Page? = null
-    private val proxies = HashMap<Pair<Page?, String>, JavaScriptReplyProxy>()
+    private class World(val proxy: JavaScriptReplyProxy, val marker: String, val origin: String)
+    // AndroidX pairs one JavaScriptReplyProxy with one injected JavaScript object in the frame.
+    private val markers = java.util.WeakHashMap<JavaScriptReplyProxy, String>()
+    private val confirmed = HashMap<Page?, MutableMap<String, World>>()
+    private val proxies = HashMap<Pair<Page?, String>, World>()
+    private class Realm(val marker: String, val origin: String, val id: String)
+    private val realms = HashMap<String?, Realm>()
+    private val routes = HashMap<String?, String>()
+    // This lexical constant adds no property, handler or listener on window. Each document gets its own value.
+    private val binding = "_exact" + UUID.randomUUID().toString().replace("-", "")
+    private fun plant(origin: String = "this.origin") = "const $binding = window === top ? { __proto__: null, document, token: null, origin: $origin } : null"
+    private var pageIdentity: ScriptHandler? = null
     /** Posts made while a navigation to a new document is uncommitted: only that document can have made them. */
     private var navigating = false
-    private val early = HashMap<String, JavaScriptReplyProxy>()
+    private val early = HashMap<String, World>()
     /** Navigations begun on the view, and how many had begun when the current document's began. */
     private var starts = 0
     private var documentStart = 0
     /** Calls waiting for a world's post from the current document, by world. */
-    private val waiting = HashMap<String, ArrayList<(JavaScriptReplyProxy) -> Unit>>()
+    private val waiting = HashMap<String, ArrayList<(World) -> Unit>>()
 
     private var nextId = 0
     /** Calls in flight: each one's answer, and the world it runs in (null: the page's). */
-    private class Pending(val reply: (JSONObject) -> Unit, val world: String?)
+    private class Pending(val reply: (JSONObject) -> Unit, val world: String?, var takeAt: Long?,
+                          var checking: Boolean, var realm: Realm? = null, var source: World? = null)
     private val pending = HashMap<Int, Pending>()
+    private var personInput = 0L
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     init { live += this; attach() }
@@ -76,13 +91,22 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
         forgetView()
         current.setOnTouchListener { _, event -> if (event.actionMasked == MotionEvent.ACTION_DOWN) personTook(); false }
         current.setOnKeyListener { _, _, event -> if (event.action == android.view.KeyEvent.ACTION_DOWN) personTook(); false }
+        // Capture the browser's serialized origin before the page can replace window.origin. This also works on
+        // providers without isolated worlds. The value is read by evaluateJavascript, never through a page bridge.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            pageIdentity = WebViewCompat.addDocumentStartJavaScript(current, plant(), setOf("*"))
+            // The initial empty document of a new top-level WebView has no document-start event or opener.
+            if (current.url == null) current.evaluateJavascript(plant("'null'"), null)
+        }
         if (!ISOLATED) return
         for (name in named(current)) channel(current, name)
         for (p in preloads) install(current, p)
     }
 
     private fun forgetView() {
-        handlers.clear(); worlds.clear(); channels.clear(); proxies.clear(); early.clear(); waiting.clear()
+        pageIdentity = null
+        realms.clear()
+        handlers.clear(); worlds.clear(); channels.clear(); proxies.clear(); confirmed.clear(); early.clear(); waiting.clear()
         page = null
         navigating = false
         starts = 0; documentStart = 0
@@ -92,6 +116,8 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
 
     /** A new document committed (or one came back from the back-forward cache): a script in the old one is aborted. */
     fun committed(page: Page?) {
+        realms.clear()
+        if (page == null) confirmed.remove(null)
         this.page = page
         navigating = false
         documentStart = starts
@@ -100,7 +126,10 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
         early.clear()
     }
 
-    fun deleted(page: Page) { proxies.keys.removeAll { it.first == page } }
+    fun deleted(page: Page) {
+        proxies.keys.removeAll { it.first == page }
+        confirmed.remove(page)
+    }
 
     /** The frame's view went (out of view, a renderer's end): its document with it. */
     fun detached() {
@@ -128,7 +157,15 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
         val ended = pending.values.toList()
         pending.clear()
         waiting.clear()
-        ended.forEach { it.reply(failure(error, message)) }
+        ended.forEach { it.reply(if (it.checking) missingRealm() else failure(error, message)) }
+    }
+
+    private fun admitted(call: Pending) {
+        call.checking = false
+        if (call.takeAt == personInput) {
+            call.takeAt = null
+            take()
+        }
     }
 
     private fun take() {
@@ -138,7 +175,9 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
     }
 
     private fun personTook() {
-        if (controller == "person") return
+        val wasAgent = controller == "agent"
+        personInput++
+        if (!wasAgent) return
         controller = "person"
         changed()
     }
@@ -172,7 +211,8 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
                 return reply(JSONObject())
             }
         }
-        val view = view ?: return reply(failure("InvalidStateError", "$op: the frame is out of view, with no page"))
+        val view = view ?: return reply(if (args.optJSONObject("target")?.opt("realm") is String) missingRealm()
+            else failure("InvalidStateError", "$op: the frame is out of view, with no page"))
         when (op) {
             "evaluate", "callFunction" -> script(op, args, sandbox, view, reply)
             else -> reply(failure("NotSupportedError", "$op is not offered on Android (LLP 1020.002 §11)"))
@@ -180,7 +220,8 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
     }
 
     private fun script(op: String, args: JSONObject, sandbox: String?, view: WebView, reply: (JSONObject) -> Unit) {
-        if (args.optBoolean("userActivation", false)) take()
+        val target = args.optJSONObject("target")?.optString("realm")?.takeIf { !args.getJSONObject("target").isNull("realm") }
+        if (target == null && args.optBoolean("userActivation")) take()
         val awaited = if (args.isNull("awaitPromise")) true else args.optBoolean("awaitPromise", true)
         val arguments = JSONObject.quote((args.optJSONArray("arguments") ?: JSONArray()).toString())
         val value = if (op == "evaluate") "(\n${args.optString("expression")}\n)"
@@ -194,35 +235,114 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
             awaited -> "v = await v;"
             else -> "if (v && typeof v.then === 'function') v = {};"
         }
-        val text = "if ('e' in r) throw r.e; let v = r.v; $settle const t = JSON.stringify(v); return t === undefined ? 'null' : t;"
-        if (sandbox != null) {
+        val text = "if ('e' in r) throw r.e; let v = r.v; $settle const t = JSON.stringify(v); return typeof t === 'string' ? t : 'null';"
+        if (sandbox != null && target == null) {
             try { name(view, sandbox) } catch (e: RuntimeException) { return reply(failure("NotSupportedError", "$op: the WebView refused: $e")) }
         }
         val number = ++nextId
-        pending[number] = Pending(reply, sandbox)
+        val call = Pending(reply, sandbox, personInput.takeIf { target != null && args.optBoolean("userActivation", false) }, target != null)
+        pending[number] = call
         fun answer(result: JSONObject) { pending.remove(number)?.reply?.invoke(result) }
+        fun identity(marker: String, origin: String): Realm? {
+            val old = realms[sandbox]
+            if (old?.marker == marker && old.origin == origin) return old.takeIf { target == null || target == it.id }
+            val route = routes.getOrPut(sandbox) { UUID.randomUUID().toString() }
+            val id = "$route.$marker"
+            if (target != null && target != id) return null
+            return Realm(marker, origin, id).also { realms[sandbox] = it }
+        }
+        fun guarded(realm: Realm, body: String, plantToken: Boolean = false): String {
+            val marker = JSONObject.quote(realm.marker)
+            val token = if (plantToken) "($binding.token ??= $marker)" else "$binding.token"
+            return "(typeof $binding === 'object' && $binding && $binding.document === document && $token === $marker) ? ($body) : false"
+        }
+        // Admit a realm call before entering guest code. Navigation after admission aborts the call.
+        // The second guard still runs in the evaluation that executes the caller's expression.
+        fun admit(realm: Realm, execute: (String, (String?) -> Unit) -> Unit, run: () -> Unit) {
+            if (target == null) return run()
+            execute(guarded(realm, "(() => { void (() => ($ran)); return true })()")) { result ->
+                if (number in pending) when (result) {
+                    "true" -> { admitted(call); run() }
+                    "false" -> answer(missingRealm())
+                    else -> answer(failure("SyntaxError", "the script does not parse"))
+                }
+            }
+        }
         if (sandbox == null) {
-            // The page's world: the value as its JSON, or a promise, which only a script of Exact's could await there.
-            val body = "((r) => { try { $text } catch (e) { $THROWN } })($ran)"
-            return try { view.evaluateJavascript(body) { json -> answer(pageResult(json)) } }
+            fun evaluate(source: String, receive: (String?) -> Unit) {
+                try { view.evaluateJavascript(source, receive) }
                 catch (e: RuntimeException) { answer(failure("NotSupportedError", "$op: the WebView refused: $e")) }
+            }
+            val run = "((r) => { try { $text } catch (e) { $THROWN } })($ran)"
+            if (pageIdentity == null) {
+                if (target != null) return answer(failure("NotSupportedError", "$op: realm targeting needs DOCUMENT_START_SCRIPT"))
+                return evaluate(run) { json -> answer(pageResult(json)) }
+            }
+            fun readRealm(next: (Realm) -> Unit) {
+                val token = if (target == null) "($binding.token ??= \"${UUID.randomUUID()}\")" else "$binding.token"
+                evaluate("typeof $binding === 'object' && $binding && $binding.document === document ? $token + '\\n' + $binding.origin : null") { json ->
+                    if (number !in pending) return@evaluate
+                    val marker = json?.let { runCatching { JSONTokener(it).nextValue() as? String }.getOrNull() }
+                    if (marker == null || '\n' !in marker) answer(if (target != null) missingRealm() else failure("InvalidStateError", "the document's realm did not start"))
+                    else identity(marker.substringBefore('\n'), marker.substringAfter('\n'))?.let(next) ?: answer(missingRealm())
+                }
+            }
+            fun execute(realm: Realm, retry: Boolean) {
+                if (number !in pending) return
+                val body = guarded(realm, run)
+                admit(realm, ::evaluate) {
+                    evaluate(body) { json ->
+                        if (number !in pending) return@evaluate
+                        if (json == "false" && target == null && retry) {
+                            return@evaluate readRealm { execute(it, false) }
+                        }
+                        val result = if (json == "false") failure("AbortError", "the document navigated away") else pageResult(json)
+                        if (result.has("result")) result.put("realm", realm.id).put("origin", realm.origin)
+                        answer(result)
+                    }
+                }
+            }
+            realms[null]?.takeIf { target == null || it.id == target }?.let { return execute(it, true) }
+            readRealm { execute(it, false) }
+            return
         }
         val body = "((post, r) => { (async () => { try { $text } catch (e) { $THROWN } })()" +
-            ".then(x => post(JSON.stringify({ n: $number, r: x })), () => post(JSON.stringify({ n: $number, r: null })));" +
+            ".then(x => post(JSON.stringify({ n: $number, marker: $binding.token, r: x })), () => post(JSON.stringify({ n: $number, marker: $binding.token, r: null })));" +
             " return true; })($CHANNEL.postMessage.bind($CHANNEL), $ran)"
         var sent = false
-        fun send(proxy: JavaScriptReplyProxy) {
+        fun send(world: World) {
             if (number !in pending) return
+            val realm = identity(world.marker, world.origin) ?: return answer(missingRealm())
+            call.realm = realm
             sent = true
-            try { proxy.executeJavaScript(body, object : WebViewOutcomeReceiver<String, JavaScriptExecutionException> {
-                override fun onResult(result: String?) { if (result != "true") answer(failure("SyntaxError", "the script does not parse")) }
-                override fun onError(error: JavaScriptExecutionException) {
-                    answer(if (error.errorType == JavaScriptExecutionException.ERROR_FRAME_DESTROYED) failure("AbortError", "the document navigated away")
-                        else failure("Error", error.message ?: "the script did not run"))
+            call.source = world
+            fun execute(source: String, receive: (String?) -> Unit) {
+                try { world.proxy.executeJavaScript(source, object : WebViewOutcomeReceiver<String, JavaScriptExecutionException> {
+                    override fun onResult(result: String?) { if (number in pending) receive(result) }
+                    override fun onError(error: JavaScriptExecutionException) {
+                        answer(if (error.errorType == JavaScriptExecutionException.ERROR_FRAME_DESTROYED) {
+                            if (call.checking) missingRealm() else failure("AbortError", "the document navigated away")
+                        } else failure("Error", error.message ?: "the script did not run"))
+                    }
+                }) } catch (e: RuntimeException) { answer(failure("NotSupportedError", "$op: the WebView refused: $e")) }
+            }
+            admit(realm, ::execute) {
+                execute(guarded(realm, body, plantToken = target == null)) { result ->
+                    when (result) {
+                        "true" -> {
+                            confirmed.getOrPut(page) { HashMap() }[realm.id] = world
+                            admitted(call)
+                        }
+                        "false" -> answer(failure("AbortError", "the document navigated away"))
+                        else -> answer(failure("SyntaxError", "the script does not parse"))
+                    }
                 }
-            }) } catch (e: RuntimeException) { answer(failure("NotSupportedError", "$op: the WebView refused: $e")) }
+            }
         }
-        proxies[page to sandbox]?.let { return send(it) }
+        val key = page to sandbox
+        if (target != null) confirmed[page]?.get(target)?.let { return send(it) }
+        proxies[key]?.let { return send(it) }
+        if (target != null) return answer(missingRealm())
         // The world's channel was on the view before this document began, so its post is on its way.
         val installed = channels[sandbox]
         if (installed != null && (navigating || installed < documentStart)) {
@@ -266,27 +386,38 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
     private fun channel(view: WebView, name: String) {
         if (name in channels) return
         val world = world(view, name)
-        WebViewCompat.addWebMessageListener(view, CHANNEL, setOf("*"), world) { _, message, _, isMainFrame, proxy ->
+        WebViewCompat.addWebMessageListener(view, CHANNEL, setOf("*"), world) { _, message, origin, isMainFrame, proxy ->
             if (!isMainFrame || this.view !== view || message.type != WebMessageCompat.TYPE_STRING) return@addWebMessageListener
             val data = message.data ?: return@addWebMessageListener
-            if (data == "ready") { if (navigating) early[name] = proxy else ready(name, proxy); return@addWebMessageListener }
+            if (data == "ready") {
+                val marker = markers.getOrPut(proxy) { UUID.randomUUID().toString() }
+                val world = World(proxy, marker, serializedOrigin(origin))
+                if (navigating) early[name] = world else ready(name, world)
+                return@addWebMessageListener
+            }
             val posted = runCatching { JSONObject(data) }.getOrNull() ?: return@addWebMessageListener
             val n = posted.optInt("n")
-            if (pending[n]?.world != name) return@addWebMessageListener
+            val call = pending[n] ?: return@addWebMessageListener
+            val realm = call.realm ?: return@addWebMessageListener
+            val source = call.source ?: return@addWebMessageListener
+            if (call.world != name || source.proxy !== proxy || realm.origin != serializedOrigin(origin) ||
+                posted.optString("marker") != realm.marker) return@addWebMessageListener
+            confirmed.getOrPut(page) { HashMap() }[realm.id] = source
+            admitted(call)
             val reply = pending.remove(n)!!.reply
             reply(when (val r = posted.opt("r")) {
-                is String -> settled(r)
+                is String -> settled(r).also { if (it.has("result")) it.put("realm", realm.id).put("origin", realm.origin) }
                 is JSONObject -> thrown(r)
                 else -> failure("Error", "the script's exception has no text")
             })
         }
-        WebViewCompat.addJavaScriptOnEvent(view, "if (window === top) $CHANNEL.postMessage('ready');",
+        WebViewCompat.addJavaScriptOnEvent(view, "${plant()}; if (window === top) $CHANNEL.postMessage('ready');",
             WebViewCompat.INJECTION_EVENT_DOCUMENT_START, setOf("*"), world)
         channels[name] = starts
     }
 
     /** The current document's post in [name]'s world: its proxy, and the calls that waited for it. */
-    private fun ready(name: String, proxy: JavaScriptReplyProxy) {
+    private fun ready(name: String, proxy: World) {
         proxies[page to name] = proxy
         waiting.remove(name)?.forEach { it(proxy) }
     }
@@ -321,6 +452,26 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
             names = set
         }
 
+        private fun serializedOrigin(origin: Uri): String {
+            val scheme = origin.scheme ?: return "null"
+            val authority = origin.encodedAuthority ?: return "null"
+            return when (scheme) {
+                "https" -> "https://" + authority.removeSuffix(":443")
+                "http" -> "http://" + authority.removeSuffix(":80")
+                else -> "$scheme://$authority"
+            }
+        }
+
+
+        fun missingRealm() = failure("no such frame", "the script realm is no longer live")
+
+        fun resolveRealm(id: String, frames: List<FrameAutomation?>): Pair<FrameAutomation, String?>? {
+            for (frame in frames.filterNotNull()) for ((sandbox, route) in frame.routes) {
+                if (id.startsWith("$route.")) return frame to sandbox
+            }
+            return null
+        }
+
         fun failure(error: String, message: String): JSONObject = JSONObject().put("error", error).put("message", message)
 
         private fun settled(text: String): JSONObject {
@@ -347,11 +498,32 @@ object FrameAutomations {
     internal val readers: MutableSet<Natives> = java.util.Collections.newSetFromMap(java.util.WeakHashMap())
 
     @JvmStatic fun run(op: String, args: JSONObject, reply: (JSONObject) -> Unit) {
-        val id = args.optString("id")
+        val target = args.optJSONObject("target")
+        val invalid = { FrameAutomation.failure("invalid argument", "use a string context and optional sandbox, or a string realm") }
+        if (!args.isNull("target") && target == null) return reply(invalid())
+        if (target != null) {
+            if (listOf("context", "sandbox", "realm").any { !target.isNull(it) && target.opt(it) !is String }) return reply(invalid())
+            if (op !in setOf("evaluate", "callFunction") || !args.isNull("id") || !args.isNull("sandbox") ||
+                target.isNull("realm") == target.isNull("context") || !target.isNull("realm") && !target.isNull("sandbox")) {
+                return reply(FrameAutomation.failure("invalid argument", "use one script target: context and optional sandbox, or realm"))
+            }
+            if (!target.isNull("realm")) {
+                val (frame, sandbox) = FrameAutomation.resolveRealm(target.getString("realm"), readers.flatMap { it.automations(null) }) ?: return reply(FrameAutomation.missingRealm())
+                args.put("sandbox", sandbox)
+                return runOn(frame, op, args, reply)
+            }
+            args.put("sandbox", target.opt("sandbox"))
+        }
+        val id = target?.optString("context") ?: args.optString("id").takeUnless { args.isNull("id") }
+            ?: return reply(FrameAutomation.failure("invalid argument", "a script needs an iframe id or a target"))
         val frames = readers.flatMap { it.automations(id) }
         if (frames.size != 1) return reply(FrameAutomation.failure("NotFoundError", "no unique live iframe with id $id"))
         val automation = frames[0] ?: return reply(FrameAutomation.failure("NotSupportedError",
             "$op: iframe $id has no partition; only a partitioned frame is driven"))
+        runOn(automation, op, args, reply)
+    }
+
+    private fun runOn(automation: FrameAutomation, op: String, args: JSONObject, reply: (JSONObject) -> Unit) {
         try {
             automation.run(op, args, reply)
         } catch (e: RuntimeException) {

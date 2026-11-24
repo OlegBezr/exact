@@ -33,6 +33,9 @@ public final class BrowserAutomationModule: ExactPackage {
         let id = args["id"] as? String ?? ""
         guard let owner = context.file("app:/tmp/.browser-automation")?.deletingLastPathComponent().standardizedFileURL.path,
               let automate = Self.automate() else {
+            if (args["target"] as? [String: Any])?["realm"] is String {
+                return reply(["error": "no such frame", "message": "the script realm is no longer live"])
+            }
             return reply(["error": "NotFoundError", "message": "\(name): no live iframe with id \(id)"])
         }
         var request = args

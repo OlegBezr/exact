@@ -488,6 +488,7 @@ final class NavigationBarIOSTests: XCTestCase {
         let route = try XCTUnwrap(nav.topViewController as? RouteController)
         let tap = try node(session, "title-group")
         let heading = try node(session, "title-chat")
+        try assertBarLayout(Agent(session: session), heading, XCTUnwrap(route.navigationItem.titleView))
         XCTAssertTrue(tap.isButton, "exercise the button role around the heading")
         p.apply(wireBatch([["op": "style", "id": Int(tap.id), "style": ["appearance": "none", "written": ["appearance"]]]]))
         let shape = try XCTUnwrap(HeaderShape.bar(of: route.node, back: "back"))
@@ -871,6 +872,7 @@ final class NavigationBarIOSTests: XCTestCase {
         // stays as typed.
         let field = search.searchBar.searchTextField
         XCTAssertTrue(field.isFirstResponder, "Agent types into UIKit's displayed search field")
+        try assertBarLayout(agent, input, field)
         XCTAssertNil(agent.type(["id": Int(input.id), "key": "Enter"])["error"])
         waitFor("Enter submits the header search") { (state(session, "querySubmissions") as? Int ?? 0) > 0 }
         XCTAssertEqual(state(session, "querySubmissions") as? Int, 1)
@@ -1065,6 +1067,22 @@ final class NavigationBarIOSTests: XCTestCase {
         XCTAssertFalse(detail.navigationItem.hidesBackButton, "the route has an enabled Back control")
         XCTAssertEqual(home.navigationItem.backButtonDisplayMode, .minimal, "the authored Back is a symbol alone")
         XCTAssertEqual(detail.navigationItem.rightBarButtonItems?.count, 1, "Back is never an item; Compose is")
+        let bar = nav.navigationBar
+        if !bar.traitCollection.placesVerticalBar {
+            let back = try node(session, "back")
+            let control = try XCTUnwrap(bar.drawnBackControl()), frame = control.convert(control.bounds, to: bar)
+            XCTAssertGreaterThanOrEqual(frame.width, 20)
+            let search = UISearchBar(frame: CGRect(x: 0, y: frame.maxY - 1, width: bar.bounds.width / 2, height: 44))
+            let overlay = UIView(frame: CGRect(x: 0, y: frame.minY, width: 8, height: frame.height))
+            overlay.isUserInteractionEnabled = false
+            overlay.addSubview(UIButton(frame: overlay.bounds))
+            bar.addSubview(overlay)
+            bar.addSubview(search)
+            search.layoutIfNeeded()
+            try assertBarLayout(agent, back, control)
+            search.removeFromSuperview()
+            overlay.removeFromSuperview()
+        }
         // Under a fixed bar an authored scrollTop is the browser's: the scroll
         // view sits below the bar, so 80 is an offset of 80 and 0 is 0.
         let list = try node(session, "list-detail")

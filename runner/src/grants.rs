@@ -270,6 +270,7 @@ pub(crate) fn own(line: &str) -> bool {
         || exact_grants::process::is_process_line(line)
         || line.starts_with("net.dns-sd ")
         || line.split_whitespace().next() == Some("net.listen")
+        || line == "clipboard.read"
         || line == "browser.automation"
         || line == "payment.google-pay"
         || line.starts_with("payment.apple-pay ")

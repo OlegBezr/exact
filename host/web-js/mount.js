@@ -544,6 +544,7 @@ export function mount(f) {
   });
   // Under the agent, and in a render, the clock is the driver's: no timer runs by itself.
   clock.agent = agentMode();
+  if (clock.agent) clock.clipboard = { item: null };
   // (a build kept no more: the page again, once)
   if (!clock.agent && typeof window !== 'undefined') reloadOnGone(window);
   Store.load();

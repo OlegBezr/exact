@@ -122,7 +122,7 @@ extension NavigationHost {
         if kept == nil { titleInk(nav) }
         dialogBars[dialog.id] = bar
         func barSource(_ key: (HeaderShape.Item) -> String) -> BarSource {
-            BarSource(bar: .header, authored: [], placed: shape.placed.map(\.id), header: shape.header.id, title: shape.title, level: shape.level,
+            BarSource(bar: .header, authored: [], placed: shape.placed.map(\.id), header: shape.header.id, heading: shape.heading?.id, title: shape.title, level: shape.level,
                       leading: shape.leading.map(key), trailing: shape.trailing.map(key), group: shape.group?.source ?? "", canGoBack: false)
         }
         let item = controller.navigationItem
