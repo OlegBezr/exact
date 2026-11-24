@@ -264,6 +264,193 @@ fn a_shortcut_is_listed_while_read_and_pressed_by_its_ref() {
     assert!(logs(&r).contains("unregistered"), "{}", logs(&r));
 }
 
+#[test]
+fn a_shortcut_keeps_the_cause_that_registered_it() {
+    let app = App::new("registrar");
+    let source = r#"use globalShortcut, globalshortcut, GlobalShortcut from "@exact/global-shortcuts"
+
+component App
+  state enabled = false
+  state other = false
+  resource shortcut = globalShortcut(id="snap", keys="Control+Alt+K") when enabled as shape GlobalShortcut
+  resource sibling = globalShortcut(id="snap", keys="Control+Alt+K") when other as shape GlobalShortcut
+  tool enable writes "Enable the shortcut." = enable
+  action enable
+    enabled = true
+  action readAgain
+    refresh shortcut
+  action share
+    other = true
+  action unshare
+    other = false
+  action disable
+    enabled = false
+  action bring
+    focus()
+  view
+    column globalshortcut=bring
+      button testId="install" press=enable
+        text "Install"
+      text `${shortcut.registered} ${sibling.registered}`
+"#;
+    std::fs::write(app.0.join("app.contract"), source).unwrap();
+    let manifest = json!({"app":{"id":"com.exact.registrar","name":"Registrar"}, "controls":[
+        {"kind":"enable","title":"Enable","symbol":"plus","tool":"enable"}
+    ]});
+    std::fs::write(app.0.join("app.json"), manifest.to_string()).unwrap();
+    let mut r = boot(&app, "macos");
+    r.set_page(exact_runner::Page {
+        hidden: true,
+        ..r.page()
+    })
+    .unwrap();
+
+    r.call_tool(
+        "enable",
+        "{}",
+        exact_runner::CallHow {
+            door: "agent".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    settle(&mut r);
+    assert!(shortcuts(&r).is_empty());
+    assert!(
+        logs(&r).contains("globalShortcut: refused, person-required"),
+        "{}",
+        logs(&r)
+    );
+
+    act(&mut r, "disable");
+    let digest = state(&r)["controls"][0]["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    r.press_control("enable", &digest, Default::default())
+        .unwrap();
+    settle(&mut r);
+    assert_eq!(
+        state(&r)["intents"]["calls"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["outcome"],
+        "ok"
+    );
+    let tap = |r: &mut Runner<Source>| {
+        let entries = shortcuts(r);
+        assert_eq!(entries.len(), 1, "{}", logs(r));
+        op(r, json!({"op":"tap", "ticket":entries[0]["ref"]})).unwrap();
+    };
+    let native_press = |r: &mut Runner<Source>| {
+        r.raise_module_event(
+            "global-shortcuts",
+            "globalshortcut",
+            r#"["snap",{"id":"snap","keys":"Control+Alt+K"}]"#,
+            CallOrigin::App,
+        )
+        .unwrap();
+        settle(r);
+    };
+    native_press(&mut r);
+    let reference = shortcuts(&r)[0]["ref"].clone();
+    act(&mut r, "readAgain");
+    assert_eq!(shortcuts(&r)[0]["ref"], reference);
+    tap(&mut r);
+    assert_eq!(
+        logs(&r)
+            .matches("focus: refused: hidden page (background action)")
+            .count(),
+        2,
+        "{}",
+        logs(&r)
+    );
+    act(&mut r, "share");
+    tap(&mut r);
+    assert_eq!(
+        logs(&r)
+            .matches("focus: refused: hidden page (background action)")
+            .count(),
+        3
+    );
+    assert!(r.take_commands().iter().all(|c| c.name != "focus"));
+    native_press(&mut r);
+    act(&mut r, "disable");
+    native_press(&mut r);
+    tap(&mut r);
+    assert_eq!(
+        logs(&r)
+            .matches("focus: refused: hidden page (background action)")
+            .count(),
+        6
+    );
+    assert!(r.take_commands().iter().all(|c| c.name != "focus"));
+    act(&mut r, "unshare");
+    assert!(shortcuts(&r).is_empty());
+    let key = r.kernel().find_by_test_id("install")[0];
+    let install = r.kernel().node_by_key(key).unwrap().id;
+    r.dispatch(install, exact_runner::Event::Press).unwrap();
+    settle(&mut r);
+    assert_ne!(shortcuts(&r)[0]["ref"], reference);
+    tap(&mut r);
+    native_press(&mut r);
+    assert_eq!(
+        r.take_commands()
+            .iter()
+            .filter(|c| c.name == "focus")
+            .count(),
+        2
+    );
+
+    let mut bound = boot(&app, "macos");
+    bound.bind_extensions(&["global-shortcuts"], &[]);
+    settle(&mut bound);
+    bound
+        .set_page(exact_runner::Page {
+            hidden: true,
+            ..bound.page()
+        })
+        .unwrap();
+    bound
+        .press_control("enable", &digest, Default::default())
+        .unwrap();
+    settle(&mut bound);
+    let sent = bound.take_requests();
+    assert_eq!(sent.len(), 1, "{}", logs(&bound));
+    let registration = json!({"id":"snap","keys":"Control+Alt+K","registered":true,"reason":null});
+    bound
+        .fulfill(
+            sent[0].ticket,
+            exact_runner::Outcome::Response(exact_runner::Response {
+                status: 200,
+                headers: Vec::new(),
+                body: registration.to_string().into_bytes(),
+            }),
+        )
+        .unwrap();
+    settle(&mut bound);
+    native_press(&mut bound);
+    assert!(
+        logs(&bound).contains("focus: refused: hidden page (background action)"),
+        "{}",
+        logs(&bound)
+    );
+    assert!(!bound.take_commands().iter().any(|cmd| cmd.name == "focus"));
+    act(&mut bound, "disable");
+    native_press(&mut bound);
+    assert_eq!(
+        bound
+            .take_commands()
+            .iter()
+            .filter(|c| c.name == "focus")
+            .count(),
+        1,
+        "a released registration cannot identify a native press: {}",
+        logs(&bound)
+    );
+}
+
 /// D3: a chord another app holds is preferred as the platform's answer:
 /// the registration is listed unregistered, no press reaches it, and a
 /// check answers the same reason.

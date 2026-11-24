@@ -237,6 +237,7 @@ export function helperClassifications(group) {
     ["runner:runner/src/canvas_capture.rs", "Encoding::lossy_quality Encoding::new media_type_of Request::capture_canvas_as"],
     ["runner:runner/src/desktop.rs", "image_node label"],
     ["runner:runner/src/instance/owners.rs", "Tree::owners"],
+    ["runner:runner/src/lib.rs", "is_package_handler"],
     ["runner:runner/src/request_preload.rs", "secret_in_origin"],
     ["runner:runner/src/runner.rs", "Runner::plan_site_of"],
     ["runner:runner/src/runner/checkpoint.rs", "Runner::record_render_request"],

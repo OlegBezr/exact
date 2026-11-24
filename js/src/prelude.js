@@ -884,7 +884,7 @@
       try {
         result =
           mutation === "tool"
-            ? tool(source.slice(5), JSON.parse(JSON.parse(argsJson)[0]))
+            ? tool(source.slice(source.indexOf(":") + 1), JSON.parse(JSON.parse(argsJson)[0]))
             : global.exact.answer(source, JSON.parse(argsJson), store, storage, native);
       } finally {
         call.sync = false;

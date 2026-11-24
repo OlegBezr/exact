@@ -25,6 +25,7 @@ final class IframeAutomationTests: XCTestCase {
     private typealias PostFn = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, UInt32) -> Void
     private typealias DestroyFn = @convention(c) (UnsafeMutableRawPointer?) -> Void
     private typealias DoneFn = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, UInt32) -> Void
+    private typealias Message = @convention(block) (NSDictionary) -> Void
     private typealias AutomateFn = @convention(c) (UnsafePointer<UInt8>?, UInt32, UnsafeMutableRawPointer?, DoneFn?) -> Void
 
     private final class Seen { var records: [(event: String, record: [String: Any])] = [] }
@@ -54,7 +55,8 @@ final class IframeAutomationTests: XCTestCase {
     }
     private static let reply: ReplyFn = { _, _, _, _, _, _ in }
     private static let done: DoneFn = { context, bytes, length in
-        let answer = Unmanaged<Answer>.fromOpaque(context!).takeRetainedValue()
+        let callbacks = Unmanaged<NSArray>.fromOpaque(context!).takeRetainedValue()
+        let answer = callbacks.object(at: 0) as! Answer
         answer.value = (try? JSONSerialization.jsonObject(with: Data(bytes: bytes!, count: Int(length)))) as? [String: Any] ?? [:]
     }
 
@@ -78,13 +80,15 @@ final class IframeAutomationTests: XCTestCase {
     private static let owner = "/tmp/iframe-automation-owner"
 
     /// A call as the package makes it; its answer once the arm gives one.
-    private func call(_ arm: Arm, _ op: String, _ options: [String: Any] = [:], id: String = "tab", owner: String = owner) -> Answer {
+    private func call(_ arm: Arm, _ op: String, _ options: [String: Any] = [:], id: String = "tab", owner: String = owner, message: Message? = nil) -> Answer {
         let answer = Answer()
         var request = options
         request["op"] = op; request["owner"] = owner
         if request["target"] == nil { request["id"] = id }
-        let data = try! JSONSerialization.data(withJSONObject: request)
-        let context = Unmanaged.passRetained(answer).toOpaque()
+        let callbacks: NSArray = message.map { [answer, $0 as AnyObject] as NSArray } ?? [answer]
+        var data = try! JSONSerialization.data(withJSONObject: request)
+        if message != nil { data.insert(2, at: 0) }
+        let context = Unmanaged.passRetained(callbacks).toOpaque()
         data.withUnsafeBytes { arm.automate($0.bindMemory(to: UInt8.self).baseAddress, UInt32(data.count), context, Self.done) }
         return answer
     }
@@ -94,8 +98,8 @@ final class IframeAutomationTests: XCTestCase {
         return answer.value ?? ["error": "timed out"]
     }
 
-    private func run(_ arm: Arm, _ op: String, _ options: [String: Any] = [:], id: String = "tab", owner: String = owner) -> [String: Any] {
-        answered(call(arm, op, options, id: id, owner: owner))
+    private func run(_ arm: Arm, _ op: String, _ options: [String: Any] = [:], id: String = "tab", owner: String = owner, message: Message? = nil) -> [String: Any] {
+        answered(call(arm, op, options, id: id, owner: owner, message: message))
     }
 
     private func value(_ arm: Arm, _ expression: String, sandbox: String? = nil) -> Any? {
@@ -357,6 +361,133 @@ final class IframeAutomationTests: XCTestCase {
             XCTAssertEqual(reply["origin"] as? String, baseURL)
         } else { XCTAssertEqual(reply["error"] as? String, "no such frame") }
         checkOrigin(baseURL)
+    }
+
+    func testChannelArgumentsUseOnlyTheNamedWorldAndKeepThePostingDocument() throws {
+        let arm = try arm(), seen = Seen()
+        let (handle, web) = mount(arm, seen)
+        defer { arm.destroy(handle) }
+        let received = Seen()
+        let deliver: Message = { params in
+            received.records.append(("script.message", params as! [String: Any]))
+        }
+        let channel = ["type": "channel", "value": ["channel": "playback"]] as [String: Any]
+        var options: [String: Any] = ["arguments": [channel], "channelSession": "first session",
+                                      "functionDeclaration": "post => { post('pause'); return 1 }"]
+        for op in ["callFunction", "addPreloadScript"] {
+            XCTAssertEqual(run(arm, op, options, message: deliver)["error"] as? String, "NotSupportedError")
+        }
+        options["sandbox"] = "video"
+        XCTAssertEqual(value(arm, "(window.post = () => ++window.calls, window.calls = 0, true)") as? Bool, true)
+        let first = run(arm, "callFunction", options, message: deliver)
+        let realm = try XCTUnwrap(first["realm"] as? String)
+        spin { received.records.count == 1 }
+        let message = try XCTUnwrap(received.records.first?.record)
+        XCTAssertEqual(message["channel"] as? String, "playback")
+        XCTAssertEqual(message["json"] as? String, "\"pause\"")
+        XCTAssertEqual(message["source"] as? [String: String], ["realm": realm, "context": "tab", "origin": baseURL])
+        XCTAssertEqual(value(arm, "window.calls") as? Int, 0)
+        options["functionDeclaration"] = "post => { try { post('é'.repeat(32768)); } catch(e) { return e.name } }"
+        XCTAssertEqual(run(arm, "callFunction", options, message: deliver)["result"] as? String, "QuotaExceededError")
+        let pageCanary = "window.calls = 0; window.post = window.playback = () => ++window.calls; addEventListener('message', window.post); Object.prototype.pageCanary = true"
+        web.configuration.userContentController.addUserScript(WKUserScript(source: pageCanary, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        options["functionDeclaration"] = "post => { globalThis.didFirst = true; post(({play: true}).pageCanary ?? 'play') }"
+        let firstScript = try XCTUnwrap(run(arm, "addPreloadScript", options, message: deliver)["script"] as? String)
+        let script = try XCTUnwrap(web.configuration.userContentController.userScripts.last?.source)
+        let handlerRange = try XCTUnwrap(script.range(of: "_message[A-Fa-f0-9]+", options: .regularExpression))
+        let handler = String(script[handlerRange])
+        XCTAssertEqual(value(arm, "typeof globalThis.webkit?.messageHandlers?.\(handler)") as? String, "undefined")
+        // A raw WebKit post without the issued channel's capability does not enter its receiver.
+        XCTAssertEqual(value(arm, "(webkit.messageHandlers.\(handler).postMessage(['unissued','\(UUID().uuidString)','1']), true)", sandbox: "video") as? Bool, true)
+        let other = Seen()
+        var second = options
+        second["channelSession"] = "another session"
+        second["functionDeclaration"] = "post => post('other')"
+        XCTAssertEqual(run(arm, "callFunction", second, message: { other.records.append(("message", $0 as! [String: Any])) })["error"] as? String, nil)
+        spin { other.records.count == 1 }
+        XCTAssertEqual(received.records.count, 1)
+        let before = seen.records.count
+        web.reload()
+        spin { seen.records.dropFirst(before).contains { $0.event == "navigatesuccess" } && received.records.count == 2 }
+        XCTAssertEqual(other.records.count, 1)
+
+        let fresh = try XCTUnwrap(received.records.last?.record["source"] as? [String: String])
+        XCTAssertEqual(received.records.last?.record["json"] as? String, "\"play\"")
+        XCTAssertEqual(value(arm, "window.calls") as? Int, 0)
+        // WebKit schedules the worlds independently. Run the registered preload again after
+        // reading the page's own function so this case observes the page-first order.
+        XCTAssertEqual(value(arm, "typeof window.playback") as? String, "function")
+        XCTAssertEqual(value(arm, "(() => { \(script) return true })()", sandbox: "video") as? Bool, true)
+        spin { received.records.count == 3 }
+        XCTAssertEqual(received.records.last?.record["json"] as? String, "\"play\"")
+        XCTAssertEqual(value(arm, "window.calls") as? Int, 0)
+        XCTAssertEqual(fresh["origin"], baseURL)
+        XCTAssertNotEqual(fresh["realm"], realm)
+        XCTAssertEqual(run(arm, "evaluate", ["target": ["realm": try XCTUnwrap(fresh["realm"])], "expression": "2"])["result"] as? Int, 2)
+        XCTAssertEqual(run(arm, "evaluate", ["target": ["realm": realm], "expression": "3"])["error"] as? String, "no such frame")
+        XCTAssertNil(run(arm, "releaseScriptChannels", ["channelSession": "first session"])["error"])
+        XCTAssertEqual(run(arm, "removePreloadScript", ["script": firstScript])["error"] as? String, "NotFoundError")
+        XCTAssertNil(run(arm, "addPreloadScript", second, message: { other.records.append(("message", $0 as! [String: Any])) })["error"])
+        web.reload()
+        spin { other.records.count == 2 }
+        XCTAssertEqual(value(arm, "typeof globalThis.didFirst", sandbox: "video") as? String, "undefined")
+        XCTAssertEqual(received.records.count, 3)
+    }
+
+    func testClosingSessionsRemovesTheirDocumentStartScripts() throws {
+        let arm = try arm(), seen = Seen()
+        let (handle, web) = mount(arm, seen)
+        let controller = web.configuration.userContentController
+        let baseline = controller.userScripts.count
+        let channel: [String: Any] = ["type": "channel", "value": ["channel": "playback"]]
+        func options(_ session: String, sandbox: String) -> [String: Any] {
+            ["sandbox": sandbox, "channelSession": session, "arguments": [channel], "functionDeclaration": "post => {}"]
+        }
+        let keep = options("other", sandbox: "shared")
+        XCTAssertNotNil(run(arm, "addPreloadScript", keep, message: { _ in })["script"])
+        let sharedCount = controller.userScripts.count
+        for sandbox in ["shared", "wallet", "video"] {
+            let args = options("closing", sandbox: sandbox)
+            let key = try XCTUnwrap(run(arm, "addPreloadScript", args, message: { _ in })["script"] as? String)
+            XCTAssertNil(run(arm, "releaseScriptChannels", ["channelSession": "closing"])["error"])
+            XCTAssertEqual(run(arm, "removePreloadScript", ["script": key])["error"] as? String, "NotFoundError")
+            XCTAssertEqual(controller.userScripts.count, sharedCount)
+        }
+        // A refused call must release the native handler's only reference to its receiver.
+        weak var retained: Seen?
+        autoreleasepool {
+            let receiver = Seen()
+            retained = receiver
+            var args = options("refused", sandbox: "shared")
+            args["functionDeclaration"] = "invalid !"
+            XCTAssertEqual(run(arm, "callFunction", args, message: { receiver.records.append(("message", $0 as! [String: Any])) })["error"] as? String, "SyntaxError")
+        }
+        XCTAssertNil(retained)
+        autoreleasepool {
+            let receiver = Seen()
+            retained = receiver
+            var args = options("unbound", sandbox: "shared")
+            args["functionDeclaration"] = "missingFunction"
+            XCTAssertEqual(run(arm, "callFunction", args, message: { receiver.records.append(("message", $0 as! [String: Any])) })["error"] as? String, "ReferenceError")
+        }
+        XCTAssertNil(retained, "resolving the callee failed before its channel argument was handed out")
+        var pending: Answer?
+        autoreleasepool {
+            let receiver = Seen()
+            retained = receiver
+            var args = options("pending", sandbox: "shared")
+            args["functionDeclaration"] = "post => { post('pause'); return window.pending = new Promise(() => {}) }"
+            pending = call(arm, "callFunction", args, message: { receiver.records.append(("message", $0 as! [String: Any])) })
+            spin { !receiver.records.isEmpty }
+            XCTAssertEqual(receiver.records.first?.record["json"] as? String, "\"pause\"")
+        }
+        web.reload()
+        XCTAssertEqual(answered(try XCTUnwrap(pending))["error"] as? String, "AbortError")
+        XCTAssertNotNil(retained, "a post already on its way can still reach its receiver")
+        XCTAssertNil(run(arm, "releaseScriptChannels", ["channelSession": "pending"])["error"])
+        XCTAssertNil(retained)
+        arm.destroy(handle)
+        XCTAssertEqual(controller.userScripts.count, baseline)
     }
 
     /// A preload script runs at document start in each new document until

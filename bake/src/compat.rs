@@ -89,7 +89,8 @@ pub(crate) const RUST_ABI: u32 = exact_logic_abi::ABI;
 /// 16: per-source turn budgets. Older native hosts give every source 100 ms.
 /// 17: browser automation uses document realms. An older binary ignores the
 /// target and could run the call in an unnamed frame.
-pub(crate) const TYPESCRIPT_RUNTIME: u32 = 17;
+/// 18: browser automation passes functions for channel arguments and delivers their messages.
+pub(crate) const TYPESCRIPT_RUNTIME: u32 = 18;
 
 /// What each runtime past the first added that a bundle names to use (see
 /// [`TYPESCRIPT_RUNTIME`]): a `fetch` option an older prelude would ignore,
@@ -167,7 +168,7 @@ pub fn typescript_runtime_of(bundle: &[u8], grants: &str) -> u32 {
         .map_or(0, |(runtime, _)| *runtime);
     grants.lines().fold(named, |runtime, line| {
         match line.split_whitespace().next() {
-            Some("browser.automation") => runtime.max(17),
+            Some("browser.automation") => runtime.max(18),
             Some("sqlite.open") => runtime.max(10),
             _ => runtime,
         }
