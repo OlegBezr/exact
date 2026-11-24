@@ -52,6 +52,7 @@ pub const RECIPES: &[(&str, &str)] = &[
     recipe!("fetch-loading-error"),
     recipe!("files-and-grants"),
     recipe!("first-launch"),
+    recipe!("floating-window"),
     recipe!("foldables"),
     recipe!("functions"),
     recipe!("gpu-module"),
@@ -128,6 +129,7 @@ pub const RECIPES: &[(&str, &str)] = &[
     recipe!("website"),
     recipe!("website-hosting"),
     recipe!("white-label"),
+    recipe!("window-bounds"),
 ];
 
 pub const PATTERNS: &[(&str, &str)] = &[

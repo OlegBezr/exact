@@ -71,7 +71,7 @@ const ELEMENTS: &[&str] = &[
 /// LLP 1047.003 D1). A change to `element` changes this list with it.
 pub fn tags_by_data(node_type: NodeType, prop: PropId) -> Vec<&'static str> {
     match (node_type, prop) {
-        (NodeType::Pressable, PropId::Href) => vec!["a", "button"],
+        (NodeType::Pressable, PropId::Href | PropId::PanelHref) => vec!["a", "button"],
         (NodeType::Text, PropId::Href) => vec!["a", "span"],
         (NodeType::Text, PropId::AccessibilityRole | PropId::AccessibilityHeadingLevel) => {
             vec!["h1", "h2", "h3", "h4", "h5", "h6", "div"]
@@ -121,6 +121,7 @@ pub fn attributes_by_data(node_type: NodeType) -> Vec<&'static str> {
         "type",
     ];
     names.extend(match node_type {
+        NodeType::Pressable => &["tabindex"][..],
         NodeType::Control => &[
             "data-button-style",
             "data-exact-control",
