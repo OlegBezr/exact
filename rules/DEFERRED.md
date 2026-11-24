@@ -2324,6 +2324,8 @@ web; LLP 1115.000 D14.4). Still refused: scoring, a rule catalog, WCAG checks
 driving VoiceOver. The guessed `accessibleName` on `tree` is deleted because
 the platform's tree supersedes it, not as the take.
 
+**Custom accessibility actions (Charlie, 2026-11-24, "recs ok").** LLP 1114.008 D1 unblocks `aria-actions` for Pocket Lab's quantity spinbutton. D4's show-menu action stays deferred.
+
 Admitted 2026-09-10 (Charlie, LLP 1035 §5; 1035.002 D6, 1035.005 D3): **a
 development-only map from plan node to its declaration and component call-site
 chain**, emitted by the compiler beside the plan, keyed by the plan's digest, read by

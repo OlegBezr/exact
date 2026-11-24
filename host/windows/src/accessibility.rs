@@ -157,6 +157,9 @@ impl Access {
                     (Action::ShowContextMenu, _) => {
                         p.access_act(id, act::LONG_CLICK, 0., now);
                     }
+                    (Action::CustomAction, Some(ActionData::CustomAction(target))) => {
+                        p.access_custom_action(id, target as u32, now);
+                    }
                     (Action::Increment, _) => {
                         p.access_act(id, act::FORWARD, 0., now);
                     }

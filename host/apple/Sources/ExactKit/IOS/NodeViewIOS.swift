@@ -481,8 +481,10 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
     }
     /// A pointer over the node (an iPad's trackpad or mouse; a phone has
     /// none): `hover` in and out.
+    var hadFormActionRefs = false
+    var actionSummary: UIAccessibilityElement?
     package override var accessibilityElements: [Any]? {
-        get { textAccessibilityChildren() ?? tableElementsInDrawnOrder ?? super.accessibilityElements ?? presenter?.navigation.lifted?.accessibilityElements(of: self) ?? NodeView.emptyBoxAccessibility(of: self) }
+        get { textAccessibilityChildren() ?? childrenWithActions(tableElementsInDrawnOrder ?? super.accessibilityElements ?? presenter?.navigation.lifted?.accessibilityElements(of: self) ?? NodeView.emptyBoxAccessibility(of: self)) }
         set { super.accessibilityElements = newValue }
     }
     /// A text field's Enter as a key (its characters are its `input`, the

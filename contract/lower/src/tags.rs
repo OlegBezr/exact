@@ -799,8 +799,8 @@ pub fn attr(name: &str) -> Option<AttrTarget> {
         "aria-hidden" => AttrTarget::Prop(p("accessibilityElementsHidden")),
         "aria-invalid" => AttrTarget::Prop(p("accessibilityInvalid")), // onboarding F22, spreadsheet F20
         "aria-describedby" => AttrTarget::Prop(p("accessibilityDescribedBy")),
-        // ARIA's name by reference (ledger2 Rough 3): the ids, space-separated,
-        // of the elements whose text names this one, before `aria-label`.
+        "aria-actions" => AttrTarget::Prop(p("accessibilityActions")),
+        // Referenced text takes precedence over aria-label (accname step 2B).
         "aria-labelledby" => AttrTarget::Prop(p("accessibilityLabelledBy")),
         // HTML's `tabindex`, no alias (LLP 1088 D7.3): present makes a box
         // focusable, `>= 0` a Tab stop; absent is never `0`.

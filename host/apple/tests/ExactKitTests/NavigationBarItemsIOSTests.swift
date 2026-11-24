@@ -162,6 +162,23 @@ extension NavigationBarIOSTests {
         session.presenter.apply(wireBatch([["op": "props", "id": Int(more.id), "set": ["accessibilityKeyShortcuts": "Meta+Z"]]]))
         XCTAssertFalse(more.accessibilityVisible, "the bar's item stands for the control")
         XCTAssertNotNil(session.presenter.navigationHost.tipItem(more), "the bar that shows draws it")
+        let p = session.presenter, toggle = try node(session, "bare-toggle")
+        p.apply(wireBatch([
+            ["op": "props", "id": Int(more.id), "set": ["id": "more", "accessibilityActions": "toggle"]],
+            ["op": "props", "id": Int(toggle.id), "set": ["id": "toggle", "accessibilityLabel": "Toggle bar", "accessibilityActions": "more"]]
+        ]))
+        let item = try XCTUnwrap(p.navigationHost.tipItem(more)?.0)
+        XCTAssertEqual(item.accessibilityCustomActions?.map(\.name), ["Toggle bar"])
+        let fromPage = try XCTUnwrap(toggle.accessibilityCustomActions?.first)
+        XCTAssertEqual(fromPage.name, "More")
+        var presses: [UInt32] = []
+        let saved = p.onPress
+        p.onPress = { presses.append($0) }
+        defer { p.onPress = saved }
+        XCTAssertEqual(fromPage.actionHandler?(fromPage), true)
+        let fromBar = try XCTUnwrap(item.accessibilityCustomActions?.first)
+        XCTAssertEqual(fromBar.actionHandler?(fromBar), true)
+        XCTAssertEqual(presses, [more.id, toggle.id])
         let commands = session.presenter.shortcutCommands(#selector(UIResponder.becomeFirstResponder))
         XCTAssertEqual(commands.map { [$0.input, $0.title] }, [["z", "More"]], "one command, named for the button")
         XCTAssertTrue(session.presenter.shortcut(key: "z", held: "Meta+", focus: nil) === more)

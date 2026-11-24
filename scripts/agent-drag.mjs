@@ -214,15 +214,17 @@ export async function dragTap({ s, carrier, node, target, host, timing, tapRefus
   const inside = ([x, y]) => x >= 0 && y >= 0 && x <= vp.w && y <= vp.h;
   // Android's reader owns scrolling; Presenter.pointer_* cannot hold its scroll contact.
   // Use the reader's deterministic scroll samples, and report that delivery explicitly.
-  if (host === 'android' && carrier.reader && (dx || dy || ['ScrollView', 'List'].includes(b.type)) && !mouse) {
+  let liftAt;
+  if (host === 'android' && carrier.reader && (press || dx || dy || ['ScrollView', 'List'].includes(b.type)) && !mouse) {
     if (!inside(start)) throw new Error(`drag: start (${start}) leaves the viewport (${vp.w} × ${vp.h})`);
     const req = { op: 'tap', id: node.id, scrollDrag: [dx, dy], ms: dx || dy ? over : 0, from: start, ...(hold ? { hold } : {}) };
-    const owner = await carrier.ask({ ...req, probe: true });
+    const owner = await carrier.ask({ ...req, probe: true, ...(press ? { press } : {}) });
     if (owner.error) throw new Error(`drag: ${owner.error}`);
+    liftAt = owner.liftAt;
     if (owner.scrollDrag !== 'presenter') {
       if (owner.scrollDrag !== 'reader') throw new Error('drag: Android reader did not identify the scroll owner');
-      if (during.length || press || opts.path || modifiers) throw new Error('drag: Android reader scroll samples do not hold a native touch; press, during, path and modifiers need native input');
-      const r = await carrier.ask(req);
+      if (during.length || (press && !owner.reorderGrip) || opts.path || modifiers) throw new Error('drag: Android reader scroll samples do not hold a native touch; press, during, path and modifiers need native input');
+      const r = await carrier.ask(press ? { ...req, press } : req);
       if (r.error || r.delivery === 'unsupported') throw new Error(`drag: ${r.error ?? r.reason ?? 'unsupported'}`);
       return noted(await s.landed({ ...r, target, ...(scrolled ? { scrolled } : {}), drag: said, carrier: host, mode: timing }), [...still(r, target), ...await reorderNotes(s, mark)]);
     }
@@ -319,7 +321,18 @@ export async function dragTap({ s, carrier, node, target, host, timing, tapRefus
     // press and hold seek the virtual clock (platformer R7). `virtual` tells
     // web and macOS to skip the wall sleep; Linux already seeks and reports `clock`.
     const seek = timing !== 'platform' ? { virtual: true } : {};
-    if (press) await phase('hold', { ms: press, ...seek });
+    if (liftAt !== undefined) {
+      const still = Math.min(press, liftAt), travel = liftAt - still;
+      if (still) await phase('hold', { ms: still, ...seek });
+      if (travel) {
+        const leg = legs[0], part = travel / over;
+        await phase('move', { dx: dx * part, dy: dy * part, ms: travel });
+        leg.dx -= dx * part; leg.dy -= dy * part; leg.over -= travel;
+      }
+      const lifted = await carrier.ask({ op: 'tap', phase: 'reorderHold' });
+      if (lifted.error) throw new Error(`drag: ${lifted.error}`);
+      if (press > still) await phase('hold', { ms: press - still, ...seek });
+    } else if (press) await phase('hold', { ms: press, ...seek });
     // Each leg (`then`) moves on from where the one before ended, runs its ops there, and holds.
     for (const leg of legs) {
       if (leg.dx || leg.dy) await phase('move', { dx: leg.dx, dy: leg.dy, ms: leg.over });

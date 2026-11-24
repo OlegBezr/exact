@@ -87,7 +87,7 @@ package final class Presenter {
     package var leaving: [UInt32: Leaving] = [:]
     /// The shared elements in flight (LLP 1013.000, `FlightLink`).
     package lazy var flightHost: any FlightHosting = FlightLink.make?(self) ?? NoFlights()
-    private(set) package var chrome = ChromeIndex()
+    internal(set) package var chrome = ChromeIndex()
     package var listRowDependencies: ListRowDependencies?
     #if DEBUG
     var listRowDependencyBuilds = 0

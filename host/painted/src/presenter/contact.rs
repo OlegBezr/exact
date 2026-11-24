@@ -901,7 +901,12 @@ impl<D: DataSource> Presenter<D> {
         {
             // The first candidate whose axis rule accepts begins; the ones
             // before it fall away (LLP 1057.001 §1).
-            let rest = std::mem::take(&mut contact.rest);
+            let mut rest = std::mem::take(&mut contact.rest);
+            if self.separate_surface_windows() && self.contact_is_direct() && !contact.touch.1 {
+                let takes_move = |c: &Candidate| !matches!(c, Candidate::Arrange(_));
+                contact.candidate = contact.candidate.filter(takes_move);
+                rest.retain(takes_move);
+            }
             if let Some(next) = contact
                 .candidate
                 .into_iter()

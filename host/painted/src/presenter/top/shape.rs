@@ -290,7 +290,7 @@ pub fn menu(kernel: &Kernel, pop: ViewId, pressed: &dyn Fn(ViewId) -> bool) -> O
     let rows = |node: &NodeRef<'_>| -> Vec<ViewId> {
         let titles: Vec<&str> = (node.props.str(PropId::AccessibilityLabelledBy))
             .filter(|_| is_section(node))
-            .map_or_else(Vec::new, |refs| refs.split_whitespace().collect());
+            .map_or_else(Vec::new, |refs| refs.split_ascii_whitespace().collect());
         (node.children().into_iter())
             .filter(|id| {
                 kernel.node(*id).is_some_and(|n| {
@@ -369,7 +369,7 @@ fn is_section(node: &NodeRef<'_>) -> bool {
 /// written, and is no row here.
 fn section_title(kernel: &Kernel, node: &NodeRef<'_>) -> Option<String> {
     let named = node.props.str(PropId::AccessibilityLabelledBy).map(|refs| {
-        (refs.split_whitespace())
+        (refs.split_ascii_whitespace())
             .filter_map(|name| kernel.find_by_id(name).into_iter().next())
             .filter_map(|key| kernel.node_by_key(key))
             .map(|n| match n.props.str(PropId::AccessibilityLabel) {

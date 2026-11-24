@@ -69,6 +69,15 @@ pub(super) fn map_node(
         _ => Role::GenericContainer,
     };
     let mut node = Node::new(role);
+    if !source.actions.is_empty() {
+        node.add_action(Action::CustomAction);
+        for (id, name) in &source.actions {
+            node.push_custom_action(accesskit::CustomAction {
+                id: *id as i32,
+                description: name.clone(),
+            });
+        }
+    }
     if source.flags & flag::MODAL != 0 {
         node.set_modal();
     }
@@ -390,6 +399,11 @@ pub(super) fn menu_action<D: DataSource>(p: &mut Presenter<D>, request: accesski
     let (view, expanded) = (source.view, source.flags & flag::EXPANDED != 0);
     let now = p.host().now();
     match request.action {
+        Action::CustomAction => {
+            if let Some(ActionData::CustomAction(action)) = request.data {
+                p.access_custom_action(id, action as u32, now);
+            }
+        }
         Action::Collapse => {
             p.collapse_status_menu(view, now);
         }
@@ -440,6 +454,8 @@ mod tests {
             name: "Message".into(),
             value: "a🦀e\u{301}".into(),
             hint: "Draft".into(),
+            action_owner: 1,
+            actions: Vec::new(),
         }
     }
 
@@ -457,8 +473,12 @@ mod tests {
         assert!(native.supports_action(Action::SetValue));
         let mut spin = source(role::SPIN_BUTTON);
         spin.flags = flag::RANGE | flag::BACKWARD;
+        spin.actions.push((u32::MAX - 11, "Reset quantity".into()));
         let spin = map_node(&spin, (0., 0.), false, false, false);
         assert_eq!(spin.role(), Role::SpinButton);
+        assert!(spin.supports_action(Action::CustomAction));
+        assert_eq!(spin.custom_actions()[0].description, "Reset quantity");
+        assert_eq!(spin.custom_actions()[0].id, -12);
         assert!(spin.supports_action(Action::Decrement));
         assert!(!spin.supports_action(Action::SetValue));
     }

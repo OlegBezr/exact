@@ -23,8 +23,7 @@
 //! cells, and a description list its terms and descriptions; a live region
 //! is kept so that its change is spoken. Everything else is no node, and
 //! its children stand under the node above. What is hidden, inert,
-//! `aria-hidden`, under a route that
-//! does not show, or out of what its scrollers show is left out.
+//! `aria-hidden`, off route or outside its scrollport is left out.
 //!
 //! **Where the bars and the top layer are.** A header the top app bar
 //! replaced and the root `tablist` the navigation bar replaced are not in
@@ -45,6 +44,7 @@
 //! **A hosted text field** is the reader's own view (D8) and reports
 //! itself: its node here says only where it stands in the order and what
 //! its author named it.
+mod actions;
 mod menu;
 mod scroll;
 pub use scroll::NodeRange;
@@ -251,6 +251,10 @@ pub struct Node {
     pub value: String,
     /// Its description (`aria-description`, `aria-describedby`).
     pub hint: String,
+    /// The authored owner, including when a grouped row lends its click to a switch.
+    pub action_owner: ViewId,
+    /// Actions on other elements, in authored order, with their accessible names.
+    pub actions: Vec<(ViewId, String)>,
 }
 
 /// What the presenter keeps of the tree its shell was told.
@@ -304,14 +308,9 @@ fn rowed(hash: u64) -> i32 {
     ROWED + ((hash ^ (hash >> 32)) % 0x3ff0_0000) as i32
 }
 
-/// A node's identity, which a platform keeps its place by: its view id,
-/// which the runner keeps for as long as the view lives, through every
-/// commit and scroll. Under a list's row (a node whose ancestor carries a
-/// `listItemKey`) the view is not the item's own: the row's views are
-/// given to another item when it scrolls away (LLP 1078), and a row that
-/// returns is built from others. So there it is a hash of the list's own
-/// identity, the row's item key, and the node's place in the row (its
-/// index among its siblings at each level down from the row).
+/// The accessibility id is the live view id outside a list. Under a recycled
+/// row it hashes the list’s identity, the item key and the child indices from
+/// the row to this view, so the same item keeps its id when it returns.
 pub fn identity(kernel: &Kernel, view: ViewId) -> i32 {
     let mut path: Vec<u32> = Vec::new();
     let mut at = view;
@@ -386,6 +385,7 @@ struct BarNodeInfo {
     id: i32,
     disabled: bool,
     hint: String,
+    actions: Vec<(ViewId, String)>,
 }
 
 impl Build {
@@ -403,7 +403,7 @@ impl<D: DataSource> Presenter<D> {
     pub(in crate::presenter) fn access_label(&self, node: &NodeRef<'_>) -> Option<String> {
         let kernel = self.host.kernel();
         let named = node.props.str(PropId::AccessibilityLabelledBy).map(|refs| {
-            (refs.split_whitespace())
+            (refs.split_ascii_whitespace())
                 .filter_map(|name| kernel.find_by_id(name).into_iter().next())
                 .filter_map(|key| kernel.node_by_key(key))
                 .map(|n| {
@@ -430,7 +430,7 @@ impl<D: DataSource> Presenter<D> {
             .props
             .str(PropId::AccessibilityDescribedBy)
             .map(|refs| {
-                (refs.split_whitespace())
+                (refs.split_ascii_whitespace())
                     .filter_map(|name| kernel.find_by_id(name).into_iter().next())
                     .filter_map(|key| kernel.node_by_key(key))
                     .map(|n| self.access_name(&n))
@@ -559,7 +559,7 @@ impl<D: DataSource> Presenter<D> {
             {
                 continue;
             }
-            if self.access_pressable(&child) {
+            if self.access_pressable(&child) || self.action_group(&child) {
                 self.access_walk(b, child.id, scope);
             } else {
                 self.access_inline_controls(b, &child, scope);
@@ -656,6 +656,8 @@ impl<D: DataSource> Presenter<D> {
             name,
             value,
             hint: self.access_hint(node),
+            action_owner: node.id,
+            actions: self.access_actions(node),
         });
         Some(id)
     }
@@ -810,6 +812,10 @@ impl<D: DataSource> Presenter<D> {
                 identity(kernel, view)
             },
             disabled,
+            actions: node
+                .as_ref()
+                .map(|n| self.access_actions(n))
+                .unwrap_or_default(),
             hint: node.map(|n| self.access_hint(&n)).unwrap_or_default(),
         }
     }
@@ -1051,6 +1057,8 @@ impl<D: DataSource> Presenter<D> {
                 name: String::new(),
                 value: String::new(),
                 hint: String::new(),
+                action_owner: 0,
+                actions: Vec::new(),
             });
             scope.parent = id;
         }
@@ -1117,7 +1125,8 @@ impl<D: DataSource> Presenter<D> {
             if was.name != node.name || was.value != node.value || was.hint != node.hint {
                 what |= change::TEXT;
             }
-            if was.flags != node.flags
+            if was.actions != node.actions
+                || was.flags != node.flags
                 || was.set != node.set
                 || was.grid != node.grid
                 || was.role != node.role
@@ -1280,13 +1289,17 @@ impl<D: DataSource> Presenter<D> {
             for text in [&node.name, &node.value, &node.hint] {
                 string(&mut out, text);
             }
+            out.push(node.actions.len() as i32);
+            for (id, name) in &node.actions {
+                out.push(*id as i32);
+                string(&mut out, name);
+            }
         }
         (state.nodes, state.host, state.pane, state.told) = (nodes, host, pane, true);
         Some(out)
     }
 
-    /// The shell stopped asking (no service is on): what it was told is
-    /// forgotten, and nothing is kept for it.
+    /// Forget the last statement when the shell stops asking.
     pub fn access_reset(&mut self) {
         self.access = State::default();
     }

@@ -43,6 +43,7 @@ final class GroupedCell: UICollectionViewListCell {
         }, prune: { $0 === self.contentView || $0 === self.toggle || $0 === self.detailButton || $0.isHidden })
         guard control !== reorderControl || grip !== actionGrip else { return }
         if let old = reorderControl {
+            NodeView.clearReferencedActions(from: old)
             old.accessibilityCustomActions = old.accessibilityCustomActions?.filter { action in !moveActions.contains { $0 === action } }
         }
         actionGrip = nil
@@ -53,6 +54,7 @@ final class GroupedCell: UICollectionViewListCell {
         reorderControl = control
         moveActions = actions
         control.accessibilityCustomActions = (control.accessibilityCustomActions ?? []) + actions
+        grip.syncProjectedActions(control)
     }
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let grip, isFocused || isFirstResponder, let reorders = grip.presenter?.reorders else {
