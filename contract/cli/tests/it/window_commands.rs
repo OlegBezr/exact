@@ -90,6 +90,38 @@ fn a_window_takes_one_rectangle_and_an_optional_animation() {
     }
 }
 
+#[test]
+fn the_window_level_mouse_events_and_opacity_have_independent_arguments() {
+    let src = r#"component App
+  action overlay(flag: bool)
+    setWindowAlwaysOnTop(flag)
+    setWindowIgnoreMouseEvents(false)
+    setWindowOpacity(0.5, 180)
+  view
+    button press=overlay(true)
+      text "Overlay"
+"#;
+    let mut r = boot(src);
+    r.act("overlay", vec![Value::Bool(true)]).unwrap();
+    let commands = r.take_commands();
+    assert_eq!(commands.len(), 3);
+    assert_eq!(commands[0].args, [Value::Bool(true)]);
+    assert_eq!(commands[1].args, [Value::Bool(false)]);
+    assert_eq!(commands[2].args, [Value::Number(0.5), Value::Number(180.)]);
+    for bad in [
+        "setWindowAlwaysOnTop(1)",
+        "setWindowIgnoreMouseEvents()",
+        "setWindowOpacity(1, -1)",
+        "setWindowOpacity(1, true)",
+        "setWindowOpacity(1, 2, 3)",
+    ] {
+        assert!(
+            contract::compile(&src.replace("setWindowOpacity(0.5, 180)", bad)).is_err(),
+            "{bad}"
+        );
+    }
+}
+
 /// LLP 1133.025 D4: `hideWindow()` reaches the host, beside the window's
 /// bare `focus()` that shows it again; an argument is refused.
 #[test]

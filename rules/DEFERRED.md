@@ -2455,3 +2455,8 @@ display, a region, a named window, placing another window, and the desktop Linux
 `screenX`, `screenY`, `outerWidth` and `outerHeight` on macOS and the web,
 and dock, expand and constrain it on macOS with `setBounds(bounds, animate)`
 and `setAspectRatio(ratio)` (LLP 1178 D1). AppKit saves the resulting frame.
+
+**Expanded (Charlie, 2026-11-24, "recs ok").** Float can float its Mac
+window, pass clicks through it, fade it over a duration and drag it from
+a page region (LLP 1178 D1, 1069.010 and 1039 D8). Hiding the traffic
+lights and choosing the window backdrop stay in app Swift.

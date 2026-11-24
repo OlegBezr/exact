@@ -44,6 +44,39 @@ final class WindowCommandsMacTests: XCTestCase {
         XCTAssertEqual(window.frame, NSRect(x: 96, y: top - 442, width: 510, height: 302))
     }
 
+    func testFloatingAndClickThroughChangeIndependently() {
+        let window = shown()
+        let spaces = window.collectionBehavior
+        func set(_ command: String, _ flag: Bool) {
+            XCTAssertTrue(ExactWindowCommands.perform(command, [flag], on: window) { XCTFail($0) })
+        }
+        set("setWindowAlwaysOnTop", true)
+        XCTAssertEqual(window.level, AgentLink.windowsBehind ? .agentBehind : .floating)
+        set("setWindowIgnoreMouseEvents", true)
+        set("setWindowAlwaysOnTop", false)
+        XCTAssertEqual(window.collectionBehavior, spaces)
+        XCTAssertTrue(window.ignoresMouseEvents)
+        XCTAssertEqual(window.level, AgentLink.windowsBehind ? .agentBehind : .normal)
+        set("setWindowIgnoreMouseEvents", false)
+        XCTAssertFalse(window.ignoresMouseEvents)
+    }
+
+    func testTimedOpacityTakesMillisecondsAndCanBeReplaced() {
+        let window = shown()
+        func fade(_ a: CGFloat, _ ms: Double) {
+            XCTAssertTrue(ExactWindowCommands.perform("setWindowOpacity", [a, ms], on: window) { XCTFail($0) })
+        }
+        fade(0.2, 500)
+        if ExactEnv.agentFreezes || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            XCTAssertEqual(window.alphaValue, 0.2, accuracy: 0.001)
+        } else {
+            waitFor("opacity animates") { window.alphaValue < 1 }
+            XCTAssertGreaterThan(window.alphaValue, 0.2)
+        }
+        fade(0.8, 0)
+        XCTAssertEqual(window.alphaValue, 0.8, accuracy: 0.001)
+    }
+
     func testAspectRatioConstrainsContentAndZeroClearsIt() {
         let window = shown()
         XCTAssertTrue(ExactWindowCommands.perform("setAspectRatio", [16.0 / 9.0], on: window) { XCTFail($0) })
