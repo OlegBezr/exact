@@ -13,6 +13,8 @@ pub mod attached;
 pub(crate) mod contact;
 mod held;
 mod sensors;
+#[cfg(any(target_os = "android", test))]
+pub(crate) use sensors::hold_framed;
 mod stdio;
 
 use crate::presenter::Presenter;

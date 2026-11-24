@@ -151,10 +151,10 @@ test('an iOS drag with ops during it needs a held finger', async () => {
   expect(d.asked.filter((a) => !Array.isArray(a))).toEqual([]);
 });
 
-test('an Android reader scroller uses scroll samples rather than losing a presenter contact', async () => {
+test.each(['ScrollView', 'Text', 'Column'])('an Android reader drag on %s probes the owner at the start point', async type => {
   const asked = [], s = {
     contact: null, held: null,
-    async layout() { return { nodes: [{ id: 9, type: 'ScrollView', x: 0, y: 50, w: 400, h: 640 }], viewport: { w: 400, h: 800 } }; },
+    async layout() { return { nodes: [{ id: 9, type, x: 0, y: 50, w: 400, h: 640 }], viewport: { w: 400, h: 800 } }; },
     async op() { return { lines: [], next: 0 }; },
     async landed(r) { return r; },
     async pointer() { throw new Error('the presenter cannot recognize a reader scroll'); },
@@ -173,7 +173,13 @@ test('an Android reader scroller uses scroll samples rather than losing a presen
   expect(r.scrolledBy).toEqual([0, 400]);
   expect(r.timing).toContain('native touch and fling unobserved');
   expect(s.contact).toBeNull();
-  await expect(run({ dx: 0, dy: -200, hold: 10 })).rejects.toThrow('need native input');
+  await run({ dx: 0, dy: -170, over: 400, hold: 200 });
+  expect(asked.at(-1)).toMatchObject({ scrollDrag: [0, -170], ms: 400, hold: 200 });
+  await expect(run({ dx: 0, dy: -200, press: 10 })).rejects.toThrow('need native input');
+  if (type === 'ScrollView') {
+    await run({ dx: 0, dy: 0 });
+    expect(asked.at(-1)).toMatchObject({ scrollDrag: [0, 0], ms: 0 });
+  }
   carrier.ask = async () => ({ error: 'target is covered' });
   await expect(run({ dx: 0, dy: -200 })).rejects.toThrow('target is covered');
 });
