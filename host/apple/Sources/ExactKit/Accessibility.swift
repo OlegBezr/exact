@@ -508,7 +508,7 @@ extension NodeView {
             if let checked = checkedRole { setAccessibilityChecked(checked.role, checked.checked) }
             else { setAccessibilityToggle(pressedState, else: buttonRole) }
             // A link's `AXURL` is its `href`, as a run's is (X78).
-            let url = role == "link" ? props["href"].flatMap { URL(string: $0) } : nil
+            let url = role == "link" ? linkDestination.flatMap { URL(string: $0) } : nil
             if accessibilityURL() != url { setAccessibilityURL(url) }
             setAccessibilitySelected(props["accessibilitySelected"] == "true")
             if let expanded = props["accessibilityExpanded"] { setAccessibilityExpanded(expanded == "true") }

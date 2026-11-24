@@ -391,13 +391,12 @@ public final class ExactSession {
     let buttonMeasurements = ButtonMeasureCache()
     package let presenter: Presenter
     var launchLocation: String? // a pre-boot `openURL`'s location, until the first frame (LaunchURL.swift)
-    /// Nil until this session's launch route is journaled.
     var seenNavigationEntries: Set<UInt64>?
     /// When work last ended (`workEnded`), on the `CACurrentMediaTime` clock: a metric's ledger read is no earlier (`ExactLaunch.readLedger`).
     var workEndedAt = 0.0
     var pendingLaunchLocations: [String] = []
-    /// The host's window for a link's `target`, `_blank` or a name (LLP 1030.004 D1); unset, links navigate in place.
-    /// `resume` (Settings…, D5): the window forward as it stands, or opened where it last was.
+    package var openPanel: ((_ location: String, _ window: String) -> Void)?
+    /// A link’s target window (LLP 1030.004 D1). Settings uses `resume` to reopen at its last location.
     public var openWindow: ((_ location: String, _ window: String, _ resume: Bool) -> Void)?
     var heldModuleEvents: [String] = [] // module events before first pixel (SessionActivation.swift)
     var webMount: [String: String] = ExactEnv.appMetadata["ExactWebMount"] as? [String: String] ?? [:]
@@ -1307,6 +1306,7 @@ public final class ExactSession {
                     app.deliver { [weak self] in if name == "setRangeText" { self?.presenter.fieldSelections.setRangeText(args) } else { self?.presenter.fieldSelections.setSelectionRange(args) } }
                     continue
                 }
+                if name == "panel" { app.deliver { [weak self] in self?.presentRoutePanel(args) }; continue }
                 if name == "blur" { app.deliver { [weak self] in self?.presenter.blurElement(args) }; continue }
                 if name == "cancelReorder", let id = args.first as? String { app.deliver { [weak self] in self?.presenter.reorders.cancel(id) }; continue }
                 if ["showPopover", "hidePopover", "togglePopover"].contains(name) { app.deliver { [weak self] in self?.presenter.menus.action(name, args) }; continue }

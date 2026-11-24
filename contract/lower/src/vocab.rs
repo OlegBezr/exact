@@ -93,6 +93,12 @@ pub struct CompileAttr {
 /// `class` (LLP 1017 P6), anatomy and the grouped row's look (LLP 1139).
 pub const COMPILE_ATTRS: &[CompileAttr] = &[
     CompileAttr {
+        name: "windowKind",
+        accepts: "`windowKind=\"panel\"`",
+        only: "a link with an href and a named secondary target",
+        note: "Opens the route in a non-activating macOS HUD. Other hosts report `panel unsupported`.",
+    },
+    CompileAttr {
         name: "class",
         accepts: "a style name: `class=Card`, or `class=(cond ? A : B)`",
         only: "an element",

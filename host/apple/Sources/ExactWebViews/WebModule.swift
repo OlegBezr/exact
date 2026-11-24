@@ -299,7 +299,7 @@ final class WebViews: WebHosting {
         #if os(macOS)
         guard AgentLink.windowsBehind, let window = session?.presenter.viewport.window else { return }
         #if EXACT_AGENT
-        guard !(window is ExactDrivenWindow) else { return }
+        guard !(window is any DrivenOcclusion) else { return }
         #endif
         let guests = entries.values.contains { $0.handle != nil }
         if guests, !lifted, window.level == .agentBehind {

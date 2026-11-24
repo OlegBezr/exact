@@ -15,10 +15,8 @@
 //!
 //! Row order is source order everywhere, so two compilations of one source
 //! are byte-identical.
-
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
-
 mod alert_parts;
 pub mod anatomy;
 mod atoms;
@@ -283,6 +281,7 @@ pub(crate) struct Lowerer<'a> {
     font_files: Vec<theme::rows::FontFile>,
     /// How many `fn` bodies are being expanded now (a guard; the type pass refuses a cycle).
     pub fn_depth: u32,
+    panel_action: Option<exact_plan::ActionsId>,
     /// Tags' fixed row values already built (`Lowerer::fixed`).
     fixed: BTreeMap<(bool, &'static str), Code>,
     /// Refusals so far: an element or attribute that fails is recorded, its siblings lowered anyway.
@@ -507,6 +506,7 @@ fn lower_with_sites(
         font_stacks: BTreeMap::new(),
         declared_fonts: BTreeMap::new(),
         font_files: Vec::new(),
+        panel_action: None,
         fixed: BTreeMap::new(),
         errors: Vec::new(),
         locale: None,

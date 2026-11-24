@@ -860,6 +860,8 @@ function apply(batch) {
             if (document.fullscreenElement) {
               document.exitFullscreen().catch((e) => log(`exitFullscreen: refused: ${e.name}`));
             }
+          } else if (op.name === "panel") {
+            log("panel unsupported: route panels are available on macOS only");
           } else if (["setBounds", "setAspectRatio", "setWindowAlwaysOnTop", "setWindowIgnoreMouseEvents"].includes(op.name)) {
             log(`${op.name} refused: the browser has no such window command`);
           } else if (op.name === "setWindowOpacity") {

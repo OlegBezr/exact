@@ -128,6 +128,11 @@ impl PropList {
         self.get(id).and_then(PropValue::as_bool)
     }
 
+    /// Panel links have an anchor's box even on hosts that refuse the press.
+    pub fn has_link_destination(&self) -> bool {
+        self.str(PropId::Href).is_some() || self.str(PropId::PanelHref).is_some()
+    }
+
     /// Where the node links to: its `href`, unless that turns out empty.
     /// @ref LLP 1115 §3 — an empty `href` is no link on any host: no link
     /// colour, role or pointer, and nothing to follow. It is HTML's `<a>`

@@ -1327,6 +1327,10 @@ reading. Nothing that isn't HTML is added by it.
   matching T3 Code v0.1.6. Still out: a floating window holding a subtree
   of a window, and media controls in Exact's window. A second window at
   one of the app's routes is LLP 1030.004's.
+  **Expanded (Charlie, 2026-11-24, "recs ok").** A named route window can
+  open as a nonactivating Mac HUD panel. This unblocks Float's keyboard
+  shortcuts over a full-screen app (LLP 1030.004 D7, #1415).
+
   **Expanded (Daehyeon Mun, 2026-11-02, evening: "picture in picture
   follows v0.1.6 when several windows open"; LLP 1042 §9.2):** a `"panel"`
   per image, beside the one picture-in-picture window (AVKit's or Exact's

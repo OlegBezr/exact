@@ -87,7 +87,7 @@ pub fn can_be(plan: &Plan, code: &[u8], used: &dyn Fn(&str) -> bool) -> bool {
 fn decides_tag(plan: &Plan, node: &exact_plan::NodesRow, p: PropId) -> bool {
     matches!(
         p,
-        PropId::Href | PropId::SemanticTag | PropId::Start | PropId::End
+        PropId::Href | PropId::PanelHref | PropId::SemanticTag | PropId::Start | PropId::End
     ) || p == PropId::Value
         && node.bindings.iter().any(|b| {
             let row = plan.binding(b);

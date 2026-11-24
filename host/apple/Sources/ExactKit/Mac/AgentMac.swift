@@ -1365,7 +1365,7 @@ extension Agent {
     }
 }
 
-open class ExactAgentWindow: ExactSessionWindow {
+open class ExactAgentWindow: ExactSessionWindow, DrivenOcclusion {
     private(set) static var pointerEvent: NSEvent?
 
     /// An inactive process cannot make its window key. AppKit checks the target
@@ -1383,14 +1383,24 @@ open class ExactAgentWindow: ExactSessionWindow {
     /// page's frames and timers. At the driver's reserved level, a covered window
     /// and its sheets still have live pages; their window-server order never changes.
     public override var occlusionState: NSWindow.OcclusionState {
-        let actual = super.occlusionState
+        drivenOcclusion(super.occlusionState)
+    }
+
+    package var physicalOcclusionState: NSWindow.OcclusionState { super.occlusionState }
+}
+
+/// A window whose covered WebKit guests can keep drawing at the driven level.
+package protocol DrivenOcclusion: AnyObject {
+    var physicalOcclusionState: NSWindow.OcclusionState { get }
+}
+
+extension NSWindow {
+    func drivenOcclusion(_ actual: NSWindow.OcclusionState) -> NSWindow.OcclusionState {
         var parent: NSWindow = self
         while let over = parent.sheetParent { parent = over }
         guard parent.level == .agentBehind, isVisible, !isMiniaturized, !NSApp.isHidden else { return actual }
         return actual.union(.visible)
     }
-
-    var physicalOcclusionState: NSWindow.OcclusionState { super.occlusionState }
 }
 extension Agent {
     /// Whether this process's windows sit at `NSWindow.Level.agentBehind`: a drive
