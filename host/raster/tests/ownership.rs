@@ -994,9 +994,14 @@ fn a_decode_in_flight_leaves_a_waiting_one_its_room() {
     assert_eq!(session.status(second), Some(RequestStatus::WaitingBudget));
     assert_eq!(session.available_bytes(), 16 * MIB);
     assert_eq!(session.unheld_bytes(), 64 * MIB);
+    // Landed and shown, it is held; let go of, it is cold.
+    complete(permit, &Arc::new(AtomicUsize::new(0)));
+    let lease = session.take_ready(first).unwrap();
+    assert_eq!(session.unheld_bytes(), 60 * MIB);
+    drop(lease);
     session.cancel(first);
+    assert_eq!(session.unheld_bytes(), 64 * MIB);
     session.cancel(second);
-    drop(permit);
 }
 
 #[test]
