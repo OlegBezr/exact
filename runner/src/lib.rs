@@ -171,7 +171,8 @@ pub use secrets::{SecretLease, SecretWait, SharedSecrets};
 pub use store::{Socket, SocketCall, Store, StoreChange, StoreError, StoreWrite};
 pub use uses::{svg_filters, svg_islands, uses, Capability, Uses};
 pub use viewport::{
-    Contrast, Fold, Gamut, Hover, Pointer, Posture, Preferences, ScreenReader, Update, Viewport,
+    Contrast, Fold, Gamut, Hover, Pointer, Posture, Preferences, ScreenOrientation, ScreenReader,
+    Update, Viewport,
 };
 pub use vm::Trap;
 

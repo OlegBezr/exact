@@ -21,6 +21,7 @@ use winit::{
 };
 
 pub(super) enum Event {
+    DisplayChanged,
     Wake,
     Close,
     /// The app's bare `focus()`.

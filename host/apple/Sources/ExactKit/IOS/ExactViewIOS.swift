@@ -73,6 +73,7 @@ public final class ExactView: UIView {
     /// What this view adds beside the viewport, for `layout agree` (LLP 1080.001 D3).
     var inspectionOwned: [UIView] { keyboardProbe.map { [$0] } ?? [] }
     private var editingObservers: [NSObjectProtocol] = []
+    private var sceneGeometry: NSKeyValueObservation?
     private var sceneObservers: [NSObjectProtocol] = []
     /// The appearance traits `reportScheme` last told the session.
     private var reportedTraits: (UIUserInterfaceStyle, CGFloat, UIAccessibilityContrast)?
@@ -311,6 +312,10 @@ public final class ExactView: UIView {
         session.presenter.accent.apply()
         if window != nil { reportScheme() }
         #if os(iOS)
+        sceneGeometry = window?.windowScene?.observe(\.effectiveGeometry, options: [.initial, .old, .new]) { [weak self] _, change in
+            guard change.oldValue?.interfaceOrientation != change.newValue?.interfaceOrientation else { return }
+            DispatchQueue.main.async { [weak self] in self?.session.tellPreferencesSoon() }
+        }
         if window != nil { session.presenter.resolveOrientationLock() } // a lock told before there was a window
         session.presenter.dragIn?.sync() // a drag is heard through the window it joined, and none it left
         #endif

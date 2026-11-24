@@ -187,7 +187,7 @@ mod visibility_tests;
 
 pub use clock::{wall_since, Wall};
 pub use device::{touch_only, Device, Pointing};
-pub use exact_runner::ScreenReader;
+pub use exact_runner::{ScreenOrientation, ScreenReader};
 pub use hosted::action as field_action;
 use painter::cpu_info;
 #[cfg(windows)]

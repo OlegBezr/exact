@@ -304,7 +304,17 @@ const updates = () => updateQueries ??= ["(update: slow)", "(update: none)"].map
 export const UPDATES = ["fast", "slow", "none"];
 export const updateCode = () => updates()[1]?.matches ? 2 : updates()[0]?.matches ? 1 : 0;
 /** A phone-sized screen (its short side under 600 CSS px): the GPU tier's class when the adapter says nothing it knows, and never `high` (LLP 1139.003 D2). */ export const handheld = (platform = globalThis) => Math.min(platform.screen?.width ?? Infinity, platform.screen?.height ?? Infinity) < 600;
+export function screenOrientation() {
+  const screen = globalThis.screen;
+  return screen?.orientation ?? {type: (screen?.height ?? innerHeight) >= (screen?.width ?? innerWidth) ? "portrait-primary" : "landscape-primary", angle: 0};
+}
+export function orientationCode() {
+  const {type, angle} = screenOrientation();
+  const kind = ["portrait-primary", "landscape-primary", "portrait-secondary", "landscape-secondary"].indexOf(type);
+  return 16 | (angle / 90 << 2) | kind;
+}
 export const onPreferences = (changed) => {
+  globalThis.screen?.orientation?.addEventListener?.("change", changed);
   queries().forEach(([q]) => q.addEventListener("change", changed));
   updates().forEach(q => q?.addEventListener?.("change", changed));
   // A window can move between displays without changing its logical size.

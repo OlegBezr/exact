@@ -33,6 +33,21 @@ extension NavigationBarIOSTests {
         XCTAssertNil(target["radii"], file: file, line: line)
     }
 
+    func assertInlineTitleCopies(_ agent: Agent, _ heading: NodeView, in bar: UINavigationBar, at frame: CGRect) throws {
+        let copy = UIControl(frame: frame.offsetBy(dx: 1 / bar.traitCollection.displayScale, dy: 0))
+        let label = UILabel(frame: copy.bounds)
+        label.text = bar.topItem?.title
+        copy.addSubview(label)
+        bar.addSubview(copy)
+        defer { copy.removeFromSuperview() }
+        func target() throws -> [String: Any] {
+            try XCTUnwrap(agent.layout(["id": Int(heading.id)])["node"] as? [String: Any])
+        }
+        XCTAssertEqual((try target()["visible"] as? [String: Any])?["hidden"] as? Bool, false, "glass copies at one frame")
+        copy.frame.origin.y += 5
+        XCTAssertEqual((try target()["visible"] as? [String: Any])?["hidden"] as? Bool, true, "two distinct title frames")
+    }
+
     func testLayoutDoesNotGiveAnUnidentifiedTabAnotherTabsControl() throws {
         let agent = Agent(session: try fixture("tab-identity", module: false))
         let bar = UITabBar(frame: CGRect(x: 0, y: 0, width: 300, height: 50))

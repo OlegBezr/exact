@@ -282,6 +282,8 @@ extension NavigationHost: NavigationHosting {
                 if let title = item.titleView, title !== (controller as? RouteController)?.titleSegments?.control,
                    RouteGeometry.shownBar(title) != nil {
                     boxes[heading] = BarLayoutBox(title, nil, "UINavigationItem title")
+                } else if item.titleView == nil, let label = bar.drawnTitleLabel(source.title) {
+                    boxes[heading] = BarLayoutBox(label, nil, "UINavigationItem title")
                 }
             }
             if controller is RouteController, source.canGoBack, !item.hidesBackButton, bar.backItem != nil,

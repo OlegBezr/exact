@@ -462,6 +462,7 @@ fn device(tv: bool) -> Device {
     Device {
         night: false,
         font_scale: 1.0,
+        orientation: None,
         screen_reader: exact_runner::ScreenReader::Unknown,
         locale: "en-US".into(),
         rtl: false,

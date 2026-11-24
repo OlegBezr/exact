@@ -768,6 +768,7 @@ fn the_largest_font_scale_clips_neither_bar() {
     let device = Device {
         night: false,
         font_scale: 2.0,
+        orientation: None,
         screen_reader: exact_runner::ScreenReader::Unknown,
         locale: "en-US".into(),
         rtl: false,
@@ -874,6 +875,7 @@ fn tv() -> Device {
     Device {
         night: false,
         font_scale: 1.0,
+        orientation: None,
         screen_reader: exact_runner::ScreenReader::Unknown,
         locale: "en-US".into(),
         rtl: false,

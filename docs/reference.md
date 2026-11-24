@@ -5110,6 +5110,15 @@ unset`) and holds nothing. The runner decides which elements hold it
 `state.wakelock` is `{held, by}`: whether any element holds it and their view
 ids, on every host's driver.
 
+### Screen orientation
+
+A resource reading `exactViewport()` may declare `orientationType: string` and
+`orientationAngle: number`. The type is `portrait-primary`, `portrait-secondary`,
+`landscape-primary` or `landscape-secondary`. The angle is 0, 90, 180 or 270
+degrees from natural. Both update when the scene or display turns, including
+a half-turn at the same window size. A screen without a rotation reading uses
+its shape and angle 0. The terminal uses its viewport shape.
+
 ### Lock the screen orientation
 
 `orientationlock` on any element keeps the window to the orientations it

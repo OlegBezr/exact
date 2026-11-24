@@ -1920,6 +1920,7 @@ dependencies = [
  "libc",
  "serde_json",
  "sha2 0.10.9",
+ "smithay-client-toolkit",
  "softbuffer",
  "tiny-skia 0.12.0",
  "winit",

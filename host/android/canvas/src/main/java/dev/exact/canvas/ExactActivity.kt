@@ -550,6 +550,14 @@ open class ExactActivity : Activity() {
 
     /** The device's settings as the host was last told them. */
     private var told: Device? = null
+    private val displayChanges = object : android.hardware.display.DisplayManager.DisplayListener {
+        override fun onDisplayAdded(id: Int) {}
+        override fun onDisplayRemoved(id: Int) {}
+        override fun onDisplayChanged(id: Int) {
+            @Suppress("DEPRECATION")
+            if (id == windowManager.defaultDisplay.displayId && Device.orientation(this@ExactActivity) != told?.orientation) configure()
+        }
+    }
     private val screenReaderChanged = android.view.accessibility.AccessibilityManager.TouchExplorationStateChangeListener { configure() }
 
     /** The device's colours as the host was last told them ([Palette]). */
@@ -611,6 +619,7 @@ open class ExactActivity : Activity() {
         if (stopped) { stopped = false; take(); read() }
         contentResolver.registerContentObserver(android.provider.Settings.Global.getUriFor(android.provider.Settings.Global.ANIMATOR_DURATION_SCALE), false, settings)
         contentResolver.registerContentObserver(android.provider.Settings.System.getUriFor(android.provider.Settings.System.TIME_12_24), false, settings)
+        getSystemService(android.hardware.display.DisplayManager::class.java)?.registerDisplayListener(displayChanges, null)
         getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.addTouchExplorationStateChangeListener(screenReaderChanged)
         // What changed while the activity was stopped and is no configuration change.
         configure()
@@ -667,6 +676,7 @@ open class ExactActivity : Activity() {
         Partitions.flush(natives?.profiles().orEmpty())
         if (reads() && !isChangingConfigurations) updateWidgets()
         contentResolver.unregisterContentObserver(settings)
+        getSystemService(android.hardware.display.DisplayManager::class.java)?.unregisterDisplayListener(displayChanges)
         getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.removeTouchExplorationStateChangeListener(screenReaderChanged)
         super.onStop()
     }

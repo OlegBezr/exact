@@ -1707,6 +1707,7 @@ reading. Nothing that isn't HTML is added by it.
   modules, until LLP 1133.002 D12's delegation; a closed range of steps on
   Android, and motion activity; ambient light; and the Windows, visionOS,
   watchOS and Linux cells.
+- **Screen orientation (Charlie, 2026-11-24, "recs ok").** LLP 1133.029 §12 unblocks Pocket Lab’s turn history with live `orientationType` and `orientationAngle` fields on `exactViewport()`.
 - **Expanded (Charlie, 2026-10-26, "Converged: build (Recommended)", on LLP
   1133.029 §13 question 4):** an orientation lock held while an element
   is displayed: `orientationlock=` on any element, with the Screen
@@ -1720,8 +1721,7 @@ reading. Nothing that isn't HTML is added by it.
   app Swift and no lock left behind when the screen goes. Take: none
   named; the ruling is its own waiver. Still out, each until a consumer
   asks (LLP 1133.029 §12): the screen's brightness; detecting screenshots
-  and recording, and keeping content out of captures; reading the
-  screen's orientation in Contract or data code; a lock inside a `dialog`
+  and recording, and keeping content out of captures; a lock inside a `dialog`
   or popover; widening past the manifest at runtime by a type; Android's
   `user*` and `fullSensor` forms, Apple's
   `preferredInterfaceOrientationForPresentation`, and dotted platform
