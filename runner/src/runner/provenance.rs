@@ -96,11 +96,39 @@ impl Causes {
     }
 }
 
+/// Who launched the app (LLP 1133.023 D7a): the boot runs under that
+/// cause, and the page first shows under it. The host says so in its launch
+/// facts ([`crate::time::Launch::by`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LaunchedBy {
+    /// The person: a launch from the platform's UI for the app.
+    #[default]
+    Person,
+    /// A wake that launched the app with no view (LLP 1133.017 D7).
+    Wake,
+    /// A notification's background action that launched it (LLP 1133.004).
+    BackgroundAction,
+    /// A call that launched it: a tool's, or a control's press (LLP 1111,
+    /// LLP 1126.004 D2), the invocation not yet dispatched.
+    Call {
+        /// A control's press, an `action`; else a tool's call.
+        press: bool,
+    },
+}
+
 impl Origins {
-    /// A booting runner's: boot is the app's.
-    pub(in crate::runner) fn booting() -> Origins {
+    /// A booting runner's: boot is its launch's, as is the page it shows.
+    /// A launch that was not the person's holds no invocation's grants.
+    pub(in crate::runner) fn booting(by: LaunchedBy) -> Origins {
+        let cause = match by {
+            LaunchedBy::Person => Cause::person(),
+            LaunchedBy::Wake => Cause::wake(0),
+            LaunchedBy::BackgroundAction => Cause::background_action(0),
+            LaunchedBy::Call { press } => Cause::call(press, 0),
+        };
         Origins {
-            current: Some(Cause::person()),
+            current: Some(cause),
+            page: Some(cause),
             ..Default::default()
         }
     }
@@ -353,6 +381,9 @@ pub(in crate::runner) struct Origins {
     /// When the last activation-triggering input, or activation the host
     /// raised, arrived, on the session's clock ([`Runner::user_activation`]).
     activated: Option<f64>,
+    /// The page's cause, who showed it ([`Runner::as_shown`]); `None` for
+    /// no one.
+    page: Option<Cause>,
 }
 
 /// How long a person's input stands as user activation, in ms. HTML leaves
@@ -436,10 +467,11 @@ impl<D: DataSource> Runner<D> {
     /// (`modules/events.rs`): a person's act on the platform's own UI, a
     /// notification's tap, which no input event carries. It starts the window
     /// as an input does, at the clock's reading now, since no commit need
-    /// have come before it.
+    /// have come before it, and the page it shows is the person's.
     pub(in crate::runner) fn note_activation(&mut self) {
         self.sample();
         self.origins.activated = Some(self.now_ms);
+        self.person_shows_page();
     }
 
     /// Whether a call `cause` makes now has HTML's transient activation:
@@ -491,6 +523,48 @@ impl<D: DataSource> Runner<D> {
     /// and a test of the app's own data code.
     pub fn as_person<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         self.as_cause(Cause::person(), f)
+    }
+
+    /// Run `f`, what the host reports of the page (LLP 1133.023 D7a), under
+    /// the page's cause while it shows, else under the cause installed: a
+    /// hidden page is no one's, and a wake's hiding of it is the wake's.
+    pub(in crate::runner) fn as_shown<T>(
+        &mut self,
+        shown: bool,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        match shown {
+            true => self.as_cause(self.origins.page.unwrap_or(Cause::none()), f),
+            false => f(self),
+        }
+    }
+
+    /// The host says the person showed the page or brought the app forward
+    /// (a later launch handed to the running app, a Dock or taskbar click,
+    /// a notification's tap, switching to the app): what the host reports
+    /// of the page is the app's from now, as after a launch.
+    pub fn person_shows_page(&mut self) {
+        self.origins.page = Some(Cause::person());
+    }
+
+    /// The page is hidden: whoever shows it next says so, or it is no
+    /// one's.
+    pub(in crate::runner) fn page_hidden(&mut self) {
+        self.origins.page = None;
+    }
+
+    /// A commit that stood asked the host to show the page (a bare
+    /// `focus()`): the page is that request's, whoever asked.
+    pub(in crate::runner) fn page_requested(&mut self) {
+        self.origins.page = Some(self.cause());
+    }
+
+    /// The host delivers the person's act in the app's own UI while the page
+    /// shows: an activation triggering input says the person is there.
+    pub(in crate::runner) fn page_used(&mut self, event: &Event) {
+        if !self.page.hidden && activates(event) {
+            self.origins.page = Some(Cause::person());
+        }
     }
 
     /// The invocation that owns the commit being made; 0 for none.

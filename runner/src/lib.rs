@@ -140,7 +140,7 @@ pub use request::{
 };
 pub use runner::{
     canvas_engine, launch_matches, press_writes_router, routing, virtual_frame, Advanced, Announce,
-    AuthLinks, BackgroundState, BlockPlacement, CallOrigin, CanvasEngine, CanvasLink, CanvasList,
+    AuthLinks, BackgroundState, BlockPlacement, CallOrigin, LaunchedBy, CanvasEngine, CanvasLink, CanvasList,
     Carried, Checkpoint, Command, Completion, CompletionCapability, CompletionReply,
     CompletionSubscription, Console, ControlValue, DataError, DataSource, DataSourceWrapper,
     DeviceLinks, DrawReply, DrawRequest, Drawn, DropEvent, Event, FieldSelection, FormatLink,

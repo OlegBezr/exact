@@ -1,6 +1,6 @@
-//! LLP 1133.023 D7a: what the host observes of the page and a drag handle's
-//! release are the app's, and a world's message under a tool's mark and a
-//! remote Play keep D4a's command rules.
+//! LLP 1133.023 D7a: what the host observes of a page takes the cause of
+//! whoever showed it, a drag handle's release is the app's, and a world's
+//! message under a tool's mark and a remote Play keep D4a's command rules.
 
 use crate::request::Request;
 use crate::{Answer, CallOrigin, DataError, DataSource, Event, Outcome, Runner, Store, Value};
@@ -133,6 +133,8 @@ fn a_page_shown_again_starts_work_as_the_apps() {
         restores: 1,
         ..r.page()
     };
+    // The host says the person's later launch is what shows it.
+    r.person_shows_page();
     r.set_page(shown).unwrap();
     r.advance(10.0).unwrap();
     let sent = r.take_requests();
@@ -266,4 +268,99 @@ fn a_remote_play_is_an_action() {
     r.dispatch(audio, play("")).unwrap();
     assert_eq!(r.take_requests()[0].request.reach.origin, CallOrigin::App);
     assert_eq!(skipped(&r), 1);
+}
+
+const SHOWN: &str = "shape Page\n  visibilityState: string\n  persisted: bool\n\ncomponent App\n  resource page = exactPage() as shape Page\n  mutation m as shape number\n  task arrive when page.visibilityState == \"visible\" and not page.persisted\n    after(1, begin)\n  action begin\n    send m = save(1)\n  action bring\n    focus()\n  action loaded\n    send m = save(2)\n  view\n    iframe \"/deck/index.html\" load=loaded testId=\"deck\"\n";
+
+/// Hide the page, let `show` say who shows it again, show it, and return
+/// the origins of what the showing and a frame's load asked.
+fn shown_again(show: impl FnOnce(&mut Runner<Later>)) -> Vec<CallOrigin> {
+    let (mut r, deck) = boot_with(SHOWN, "deck");
+    r.advance(1.0).unwrap();
+    r.take_requests();
+    let page = r.page();
+    let away = crate::Page {
+        hidden: true,
+        persisted: true,
+        ..page
+    };
+    r.set_page(away).unwrap();
+    show(&mut r);
+    let back = crate::Page {
+        restores: 1,
+        ..page
+    };
+    r.set_page(back).unwrap();
+    r.advance(10.0).unwrap();
+    r.dispatch(deck, Event::Load).unwrap();
+    let sent = r.take_requests();
+    sent.iter().map(|s| s.request.reach.origin).collect()
+}
+
+/// The page's cause is set only by the host's word: a showing it cannot
+/// explain is no one's, a window a device's `focus()` brought forward is the
+/// device's, and a background action, which may not bring it forward, does
+/// not make it the app's.
+#[test]
+fn a_page_shown_without_the_persons_act_is_not_the_apps() {
+    use CallOrigin::{App, Device};
+    assert_eq!(shown_again(|_| {}), [Device, Device], "unexplained");
+    let device = shown_again(|r| {
+        r.act_from(Device, "bring", vec![]).unwrap();
+    });
+    assert_eq!(device, [Device, Device], "a device's focus()");
+    let action = shown_again(|r| {
+        r.act_from(CallOrigin::Action, "bring", vec![]).unwrap();
+        let refused = r.journal().any(|l| l.contains("focus: refused"));
+        assert!(refused, "{:?}", r.journal().collect::<Vec<_>>());
+    });
+    assert_eq!(action, [Device, Device], "a background action's focus()");
+    let app = shown_again(|r| {
+        r.act_from(App, "bring", vec![]).unwrap();
+    });
+    assert_eq!(app, [App, App], "the app's own focus()");
+    assert_eq!(shown_again(Runner::person_shows_page), [App, App]);
+}
+
+/// The person's input in a window something else showed makes the page
+/// theirs; the device's `focus()` while it shows makes it the device's.
+#[test]
+fn the_persons_input_and_a_later_request_retake_the_page() {
+    let (mut r, deck) = boot_with(SHOWN, "deck");
+    r.take_requests();
+    let origin = |r: &mut Runner<Later>| {
+        r.dispatch(deck, Event::Load).unwrap();
+        r.take_requests()[0].request.reach.origin
+    };
+    assert_eq!(origin(&mut r), CallOrigin::App, "the launch's");
+    r.act_from(CallOrigin::Device, "bring", vec![]).unwrap();
+    r.take_requests();
+    assert_eq!(origin(&mut r), CallOrigin::Device);
+    // A press the frame has no handler for still says the person is there.
+    let _ = r.dispatch(deck, Event::Press);
+    assert_eq!(origin(&mut r), CallOrigin::App);
+}
+
+/// A launch made to run a call boots under the call's cause, as does the
+/// page it shows: what the boot asks and observes is not the app's.
+#[test]
+fn a_calls_cold_launch_boots_as_the_call() {
+    for (by, expected) in [
+        (crate::LaunchedBy::Call { press: false }, CallOrigin::Tool),
+        (crate::LaunchedBy::Call { press: true }, CallOrigin::Action),
+        (crate::LaunchedBy::Person, CallOrigin::App),
+    ] {
+        let launch = crate::time::Launch {
+            by,
+            ..crate::time::Launch::NONE
+        };
+        let (mut r, deck) = crate::time::launching_with(launch, || boot_with(SHOWN, "deck"));
+        r.advance(1.0).unwrap();
+        r.dispatch(deck, Event::Load).unwrap();
+        let sent = r.take_requests();
+        assert_eq!(sent.len(), 2, "{by:?}");
+        for s in sent {
+            assert_eq!(s.request.reach.origin, expected, "{by:?}");
+        }
+    }
 }

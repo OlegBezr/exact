@@ -820,6 +820,12 @@ impl<D: DataSource> Runner<D> {
             for line in commands {
                 self.log(line);
             }
+            // A bare `focus()` shows the page for this commit's cause (LLP
+            // 1133.023 D7a); `focus(id)` is an element's.
+            let commands = self.commands.get(first_command..).unwrap_or_default();
+            if commands.iter().any(|c| c.name == "focus" && c.args.is_empty()) {
+                self.page_requested();
+            }
             let audio = self.seams.audio;
             audio.apply_sounds(self, first_command);
             self.run_module_effects(effects);

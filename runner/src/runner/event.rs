@@ -1029,22 +1029,25 @@ impl<D: DataSource> Runner<D> {
             }
         }
         // The person's act in the app's own UI is an `app` cause. What the
-        // host observes of the page and a package view's message are the
-        // person's while the page shows (`as_shown`).
+        // host observes of the page and a package view's message run under
+        // the page's cause while it shows (`as_shown`).
         let package = matches!(event, Event::Message(_))
             && (self.kernel.node(view)).is_some_and(|n| {
                 n.props
                     .str(exact_kernel::PropId::NativeViewModuleName)
                     .is_some()
             });
-        let shown = !(observed(&event) || package) || !self.page.hidden;
-        let dispatched = |r: &mut Self| {
+        if observed(&event) || package {
+            let shown = !self.page.hidden;
+            return self.as_shown(shown, |r| r.arrived(|r| r.dispatch_event(view, event)));
+        }
+        self.page_used(&event);
+        self.as_person(|r| {
             r.arrived(|r| {
                 r.note_input(&event);
                 r.dispatch_event(view, event)
             })
-        };
-        self.as_shown(shown, dispatched)
+        })
     }
 
     fn dispatch_event(&mut self, view: ViewId, event: Event) -> Result<CommitReceipt, RunnerError> {
