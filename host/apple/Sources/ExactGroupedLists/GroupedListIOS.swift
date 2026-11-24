@@ -109,6 +109,7 @@ struct GroupedListModel: Equatable {
     }
     struct Row: Equatable {
         var view: UInt32
+        var reorderKey: String?, reorderGrip: UInt32?
         var custom = false
         var symbol: String?
         var title: String?
@@ -177,7 +178,7 @@ struct GroupedListModel: Equatable {
                 if let (was, row) = decoded[view], was.isEqual(json) { known[view] = (json, row); return row }
                 let r = json as? [String: Any] ?? [:]
                 // An svg-only icon's path as its token (FaceSymbol, stage 9 A2).
-                let row = Row(view: view, custom: r["custom"] as? Bool ?? false, symbol: FaceSymbol.of(r),
+                let row = Row(view: view, reorderKey: r["reorderKey"] as? String, reorderGrip: id(r["reorderGrip"]), custom: r["custom"] as? Bool ?? false, symbol: FaceSymbol.of(r),
                            title: r["title"] as? String, secondary: r["secondary"] as? String,
                            subtitle: r["subtitle"] as? Bool ?? false, accessory: r["accessory"] as? String ?? "none",
                            target: id(r["target"]), accessoryView: id(r["accessoryView"]), checked: r["checked"] as? Bool ?? false, pressable: r["pressable"] as? Bool ?? false,
@@ -234,12 +235,12 @@ final class GroupedListHost: GroupedLists {
     }
 
     /// Before a batch: every carried row back where the presenter put it.
-    func prepare() { for list in lists.values { list.restore() } }
+    func prepare() { for list in lists.values where list.movingRow == nil { list.restore() } }
 
     /// The owner's frame moved outside a batch: the list mounts again by it, seats its custom headers by the settled
     /// layout, and tells the kernel the margins that layout gives.
     func geometryChanged(_ id: UInt32) {
-        guard let list = lists[id] else { return }
+        guard let list = lists[id], list.movingRow == nil else { return }
         list.mount(looks: false)
         list.collection.layoutIfNeeded()
         list.carryHeaders()
@@ -257,6 +258,7 @@ final class GroupedListHost: GroupedLists {
         theme = ThemeRoles.generation
         for owner in presenter.carrying("listStyle") where owner.kind == "list" {
             live.insert(owner.id)
+            if let list = lists[owner.id], list.owner === owner, list.movingRow != nil { continue }
             // A collection view whose direction turns keeps the cells it laid
             // out mirrored: a list whose own direction changed is built again.
             let turned = lists[owner.id].map { $0.direction != GroupedListView.direction(of: owner) } ?? false
@@ -490,12 +492,17 @@ final class GroupedListHost: GroupedLists {
 final class GroupedListView: NSObject, UICollectionViewDelegate {
     let owner: NodeView
     unowned let host: GroupedListHost
-    let collection: UICollectionView
+    let collection: GroupedCollectionView
     /// The list's direction, which its cells are laid out in for the list's
     /// life (`followDirection`; `GroupedListHost.sync` builds a list again for another).
     let direction: UISemanticContentAttribute
     private(set) var model = GroupedListModel()
     private(set) var source: GroupedSource!
+    var movingRow: UInt32?
+    #if os(iOS)
+    var movement: NativeListReorder?
+    var proposedMove = false
+    #endif
     private(set) var rows: [UInt32: GroupedListModel.Row] = [:]
     /// Some row is custom: its views, carried, are laid out by the kernel.
     private(set) var carriesCustomRows = false
@@ -516,7 +523,7 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
     /// `measure` is moving the list: nothing it passes is the reader's scroll.
     var measuring = false
     /// Custom rows: the parent the presenter put each in, to give it back, and its authored inertness there.
-    var carried: [UInt32: (parent: UIView, frame: CGRect, inert: Bool, accessory: (node: NodeView, hidden: Bool)?)] = [:]
+    var carried: [UInt32: (parent: UIView, frame: CGRect, inert: Bool, accessory: (node: NodeView, hidden: Bool)?, grip: (node: NodeView, hidden: Bool)?)] = [:]
     /// Each parent rows are carried from, the order of its children (`noteHome`).
     var homes: [ObjectIdentifier: [UInt32]] = [:]
     /// Each custom header's height when it was last carried, as `heights` is a custom row's.
@@ -596,6 +603,10 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
         source = GroupedSource(collectionView: collection) { view, path, id in
             view.dequeueConfiguredReusableCell(using: cell, for: path, item: id)
         }
+        #if os(iOS)
+        collection.reorderList = self
+        installReordering()
+        #endif
         source.supplementaryViewProvider = { view, kind, path in
             kind == UICollectionView.elementKindSectionHeader
                 ? view.dequeueConfiguredReusableSupplementary(using: header, for: path)
@@ -740,6 +751,9 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
         writesGround = writes
         model = next
         rows = Dictionary(next.sections.flatMap { $0.rows }.map { ($0.view, $0) }, uniquingKeysWith: { a, _ in a })
+        #if os(iOS)
+        collection.offerReorder(rows.values.contains { $0.reorderGrip != nil })
+        #endif
         carriesCustomRows = rows.values.contains(where: \.custom)
         #if !os(tvOS)
         switches = switches.filter { rows[$0.key]?.accessory == "toggle" }
@@ -768,7 +782,7 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
         // its superview inside its own action.
         if let id = flipping, changed.contains(id) {
             DispatchQueue.main.async { [weak self] in
-                guard let self, source.indexPath(for: id) != nil else { return }
+                guard let self, movingRow == nil, source.indexPath(for: id) != nil else { return }
                 var later = source.snapshot()
                 later.reconfigureItems([id])
                 source.apply(later, animatingDifferences: false)
@@ -800,7 +814,7 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
         // An unchanged snapshot can reset UIKit's estimated geometry and
         // adjust its offset after the core's pending scroll write. Remounting
         // still refreshes switches and custom boxes; changed parts reconfigure.
-        if previous != next || !changed.isEmpty {
+        if previous != next || !changed.isEmpty || source.snapshot().itemIdentifiers != snapshot.itemIdentifiers {
             // A UIKit list applies a snapshot at once unless its code asks
             // (`apply(_:animatingDifferences: true)`); here its rows ask, with
             // the motion a column's rows carry (a layout transition, an exit
@@ -1079,6 +1093,9 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
     }
 
     private func configure(_ cell: GroupedCell, _ id: UInt32) {
+        #if os(iOS)
+        defer { reorderAccessory(cell, id) }
+        #endif
         if cell.row != id { cell.restorePressPresentation() }
         cell.row = id
         cell.target = rows[id]?.target
@@ -1340,7 +1357,7 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
         if carried[id] == nil, let parent = row.superview {
             noteHome(parent)
             // Its inertness is its authored ancestors', which a cell is not; a presentation's is read when a touch lands (`pressable`).
-            carried[id] = (parent, row.frame, row.authoredInert, nil)
+            carried[id] = (parent, row.frame, row.authoredInert, nil, nil)
         }
         guard let place = carried[id] else { return }
         carryAccessory(id)
@@ -1370,6 +1387,7 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
     /// again: UIKit configures and measures its cell anew, which carries the
     /// row in at its height.
     private func remeasure() {
+        guard movingRow == nil else { return }
         unsized = unsized.filter { rows[$0]?.custom == true }
         let grown = unsized.filter { id in
             host.presenter.views[id].map { ($0.grid?.drawn.height ?? carried[id]?.frame.height ?? $0.frame.height) > 0 } ?? false
@@ -1396,6 +1414,9 @@ final class GroupedListView: NSObject, UICollectionViewDelegate {
     }
 
     func remove() {
+        #if os(iOS)
+        movement?.cancel()
+        #endif
         restore()
         for id in Array(customLooks.keys) { forgetLook(id) }
         owner.mountNativeScrollView(nil)

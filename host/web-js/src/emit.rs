@@ -732,7 +732,7 @@ pub fn emit(plan: &Plan, site_attrs: bool, dev_reload: bool) -> Result<Output, S
         [
             (!commands.is_empty(), commands_import.as_str()),
             (paint, "import{paintUse as $paint}from\"./paint.js\";"),
-            (em.list, "import{vl as $vl}from\"./list.js\";"),
+            (em.list, "import{vl as $vl,load as $loadLists}from\"./list.js\";"),
             (each::readers(plan), "import{reader as $reader}from\"./store-reader.js\";"),
             (em.follow, "import\"./follow.js\";"),
             (em.zoom, "import{zoom as $zoom}from\"./zoom.js\";"),
@@ -1407,6 +1407,11 @@ impl Em<'_> {
                 EventKind::Reachstart | EventKind::Reachend if virtualized => {}
                 EventKind::Reachstart | EventKind::Reachend => {
                     return Err(contract::collection_edge_refusal(h.event.name()))
+                }
+                EventKind::Reorderdrop if !virtualized => {
+                    self.list = true;
+                    self.motion = true;
+                    self.out.push_str("$loadLists();");
                 }
                 EventKind::Reorderdrop | EventKind::Reordertargetchange if virtualized => {
                     self.motion = true

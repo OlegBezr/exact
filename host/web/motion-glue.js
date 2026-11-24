@@ -1303,7 +1303,7 @@ export function arrangeController({views,collections,motion,request,applyBatch,n
   }
   function down(b,e) {
     if(!ready()||!e.isPrimary||e.button!==0||e.target.closest('input,textarea,select,[contenteditable]'))return;
-    if(group&&groups.get(b.id)?.group){group.down(b,e,groups.get(b.id));return;}
+    if(group&&(groups.get(b.id)?.group||groups.get(b.id)?.section)){group.down(b,e,groups.get(b.id));return;}
     let reservation=null,returning=current?.phase==='settling'&&current.binding.wrapper===b.wrapper?current:null;
     // A tap or horizontal refusal is not a takeover. Keep the old Terminal
     // and its return/pin owner until replacement recognition actually succeeds.

@@ -124,6 +124,7 @@ export function compileFixtures(root, run, env, dir, prefix, appId) {
   // AgentStickyReveal{Mac,IOS}Tests': rows under a sticky header and dock.
   contract([resolve(root, 'host/apple/tests/fixtures/sticky-tap.contract'), '-o', env[`${prefix}_STICKY_TAP_PLAN`] = resolve(dir, 'sticky-tap.plan')]);
   // GroupedCustomHeadersIOSTests': section headers of an avatar beside a name.
+  contract([resolve(root, 'host/web-js/conformance/grouped-settings.contract'), '-o', env[`${prefix}_GROUPED_SETTINGS_PLAN`] = resolve(dir, 'grouped-settings.plan')]);
   contract([resolve(root, 'host/apple/tests/fixtures/grouped-header.contract'), '-o', env[`${prefix}_GROUPED_HEADER_PLAN`] = resolve(dir, 'grouped-header.plan')]);
   // RestartListIOSTests': a restart over a route whose bar covers a virtualized list.
   contract([resolve(root, 'host/apple/tests/fixtures/restart-list.contract'), '-o', env[`${prefix}_RESTART_LIST_PLAN`] = resolve(dir, 'restart-list.plan')]);

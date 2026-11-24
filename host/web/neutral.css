@@ -716,4 +716,5 @@
     #exact-root input[data-exact-control]:is([type="checkbox"], [type="radio"])::before, #exact-root input[data-exact-switch]::before { content: none; }
     :where(#exact-root [popover]), :where(#exact-root dialog), :where(#exact-root [navigationPresentation="modal"]) { border: 1px solid; }
   }
+[data-exact-reorder-hidden] { visibility: hidden !important; }
 :where([data-exact-markdown-pending]) { visibility: hidden; }

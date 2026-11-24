@@ -684,11 +684,12 @@ pub fn uses(plan: &Plan) -> Uses {
             _ => {}
         }
     }
-    if plan
-        .handlers
-        .iter()
-        .any(|h| matches!(h.event, EventKind::Reachstart | EventKind::Reachend))
-    {
+    if plan.handlers.iter().any(|h| {
+        matches!(
+            h.event,
+            EventKind::Reachstart | EventKind::Reachend | EventKind::Reorderdrop
+        )
+    }) {
         uses = uses.with(Capability::Collections);
     }
     let (format, geometry, lowercase) = stdlib_calls(plan);

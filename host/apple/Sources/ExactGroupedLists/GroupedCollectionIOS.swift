@@ -4,6 +4,50 @@ import UIKit
 
 /// A grouped list's collection view, by type, for the agent's wheel.
 final class GroupedCollectionView: UICollectionView, GroupedScroller, BandConsumer {
+    #if os(iOS)
+    weak var reorderList: GroupedListView?
+    private var contact: GroupedReorderContact?
+    private var interactive = false
+
+    func offerReorder(_ offered: Bool) {
+        if offered && contact == nil {
+            let contact = GroupedReorderContact()
+            contact.cancelsTouchesInView = false
+            contact.delaysTouchesEnded = false
+            addGestureRecognizer(contact)
+            self.contact = contact
+        } else if !offered, let contact {
+            removeGestureRecognizer(contact)
+            self.contact = nil
+        }
+    }
+    override func beginInteractiveMovementForItem(at path: IndexPath) -> Bool {
+        guard reorderList?.lift(at: path) == true else { return false }
+        interactive = super.beginInteractiveMovementForItem(at: path)
+        if !interactive { reorderList?.movement?.cancel() }
+        return interactive
+    }
+    override func updateInteractiveMovementTargetPosition(_ position: CGPoint) {
+        if contact?.following == false { contact?.target(position) }
+        if interactive { super.updateInteractiveMovementTargetPosition(position) }
+    }
+    override func cancelInteractiveMovement() {
+        guard interactive, contact?.continueContact() != true else { return }
+        abortMovement()
+    }
+    func abortMovement() {
+        guard interactive else { return }
+        interactive = false
+        super.cancelInteractiveMovement()
+        reorderList?.movement?.cancel()
+    }
+    override func endInteractiveMovement() {
+        guard interactive else { return }
+        interactive = false
+        super.endInteractiveMovement()
+        if let list = reorderList, !list.proposedMove { list.drop(in: list.source.snapshot()) }
+    }
+    #endif
     /// The offset, which UIKit itself also sets (keeping the list at its
     /// start as a safe area reaches it and insets it): inside an animation
     /// UIKit has open it moves only if the last frame showed the list's node,

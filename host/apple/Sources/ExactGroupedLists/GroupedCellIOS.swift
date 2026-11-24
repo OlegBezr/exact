@@ -8,6 +8,9 @@ final class GroupedCell: UICollectionViewListCell {
     var refreshActiveOnLayout = false
     override func layoutSubviews() {
         super.layoutSubviews()
+        #if os(iOS)
+        updateGripActions()
+        #endif
         guard bounds != activeBounds else { return }
         activeBounds = bounds
         if refreshActiveOnLayout { setNeedsUpdateConfiguration() }
@@ -23,6 +26,53 @@ final class GroupedCell: UICollectionViewListCell {
         return state
     }
     #if os(iOS)
+    weak var grip: NodeView?
+    private var takesReorderKeys: Bool { grip.map { $0.presenter?.reorders.takesKeys($0) == true } ?? false }
+    override var canBecomeFocused: Bool { takesReorderKeys || super.canBecomeFocused }
+    override var canBecomeFirstResponder: Bool { takesReorderKeys || super.canBecomeFirstResponder }
+    private weak var actionGrip: NodeView?
+    private(set) weak var reorderControl: UIView?
+    private var moveActions: [UIAccessibilityCustomAction] = []
+
+    /// UIKit may replace its reorder button on layout. The content, switch and detail
+    /// button have their own actions. Only the remaining accessory button moves the row.
+    private func updateGripActions() {
+        guard grip != nil || reorderControl != nil else { return }
+        let control: UIView? = grip == nil ? nil : firstInTree({ view in
+            view !== self && view.isAccessibilityElement && view.accessibilityTraits.contains(.button) ? view : nil
+        }, prune: { $0 === self.contentView || $0 === self.toggle || $0 === self.detailButton || $0.isHidden })
+        guard control !== reorderControl || grip !== actionGrip else { return }
+        if let old = reorderControl {
+            old.accessibilityCustomActions = old.accessibilityCustomActions?.filter { action in !moveActions.contains { $0 === action } }
+        }
+        actionGrip = nil
+        reorderControl = nil
+        moveActions = []
+        guard let control, let grip, let actions = grip.presenter?.reorders.actions(grip) else { return }
+        actionGrip = grip
+        reorderControl = control
+        moveActions = actions
+        control.accessibilityCustomActions = (control.accessibilityCustomActions ?? []) + actions
+    }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard let grip, isFocused || isFirstResponder, let reorders = grip.presenter?.reorders else {
+            return super.pressesBegan(presses, with: event)
+        }
+        let rest = presses.filter { press in
+            guard let key = press.key, key.modifierFlags.intersection([.shift, .control, .alternate, .command]).isEmpty else { return true }
+            let name: String
+            switch key.keyCode {
+            case .keyboardSpacebar: name = " "
+            case .keyboardUpArrow: name = "ArrowUp"
+            case .keyboardDownArrow: name = "ArrowDown"
+            case .keyboardReturnOrEnter: name = "Enter"
+            case .keyboardEscape: name = "Escape"
+            default: return true
+            }
+            return !reorders.key(grip, name)
+        }
+        if !rest.isEmpty { super.pressesBegan(Set(rest), with: event) }
+    }
     weak var menuSource: NodeView?
     private var detailButton: UIButton?
     private var detailAction: (() -> Void)?

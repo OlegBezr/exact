@@ -72,9 +72,24 @@ package protocol GroupedLists: AnyObject {
     /// The authored parent of a row carried into a cell.
     func logicalParent(of view: UIView) -> UIView?
     #if os(iOS)
+    /// The grouped list that projects this authored reorder grip into a UIKit accessory.
+    func reorderList(for grip: NodeView) -> UInt32?
+    func reorderResponder(for grip: NodeView, accessibility: Bool) -> UIView?
     /// Close the swipe actions revealed in the list that draws row `id`.
     func closeSwipe(row id: UInt32)
     #endif
+}
+
+extension NodeView {
+    /// The visible cell receives the keys for the grip UIKit projects.
+    package func projectedReorderResponder(accessibility: Bool = false) -> UIView? {
+        #if os(iOS)
+        guard props["reorderFor"] != nil, !formDisabled, !inert, !cssVisibilityHidden else { return nil }
+        return presenter?.groupedLists?.reorderResponder(for: self, accessibility: accessibility)
+        #else
+        return nil
+        #endif
+    }
 }
 
 /// Where a finger aimed at a row a list draws lands (LLP 1080.000 D4): a
