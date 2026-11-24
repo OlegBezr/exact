@@ -1,5 +1,10 @@
 # Vendored Ibex split crates — Exact integration ledger
 
+## Web page fetch grants
+
+The native parser accepts `net.fetch self` alongside named API origins.
+Native hosts have no page origin, so this line grants no access (LLP 1016 D6).
+
 ## Android 10 and Intl
 
 Android selects Intl from the validated bundle receipt. The pinned v7

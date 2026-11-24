@@ -1,4 +1,4 @@
-import { views, ask, shownValue, host, INHERITED_CSS, now, root, iframeLoading, waiting, httpHelpers, loadGpuIfNeeded, heldNamed, loadAfterPaint, stageLoaded, loadStage, agentMode, gpuInPlay, register, seek, postSurface, deferFulfill, documentsGlue, picker, t0, log, readOut, presence, forgettable, writeIn, pageFacts, pageChanged, foldChanged, followOffset, pieces, moduleReady, SETTLE_DEADLINE_MS, mediaAttached, GLIDE_BOUND_MS, collections, settleCandidate } from "../glue.js";
+import { views, ask, shownValue, host, INHERITED_CSS, now, root, iframeLoading, waiting, httpHelpers, loadGpuIfNeeded, heldNamed, loadAfterPaint, stageLoaded, loadStage, agentMode, gpuInPlay, register, seek, postSurface, deferFulfill, documentsGlue, picker, t0, log, readOut, presence, byTicket, writeIn, pageFacts, pageChanged, foldChanged, followOffset, pieces, moduleReady, SETTLE_DEADLINE_MS, mediaAttached, GLIDE_BOUND_MS, collections, settleCandidate } from "../glue.js";
 import { inertAncestor, routeFlags, navigation, environment, preferFold, FOLD_EVENT, preferDisplayMode, foldEnv, typedControl, settleValue } from "../navigation.js";
 import { applyBatch, sendBatch } from "./commit.js";
 import { replacements } from "./boot.js";
@@ -339,14 +339,12 @@ function agentReply(request) {
         // The runner's report of the last replacement, with what a waiting one waits for (LLP 1029.000.002 D9).
         const pending = replacements.pending;
         st.replacement = st.replacement || pending ? { ...st.replacement, pending } : null;
-        for (const [c, t] of forgettable) {
-          const s = c.retrying && st.streams?.find((s) => s.ticket === t);
-          if (s) {
-            s.retrying = {
-              attempt: c.retrying.attempt,
-              inMs: Math.max(0, Math.round(c.retrying.at - performance.now())),
-              error: c.retrying.error
-            };
+        for (const stream of st.streams ?? []) {
+          const controller = byTicket.get(stream.ticket);
+          if (controller?.grant) stream.grant = controller.grant;
+          if (controller?.retrying) {
+            const { attempt, at, error } = controller.retrying;
+            stream.retrying = { attempt, inMs: Math.max(0, Math.round(at - performance.now())), error };
           }
         }
         /* a long poll's backoff (LLP 1016.000 D8), which only the page sees */ const faults = globalThis.__exactFaults?.entries;

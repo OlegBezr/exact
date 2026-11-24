@@ -107,6 +107,9 @@ pub fn validate(line: &str) -> Result<(), String> {
 /// Whether `grant`, the origin an `auth.session` line names, admits a
 /// sign-in page at `origin`, as a `net.fetch` line of it would admit a fetch.
 pub fn session_admits(grant: &str, origin: &str) -> bool {
+    if grant == "self" {
+        return false;
+    }
     let Ok(origin) = exact_grants::origin_of(origin) else {
         return false;
     };
@@ -399,6 +402,7 @@ fn quote(text: &str, out: &mut String) {
 fn grant_json(grant: &exact_grants::Grant, out: &mut String) {
     use exact_grants::Grant;
     match grant {
+        Grant::FetchSelf => out.push_str(r#"["fetch-self"]"#),
         Grant::Fetch(origin)
         | Grant::FetchSubdomains(origin)
         | Grant::WebSocket(origin)

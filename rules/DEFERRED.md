@@ -2388,6 +2388,11 @@ is recorded beside the entry, in his words. Without a take or a waiver, the answ
 is no. **Restated (Charlie, 2026-09-27):** the take stays the default; the waiver
 exists so that an exception is a visible act and not drift.
 
+**Web fetches on tenant domains (expo/exact#1486, LLP 1016 D6).** One website
+build can fetch each site's data under `net.fetch self` in the browser and
+during server rendering. A native source has no page origin. Take waived
+(Charlie, 2026-11-24, "recs ok"). A data API for reading the origin stays out.
+
 **Install-page slice, 2026-09-12 (Charlie, LLP 1030.003 D6a/D6b):** bake a
 standard `/.exact/install/` page for web/iOS/macOS with configured installation
 methods, and let a Mac development server invoke its existing simulator or device
