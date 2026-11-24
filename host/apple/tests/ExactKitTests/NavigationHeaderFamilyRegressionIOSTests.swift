@@ -5,6 +5,40 @@ import UIKit
 @testable import ExactNavigation
 
 extension NavigationBarIOSTests {
+    func testAChangedItemSizeAppliesAfterTheHatchClearsItsFont() throws {
+        let session = try fixture("header-family-cleared-font", module: false, plan: "HEADER_FAMILY")
+        let presenter = session.presenter
+        let nav = try XCTUnwrap(presenter.navigationHost.primaryNavigation)
+        presenter.press(try node(session, "open").id)
+        until("the Notes route is visible") {
+            nav.topViewController?.navigationItem.title == "Notes" && nav.transitionCoordinator == nil
+        }
+        let save = try node(session, "save")
+        let readFace = presenter.buttonFace
+        var face = ButtonFace()
+        face.title = "Save"
+        presenter.buttonFace = { $0 == save.id ? face : readFace?($0) ?? ButtonFace() }
+        func prepare() {
+            presenter.navigationHost.prepareRoutes(nav.viewControllers.compactMap { $0 as? RouteController }, in: nav)
+        }
+        func size(_ points: Double) {
+            face.rows.title = ["font_size": .number(points)]
+            presenter.apply(facesBatch())
+            prepare()
+        }
+        size(20)
+        let item = try XCTUnwrap(nav.topViewController?.navigationItem.rightBarButtonItems?.first { $0.title == "Save" })
+        XCTAssertEqual((item.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.pointSize, 20)
+        let native = try XCTUnwrap(UIFont(name: "Menlo", size: 23))
+        item.setTitleTextAttributes([.font: native], for: .normal)
+        prepare()
+        XCTAssertEqual(item.titleTextAttributes(for: .normal)?[.font] as? UIFont, native)
+        item.setTitleTextAttributes(nil, for: .normal)
+        prepare()
+        size(22)
+        XCTAssertEqual((item.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.pointSize, 22)
+    }
+
     func testRemovingTheFamilyKeepsANativeItemFont() throws {
         let session = try fixture("family-native-item", module: false, plan: "HEADER_FAMILY")
         let host = session.presenter.navigationHost
