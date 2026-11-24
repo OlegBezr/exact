@@ -11,6 +11,11 @@
           "type": "string",
           "maxBytes": 1048576
         },
+        "text/html": {
+          "type": "string",
+          "maxBytes": 1048576,
+          "targets": ["macos", "ios", "web"]
+        },
         "image/png": {
           "type": "path",
           "access": "read",

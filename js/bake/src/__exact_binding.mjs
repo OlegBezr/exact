@@ -289,7 +289,12 @@ function binding(name, declaration, implementations, dom=()=>[], members={}, tar
   const keyed=(t)=>{ const f=shapes[String(t ?? '').trim().replace(/\[\]$/,'')]; return f && Object.keys(f).length===1 && f.record && typeof f.record==='object' ? f.record : null; };
   for (const [shape,fields] of Object.entries(shapes)) {
     // On a target none of the interface's implementations names, `supports` answers false (LLP 1133.006 D7).
-    if (keyed(shape)) { lines.push(...keyedClass(shape,fields.record,outputs.has(shape),!target || implementations.some(i=>(i.targets ?? []).includes(target)))); continue; }
+    if (keyed(shape)) {
+      const here = !target || implementations.some(i => i.targets?.includes(target));
+      const supported = here ? Object.keys(fields.record).filter(k => !fields.record[k]?.targets || fields.record[k].targets.includes(target)) : [];
+      lines.push(...keyedClass(shape,fields.record,outputs.has(shape),supported));
+      continue;
+    }
     lines.push(`export interface ${shape} {`, ...Object.entries(fields).map(([f,t])=>`  ${f}${written.has(shape) && /^option<.*>$/.test(String(t).trim()) ? '?' : ''}: ${moduleType(t)};`), '}');
   }
   const anyKeyed=Object.keys(shapes).some(s=>keyed(s));
@@ -421,10 +426,10 @@ function binding(name, declaration, implementations, dom=()=>[], members={}, tar
 
 /** A keyed shape's class (LLP 1133.006 D8 item 1), built as the Clipboard API's `ClipboardItem` is: a record of
  * type to data, `types` its keys in order, and a static `supports` answered from the declaration, and false where
- * the build's target has no implementation (`here`). A key that
+ * the build's target has no implementation or the key excludes that target. A key that
  * takes a path or bytes (`{"type": "path", "or": "bytes"}`) takes an `app:/` path, an `ArrayBuffer` or a view;
  * any key takes a promise of its data. */
-function keyedClass(shape, keys, returned, here) {
+function keyedClass(shape, keys, returned, supported) {
   const one=(t)=>t && typeof t==='object' && t.type==='path' ? (t.or==='bytes' ? 'string | ArrayBuffer | ArrayBufferView' : 'string') : moduleType(t);
   const fields=Object.entries(keys).map(([k,t])=>`  ${JSON.stringify(k)}?: ${one(t)} | PromiseLike<${one(t)}>;`);
   return [`export interface ${shape}Data {`, ...fields, '  [type: string]: unknown;', '}',
@@ -443,7 +448,7 @@ function keyedClass(shape, keys, returned, here) {
     '    return await KEYED.get(this)!.items[type] as Awaited<Data[K]>;',
     '  }',
     ] : []),
-    `  static supports(type: string): boolean { return ${here ? JSON.stringify(Object.keys(keys)) : '([] as string[])'}.includes(type); }`,
+    `  static supports(type: string): boolean { return ${supported.length ? JSON.stringify(supported) : '([] as string[])'}.includes(type); }`,
     '}'];
 }
 
