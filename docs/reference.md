@@ -6358,6 +6358,19 @@ Types policy blocks HTML parsing needs a browser with `Document.parseHTML`
 to write HTML. Rust struct literals can omit unused clipboard item fields
 with `..Default::default()`.
 
+On iOS, pass UIKit's write options in an optional second argument. Each
+applies to the entire item, including its plain-text fallback.
+
+```ts
+await write([new ClipboardItem({ "text/plain": note })], {
+  apple: { localOnly: true, expirationDate: Date.now() + 60_000 },
+});
+```
+
+`localOnly` keeps the copy on the device. `expirationDate` is an absolute
+time in milliseconds since the Unix epoch. UIKit removes the item at expiry.
+macOS, Windows and the web ignore both words.
+
 Data code writes images with [`@exact/clipboard`](contract-grammar.md#clipboard).
 Windows accepts an `app:/` PNG file, up to 64 MiB and 64,000,000 pixels;
 in-memory PNG bytes and raw pixels are not accepted. It offers sanitized

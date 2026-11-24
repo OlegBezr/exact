@@ -2669,7 +2669,9 @@ iOS decides whether to show its system paste prompt before reading another app's
 
 Data code can write `text/html` on macOS, iOS and the web. Pass the markup
 as a string in a `ClipboardItem` with an optional `text/plain` fallback.
-The host sanitizes the HTML before writing the item. [Clipboard formats](reference.md#clipboard-images).
+The host sanitizes the HTML before writing the item. An iOS write accepts
+a second argument such as `{ apple: { localOnly: true, expirationDate: when } }`,
+where `when` is epoch milliseconds. Other hosts ignore these options. [Clipboard formats](reference.md#clipboard-images).
 
 To write an image, data code imports `@exact/clipboard` (LLP 1133.006): the
 Clipboard API's `write([new ClipboardItem({"image/png": path, "text/plain":

@@ -75,6 +75,15 @@ test('a call refused at once supersedes no pending call; a later call sent first
   expect(sent.map((b) => b.args.data[0]['text/plain'])).toEqual(['D']);
 });
 
+test('write takes its platform options after the items and snapshots them at the call', async () => {
+  const { write, ClipboardItem } = await load('ios');
+  const apple = { localOnly: true, expirationDate: 1800000000000 };
+  const pending = write([new ClipboardItem({ 'text/plain': Promise.resolve('note') })], { apple });
+  apple.localOnly = false;
+  await pending;
+  expect(sent[0].args).toEqual({ data: [{ 'text/plain': 'note' }], apple: { localOnly: true, expirationDate: 1800000000000 } });
+});
+
 test('Windows sends the path and text as one item through the generated binding', async () => {
   const { write, ClipboardItem } = await load('windows');
   expect(await outcome(write([new ClipboardItem({ 'image/png': 'app:/tmp/capture.png', 'text/plain': 'caption' })]))).toBe('ok');

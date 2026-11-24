@@ -75,6 +75,14 @@ for (const host of hosts.length ? hosts : ['web']) {
     // The sanitized PNG of the red file and of its bytes are the same; the APNG's frame 0 (green) differs from both.
     check(host, 'a path and bytes of one PNG write the same sanitized image', sha.png && sha.png === sha['png-bytes'] && sha.png === sha.both, JSON.stringify(sha));
     check(host, 'the APNG writes frame 0, not its default image', sha.apng && sha.apng !== sha.png, JSON.stringify(sha));
+    await s.tap('expiry');
+    await s.clock('data');
+    const written = (await texts(s)).wrote;
+    check(host, 'a write with a deadline succeeds', written === 'ok expiry', written);
+    await s.tap('open-url');
+    await s.clock('data');
+    const remaining = (await texts(s)).wrote;
+    check(host, 'an elapsed deadline expires an iOS copy', remaining === (host === 'ios' ? '' : 'ephemeral note'), remaining);
     const logs = (await s.logs?.()) ?? '';
     if (logs) check(host, 'the journal names each write and refusal', /clipboard: wrote image\/png 8×8/.test(JSON.stringify(logs)) && /clipboard: write refused: DataError/.test(JSON.stringify(logs)), String(JSON.stringify(logs)).slice(-600));
   } finally {

@@ -55,7 +55,7 @@ public final class ClipboardModule: ExactPackage {
             read(textOnly: name == "readText", reply: reply)
         case "write":
             guard let items = args["data"] as? [Any] else { return reply(refused("TypeError", "write takes a list of ClipboardItem")) }
-            write(items, reply: reply)
+            write(items, apple: args["apple"], reply: reply)
         case "writeText":
             guard let text = args["data"] as? String else { return reply(refused("TypeError", "writeText takes a string")) }
             write([["text/plain": text]], reply: reply)
@@ -82,7 +82,32 @@ public final class ClipboardModule: ExactPackage {
         return ["error": code, "message": message]
     }
 
-    private func write(_ items: [Any], reply: @escaping ([String: Any]) -> Void) {
+    private struct WriteOptions {
+        #if !os(macOS)
+        var values: [UIPasteboard.OptionsKey: Any] = [:]
+        #endif
+
+        init(_ apple: Any?) throws {
+            #if !os(macOS)
+            guard let apple else { return }
+            guard let words = apple as? [String: Any] else { throw FileRefusal(code: "TypeError", message: "apple options must be an object") }
+            if let local = words["localOnly"] {
+                guard let flag = local as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() else {
+                    throw FileRefusal(code: "TypeError", message: "apple.localOnly must be a boolean")
+                }
+                values[.localOnly] = flag.boolValue
+            }
+            if let value = words["expirationDate"] {
+                guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite else {
+                    throw FileRefusal(code: "TypeError", message: "apple.expirationDate must be finite epoch milliseconds")
+                }
+                values[.expirationDate] = Date(timeIntervalSince1970: number.doubleValue / 1000)
+            }
+            #endif
+        }
+    }
+
+    private func write(_ items: [Any], apple: Any? = nil, reply: @escaping ([String: Any]) -> Void) {
         // Chrome resolves an empty write and leaves the clipboard as it was.
         guard let item = items.first else { return reply([:]) }
         guard items.count == 1 else { return reply(refused("NotAllowedError", "Support for multiple ClipboardItems is not implemented.")) }
@@ -118,6 +143,10 @@ public final class ClipboardModule: ExactPackage {
         default:
             return reply(refused("TypeError", "image/png is an app:/ path or bytes"))
         }
+        let options: WriteOptions
+        do { options = try WriteOptions(apple) }
+        catch let why as FileRefusal { return reply(refused(why.code, why.message)) }
+        catch { return reply(refused("TypeError", error.localizedDescription)) }
         // This write supersedes any still decoding (D2).
         latest += 1
         let number = latest
@@ -127,7 +156,7 @@ public final class ClipboardModule: ExactPackage {
             guard let self, self.latest == number, let w = self.inFlight, w.number == number else { return }
             self.inFlight = nil
             switch result {
-            case .success(let (html, image)): w.reply(self.land(text: text, html: html, image: image))
+            case .success(let (html, image)): w.reply(self.land(text: text, html: html, image: image, options: options))
             case .failure(let why): w.reply(self.refused(why.code, why.message))
             }
         }
@@ -141,8 +170,8 @@ public final class ClipboardModule: ExactPackage {
     }
 
     /// The pasteboard written now, and what state discloses of the write.
-    private func land(text: String?, html: String?, image: Sanitized?) -> [String: Any] {
-        guard let board = paste(text: text, html: html, image: image) else {
+    private func land(text: String?, html: String?, image: Sanitized?, options: WriteOptions) -> [String: Any] {
+        guard let board = paste(text: text, html: html, image: image, options: options) else {
             return refused("UnknownError", "could not write the pasteboard item")
         }
         writes += 1
@@ -369,7 +398,7 @@ public final class ClipboardModule: ExactPackage {
     }
 
     #if os(macOS)
-    private func paste(text: String?, html: String?, image: Sanitized?) -> (name: String, types: [String])? {
+    private func paste(text: String?, html: String?, image: Sanitized?, options: WriteOptions) -> (name: String, types: [String])? {
         let board = self.board
         let item = NSPasteboardItem()
         if let image {
@@ -387,13 +416,13 @@ public final class ClipboardModule: ExactPackage {
     }
     #else
     /// Nil when the session's private pasteboard could not be made: never the person's in its place.
-    private func paste(text: String?, html: String?, image: Sanitized?) -> (name: String, types: [String])? {
+    private func paste(text: String?, html: String?, image: Sanitized?, options: WriteOptions) -> (name: String, types: [String])? {
         guard let board else { return nil }
         var item: [String: Any] = [:]
         if let image { item[UTType.png.identifier] = image.png }
         if let html { item[UTType.html.identifier] = Data(html.utf8) }
         if let text { item[UTType.utf8PlainText.identifier] = text }
-        board.setItems([item], options: [:])
+        board.setItems([item], options: options.values)
         return (board.name.rawValue, board.types)
     }
     #endif
