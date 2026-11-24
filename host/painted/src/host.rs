@@ -984,9 +984,11 @@ impl<D: DataSource> Host<D> {
         self.advanced(a)
     }
 
-    pub(crate) fn advanced(&mut self, a: exact_runner::Advanced) -> (Option<String>, bool) {
+    pub(crate) fn advanced(&mut self, mut a: exact_runner::Advanced) -> (Option<String>, bool) {
         let press = self.press_settle().is_some();
         self.now_ms = a.now_ms.max(self.now_ms);
+        // A commit that changed no node costs what an advance with nothing due does, as on Apple.
+        a.receipts.retain(|t| !t.receipt.unchanged());
         let error = a.error.map(|e| format!("{e:?}"));
         let (error, paint) = self.commit_effects(&a.receipts, error);
         (error, paint || press)

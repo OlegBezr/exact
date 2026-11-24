@@ -66,7 +66,7 @@ impl<D: DataSource> Host<D> {
             > 1)
         .then(|| self.runner.handlers());
         self.close_new_top_layer(receipts);
-        if receipts.iter().any(|t| !unchanged(&t.receipt)) {
+        if receipts.iter().any(|t| !t.receipt.unchanged()) {
             self.prepare_flat(&mut batch);
         }
         let mut repaint = Vec::new();
@@ -206,7 +206,7 @@ impl<D: DataSource> Host<D> {
         // message's time, LLP 1125 D6, read by nothing on screen; a scroll
         // that mounted no row) lays out only what such a commit can move
         // (`inert_layout`), not a whole layout and paint order walk.
-        let inert = self.inert_entry && receipts.iter().all(|t| unchanged(&t.receipt));
+        let inert = self.inert_entry && receipts.iter().all(|t| t.receipt.unchanged());
         let layout_error = if height_target_error.is_some() {
             self.layout_owed = true;
             height_target_error

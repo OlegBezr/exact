@@ -468,6 +468,25 @@ impl Deps {
         deps
     }
 
+    /// Whether a settlement or a render evaluates a body again although no
+    /// input it names changed: one reads the clock, or code the scan stopped at.
+    pub(crate) fn reads_clock(&self) -> bool {
+        let clock = self.layout.as_ref().expect("built from a plan").clock();
+        let tables = [
+            &self.bindings,
+            &self.surface_args,
+            &self.nodes,
+            &self.subjects,
+            &self.keys,
+            &self.bodies,
+            &self.regions,
+        ];
+        (tables.iter().flat_map(|t| &t.reads))
+            .chain(&self.derives)
+            .chain(&self.resource_args)
+            .any(|r| r.opaque || r.bits.get(clock))
+    }
+
     /// What one code body reads, as the table's rows are scanned.
     pub(crate) fn reads_of(&self, plan: &Plan, code: Code) -> Reads {
         scan(

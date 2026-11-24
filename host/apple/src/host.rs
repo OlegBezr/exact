@@ -1395,20 +1395,6 @@ impl<D: DataSource> Host<D> {
     }
 }
 
-/// Whether a commit left every node as it was.
-fn unchanged(r: &CommitReceipt) -> bool {
-    !r.layout_invalidated
-        && r.created.is_empty()
-        && r.destroyed.is_empty()
-        && r.touched.is_empty()
-        && r.exits.is_empty()
-        && r.handoffs.is_empty()
-        && r.display_changed.is_empty()
-        && r.timelines.is_empty()
-        && r.renewed.is_empty()
-        && r.revealed.is_empty()
-}
-
 /// A frame in its parent's space (a root's is absolute).
 fn relative(frame: Frame, parent: Option<Frame>) -> (f32, f32, f32, f32) {
     match parent {

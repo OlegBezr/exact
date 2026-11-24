@@ -436,6 +436,34 @@ impl<D: DataSource> Runner<D> {
                 RunnerError::from(t).evaluated(|| format!("action {:?}", self.plan.str(row.name)))
             })?
         };
+        // An action that wrote, sent, refreshed and commanded nothing leaves
+        // every input as the last settlement and render saw it, unless a body
+        // reads the clock, which a timer's commit brings current (LLP
+        // 1027.000.000 D4), or the update has work of its own waiting. Its
+        // receipt is an empty batch's, with nothing settled, rendered or applied.
+        if outcome.writes.is_empty()
+            && outcome.row_writes.is_empty()
+            && outcome.sends.is_empty()
+            && outcome.commands.is_empty()
+            && outcome.refreshes.is_empty()
+            && self.refresh_next.is_empty()
+            && self.into_view.is_empty()
+            && self.row_writes.writes.is_empty()
+            && self.deferred_edges.is_empty()
+            && self.held_edges.is_empty()
+            && !self.full
+            && !self.sites.deps().reads_clock()
+        {
+            if let Some(tree) = self.tree.as_mut() {
+                tree.last_work = Default::default();
+            }
+            self.batch += 1;
+            return Ok(CommitReceipt {
+                batch: self.batch,
+                epoch: self.kernel.epoch(),
+                ..Default::default()
+            });
+        }
         // Sends (LLP 1016 §4): each asks the source now. An answer lands in
         // the mutation's slot inside this commit; a request goes to the host
         // once the commit stands. A queue mutation's send is asked only when

@@ -894,6 +894,35 @@ fn store_provenance_propagates_through_unchanged_values() {
     }
 }
 
+/// A timer whose action changes nothing applies no batch, unless a view
+/// reads the clock: that view still shows each commit's time.
+#[test]
+fn a_commit_that_changes_nothing_applies_no_batch_unless_a_view_reads_the_clock() {
+    for (shown, applied) in [("`${n}`", 0), ("`at ${performanceNow()}`", 1)] {
+        let source = format!(
+            "component App
+  state n = 0
+  task idle mount
+    every(250, idle)
+  action idle
+    if n > 0
+      n = 0
+  view
+    text {shown} testId=\"shown\"
+"
+        );
+        let plan = contract::compile(&source).unwrap();
+        let mut r =
+            Runner::boot(plan, (), Kernel::with_monospace(), Default::default(), "/").unwrap();
+        let batches = r.kernel().receipts().count();
+        assert_eq!(r.advance(250.0).unwrap().len(), 1, "{shown}");
+        assert_eq!(r.kernel().receipts().count() - batches, applied, "{shown}");
+        let key = r.kernel().find_by_test_id("shown")[0];
+        let text = r.kernel().node_by_key(key).unwrap().props.str(PropId::Text);
+        assert_eq!(text, Some(if applied == 1 { "at 250" } else { "0" }));
+    }
+}
+
 /// A pointer sample somewhere over a node.
 fn pointer(rng: &mut Rng) -> exact_runner::PointerEvent {
     let (x, y) = (rng.below(200), rng.below(200));

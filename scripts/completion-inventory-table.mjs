@@ -1096,6 +1096,7 @@ export const classifications = [
     ["runner:runner/src/runner/apply.rs", "Runner::apply#batch:1 Runner::apply#batch:2"],
     ["runner:runner/src/runner/background.rs", "Runner::background_landed#rounds:1"],
     ["runner:runner/src/runner/canvas2d.rs", "Canvases::reply#draws:1"],
+    ["runner:runner/src/runner/commit.rs", "Runner::run_action_inner#batch:1"],
     ["runner:runner/src/runner/faults.rs", "Faults::take_method#hits:1 Faults::take_method#failure_hits:1 Runner::fault_dispatch#hits:1 Runner::fault_dispatch#failure_hits:1"],
     ["runner:runner/src/runner/into_view.rs",
       "Runner::update_into_views_inner#batch:1 Runner::update_into_views_inner#bindings_evaluated:1 Runner::update_into_views_inner#derives_evaluated:1 " +

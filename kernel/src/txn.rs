@@ -28,6 +28,7 @@ mod defaults;
 mod inherited;
 use inherited::{inherited_changed, propagate_inherited, written_direction};
 mod text_style;
+mod unchanged;
 
 /// The deepest a node may sit below the top of its tree (a root is 0). Layout
 /// recurses once per level: a release build uses up to ~3.5 KiB of stack a
