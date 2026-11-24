@@ -52,7 +52,7 @@ enum ResetGate {
         "pump(now:)": (.pump, "the replies the network owes, pumped at once, as `pumpAsync`'s"),
         "pumpAsync(now:done:)": (.pump, "the replies the network owes are the new runtime's: they are pumped again (the held pump answered cancelled)"),
         "later(_:done:)": (.page, "a notice's calls, as `tellSoon`'s"),
-        "setPage(_:)": (.page, "a key window or activation the teardown moved (a sheet closing) is the page's: it is told again"),
+        "setPage(_:showing:)": (.page, "a key window or activation the teardown moved (a sheet closing) is the page's: it is told again"),
         "setRootFontSize(_:)": (.page, "the page's root font, told with its key window: told again with it"),
         "preferPresented(_:)": (.page, "the agent's `prefer presented`, told again with the page's facts"),
         "setDisplayScale(_:)": (.page, "the page's display scale, told with its key window: told again with it"),

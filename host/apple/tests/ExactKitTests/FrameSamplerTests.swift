@@ -382,7 +382,7 @@ final class FrameSamplerTests: XCTestCase {
         let segments = { (sampler.reply()["lifetime"] as? [String: Int])?["segments"] }
         let before = segments()
         #endif
-        session.presenter.onCommand = { [unowned session] _, _, _ in session.sampler = nil }
+        session.presenter.onCommand = { [unowned session] _, _, _, _ in session.sampler = nil }
         session.apply(wireBatch([["op": "command", "name": "stopTrace_EXPERIMENTAL", "args": []]]))
         XCTAssertNil(session.sampler)
         #if canImport(UIKit)

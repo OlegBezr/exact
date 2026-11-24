@@ -48,7 +48,7 @@ fn sound_batches_carry_transport_eligibility_even_without_voice_ops() {
     bridge.advance(600., 0);
     assert_eq!(sound(&bridge)["playing"], true);
     assert_eq!(sound(&bridge)["ops"], serde_json::json!([]));
-    bridge.set_page(128, false);
+    bridge.set_page(128, 0);
     assert_eq!(sound(&bridge)["playing"], false);
 }
 
@@ -99,17 +99,17 @@ fn the_freeze_bit_releases_pending_and_delivered_streams_before_returning() {
                 .unwrap();
         }
         assert!(host.runner().holds(first));
-        bridge.set_page(1, false);
+        bridge.set_page(1, 0);
         assert!(
             bridge.host.as_ref().unwrap().runner().holds(first),
             "visibility alone keeps the stream"
         );
-        bridge.set_page(1 | 128, false);
+        bridge.set_page(1 | 128, 0);
         let host = bridge.host.as_mut().unwrap();
         assert!(host.runner().page().frozen);
         assert!(!host.runner().holds(first));
         assert!(host.runner().streams().is_empty());
-        bridge.set_page(0, false);
+        bridge.set_page(0, 0);
         let host = bridge.host.as_ref().unwrap();
         assert!(
             host.runner().pending().iter().any(|(_, t)| *t != first),

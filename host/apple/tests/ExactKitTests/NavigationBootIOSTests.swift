@@ -99,7 +99,7 @@ final class NavigationBootIOSTests: XCTestCase {
         let deliver = presenter.onCommand
         defer { presenter.onCommand = deliver }
         var commands: [String] = []
-        presenter.onCommand = { name, _, _ in commands.append(name) }
+        presenter.onCommand = { name, _, _, _ in commands.append(name) }
         probe.run = {
             XCTAssertTrue(navigation.syncing)
             presenter.apply(wireBatch([["op": "command", "name": "test-boot-owner", "args": []]]))

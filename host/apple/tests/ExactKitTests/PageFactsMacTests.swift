@@ -62,6 +62,19 @@ final class PageFactsMacTests: XCTestCase {
         XCTAssertEqual(PageFacts.bits(nil, page: only, readsOnLine: false) & (1024 | 0xFFFF << 16), 0, "nor a pageshow: nothing put away, no restore")
     }
 
+    func testAHiddenPageHasItsOwnVisibilityBesideAVisibleWindow() {
+        _ = NSApplication.shared
+        let first = window(100), second = window(500)
+        defer { first.close(); second.close() }
+        first.orderFront(nil)
+        second.orderFront(nil)
+        PageFacts.hideForClose(first)
+        XCTAssertEqual(PageFacts.bits(first, page: first, readsOnLine: false, perWindow: true) & 1, 1)
+        XCTAssertEqual(PageFacts.bits(second, page: second, readsOnLine: false, perWindow: true) & 1,
+                       second.screenOcclusionState.contains(.visible) ? 0 : 1)
+        PageFacts.closed(first)
+    }
+
     /// LLP 1069.010 D8: the one window of an app that keeps running is
     /// ordered out by its close, its page kept. The page reads `hidden` and
     /// hears it, and hears the reopen that shows it again. A window ordered

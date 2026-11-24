@@ -335,10 +335,18 @@ package enum PageFacts {
     /// iframe's `partition` honoured, bit 14 the background told apart from
     /// visibility and bit 15 its value (macOS), bits 16–31 the restores. A
     /// session whose plan does not read `onLine` starts no monitor for it.
-    static func bits(_ window: FocusWindow?, page: FocusWindow? = nil, readsOnLine: Bool = true) -> UInt32 {
+    static func bits(_ window: FocusWindow?, page: FocusWindow? = nil, readsOnLine: Bool = true, perWindow: Bool = false) -> UInt32 {
         let online = readsOnLine ? onLine : lastOnLine
         let transitions = (persisted(page) ? 1024 : 0) | UInt32(restores(page) & 0xFFFF) << 16
-        return (hidden ? 1 : 0) | (online ? 0 : 2) | (canShare ? 4 : 0) | (canOpenFiles ? 8 : 0) | (hasFocus(window) ? 0 : 16) | (frozen ? 128 : 0) | (canShareFiles ? 256 : 0) | (canSharePictures ? 512 : 0) | (tier & 3) << 11 | (iframePartition ? 8192 : 0) | backgroundBits | transitions
+        let pageHidden: Bool
+        #if os(macOS)
+        if perWindow, let page {
+            pageHidden = substituted ? agent.hidden || isUnshown(page) : NSApp.isHidden || page.isMiniaturized || !page.isVisible || !page.screenOcclusionState.contains(.visible)
+        } else { pageHidden = hidden }
+        #else
+        pageHidden = hidden
+        #endif
+        return (pageHidden ? 1 : 0) | (online ? 0 : 2) | (canShare ? 4 : 0) | (canOpenFiles ? 8 : 0) | (hasFocus(window) ? 0 : 16) | (frozen ? 128 : 0) | (canShareFiles ? 256 : 0) | (canSharePictures ? 512 : 0) | (tier & 3) << 11 | (iframePartition ? 8192 : 0) | backgroundBits | transitions
     }
 
     /// The background, apart from visibility (LLP 1133.025 D11 item 7). A
@@ -394,17 +402,23 @@ package enum PageFacts {
     }
 }
 
-/// What a session last told of its page's visibility, and whether the app
-/// asked to show it since (`personShows`).
-private final class Showing { var hidden: Bool?; var asked = false }
-nonisolated(unsafe) private let showings = NSMapTable<ExactSession, Showing>.weakToStrongObjects()
+public enum WindowLaunch: UInt32 {
+    case unknown = 0, person, call, wake, backgroundAction
+}
+
+/// Only the standalone host opts a window into reports of its own visibility.
+final class ShowingWindow {
+    weak var window: FocusWindow?
+    var ordering = false
+    init(_ window: FocusWindow) { self.window = window }
+}
 
 extension ExactSession {
     /// @ref LLP 1069.000 D2 — told after every boot and on each change; a
     /// change while iOS suspends the process lands with the foreground
     /// notification, in the same turn.
-    func tellPage() {
-        guard booted, state != .destroyed else { return }
+    func tellPage(showing: UInt64 = 0) {
+        guard showingWindow?.ordering != true, booted, state != .destroyed else { return }
         #if canImport(UIKit)
         // Out of the foreground, a press hands nothing on (PressHandoffIOS).
         if view?.window?.windowScene?.activationState != .foregroundActive { presenter.supersedePress() }
@@ -415,34 +429,57 @@ extension ExactSession {
         if clock == nil { followOffset() }
         let reads = runtime.readsOnLine()
         readsOnLineKnown = (generation, reads)
-        let bits = PageFacts.bits(pageWindow, page: view?.window, readsOnLine: reads)
-        apply(runtime.setPage(bits, person: personShows(bits)))
+        let bits = pageBits(readsOnLine: reads)
+        apply(runtime.setPage(bits, showing: showing))
         if let presentedHeld { apply(runtime.preferPresented(presentedHeld)) }
         apply(runtime.setRootFontSize(PageFacts.rootFontSize))
         tellDisplayScale()
     }
-    /// Whether the person's act shows the page `bits` tell (LLP 1133.023
-    /// D7a): a hidden page that shows, not at the app's own request. Nothing
-    /// else can show an app's window: on iOS only the person brings an app
-    /// to the foreground, and on macOS another app cannot order this app's
-    /// windows, so a Dock click, an app switch, a reopen, a document or URL
-    /// opened, a deminiaturize or an uncovered window is the person's. A
-    /// showing the app asked for keeps the cause the runner gave the page
-    /// with that request.
-    func personShows(_ bits: UInt32) -> Bool {
-        let told = showings.object(forKey: self) ?? Showing()
-        showings.setObject(told, forKey: self)
-        let hidden = bits & 1 != 0, shown = told.hidden == true && !hidden
-        defer { told.hidden = hidden; if shown { told.asked = false } }
-        return shown && !told.asked
+    func pageBits(readsOnLine: Bool) -> UInt32 {
+        let window = showingWindow?.window ?? view?.window
+        return PageFacts.bits(pageWindow, page: window, readsOnLine: readsOnLine, perWindow: showingWindow != nil)
     }
-    /// The app's bare `focus()` is about to show its windows: each session
-    /// whose page is hidden shows at that request, not by the person's act.
-    public static func appAsksToShow() {
-        for session in ExactApp.shared.sessions where showings.object(forKey: session)?.hidden == true {
-            showings.object(forKey: session)?.asked = true
+
+    #if os(macOS)
+    public func launchShowing(in window: NSWindow, by: WindowLaunch, hidden: Bool) {
+        showingWindow = ShowingWindow(window)
+        runtime.launchShowing(by: by.rawValue, hidden: hidden)
+    }
+    #endif
+
+    /// Called from the actual input or reopen, including input handled
+    /// entirely by a package view before it sends its message.
+    public func personUsesWindow() {
+        guard showingWindow != nil else { return }
+        tellPage(showing: 1)
+    }
+
+    /// AppKit may synchronously announce a key or occlusion change while a
+    /// window is being ordered. Publish its facts once at the end of that
+    /// operation. A later, independent notification has no request to claim.
+    func performShowing(_ id: UInt64, _ body: () -> Void) {
+        guard let target = showingWindow, !target.ordering else { body(); if id > 1 { runtime.cancelShowing(id) }; return }
+        let wasHidden = pageBits(readsOnLine: false) & 1 != 0
+        target.ordering = true
+        body()
+        target.ordering = false
+        let visible = pageBits(readsOnLine: false) & 1 == 0
+        if visible && (wasHidden || id == 1) { tellPage(showing: id) }
+        else { if id > 1 { runtime.cancelShowing(id) }; tellPage() }
+    }
+
+    public func personOrdersWindow(_ order: () -> Void) { performShowing(1, order) }
+
+    /// The lease and id travel with the queued command until it executes.
+    func deliverCommand(showing: UInt64?, _ perform: @escaping (ExactSession) -> Void) {
+        let issued = SessionLease(self)
+        app.deliver {
+            guard let session = issued.session else { return }
+            if let showing { session.performShowing(showing) { perform(session) } }
+            else { perform(session) }
         }
     }
+
     /// LLP 1115.000 D10.3: the display's scale, told with the page's facts
     /// after every boot and again when the view's display changes
     /// (`ExactViewIOS`, `ExactViewMac`); the same scale again commits

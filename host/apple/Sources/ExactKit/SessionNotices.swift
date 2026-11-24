@@ -65,17 +65,16 @@ extension ExactSession {
     /// `tellPage` for a notice; at once unless the data source is activating
     /// and this generation's `onLine` reading is known.
     func tellPageSoon() {
-        guard booted, state != .destroyed else { return }
+        guard showingWindow?.ordering != true, booted, state != .destroyed else { return }
         // A freeze releases streams and stops sequences before the lifecycle callback returns.
         guard !PageFacts.frozen, dataPreparing, let reads = readsOnLineKnown, reads.generation == generation, !Owner.shared.isServingMain else { return tellPage() }
         #if canImport(UIKit)
         if view?.window?.windowScene?.activationState != .foregroundActive { presenter.supersedePress() }
         #endif
         if clock == nil { dateChanged() } // (queued ahead of the page's facts, as `tellPage` checks first)
-        let bits = PageFacts.bits(pageWindow, page: view?.window, readsOnLine: reads.value)
+        let bits = pageBits(readsOnLine: reads.value)
         let font = PageFacts.rootFontSize, scale = PageFacts.displayScale(presenter.viewport)
-        let person = personShows(bits)
-        tellSoon([{ $0.setPage(bits, person: person) }, { $0.setRootFontSize(font) }, { $0.setDisplayScale(scale) }])
+        tellSoon([{ $0.setPage(bits) }, { $0.setRootFontSize(font) }, { $0.setDisplayScale(scale) }])
     }
 
     /// @ref LLP 1061 D5 — told after every boot, as the date is, and on each

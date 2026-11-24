@@ -104,6 +104,8 @@ pub enum LaunchedBy {
     /// The person: a launch from the platform's UI for the app.
     #[default]
     Person,
+    /// The platform did not identify who launched the app.
+    Unknown,
     /// A wake that launched the app with no view (LLP 1133.017 D7).
     Wake,
     /// A notification's background action that launched it (LLP 1133.004).
@@ -119,13 +121,20 @@ pub enum LaunchedBy {
 impl Origins {
     /// A booting runner's: boot is its launch's, as is the page it shows.
     /// A launch that was not the person's holds no invocation's grants.
-    pub(in crate::runner) fn booting((by, told): (LaunchedBy, bool)) -> Origins {
-        let cause = match by {
+    pub(in crate::runner) fn booting(
+        (by, told): (LaunchedBy, bool),
+        carried: Option<&super::Carried>,
+    ) -> Origins {
+        let launched = match by {
+            LaunchedBy::Unknown => Cause::none(),
             LaunchedBy::Person => Cause::person(),
             LaunchedBy::Wake => Cause::wake(0),
             LaunchedBy::BackgroundAction => Cause::background_action(0),
             LaunchedBy::Call { press } => Cause::call(press, 0),
         };
+        let cause = carried
+            .and_then(|c| c.showing.map(|(_, cause)| cause))
+            .unwrap_or(launched);
         Origins {
             current: Some(cause),
             page: Some(cause),
@@ -386,7 +395,9 @@ pub(in crate::runner) struct Origins {
     /// no one.
     page: Option<Cause>,
     /// The host tells who shows the page ([`crate::time::Launch::tells_showing`]).
-    told: bool,
+    pub(super) told: bool,
+    /// Unanswered requests actually handed to this runner’s host.
+    requests_to_show: std::collections::BTreeMap<u64, Cause>,
 }
 
 /// How long a person's input stands as user activation, in ms. HTML leaves
@@ -399,7 +410,7 @@ const TRANSIENT_ACTIVATION_MS: f64 = 5_000.0;
 /// a mouse's `pointerdown`, a touch's or a pen's `pointerup`, and what a
 /// host makes of those same acts where the app hears no pointer or key (a
 /// press, a control's `input`, `change` and `submit`, a context menu).
-pub(in crate::runner) fn activates(event: &Event) -> bool {
+fn activates(event: &Event) -> bool {
     match event {
         Event::Key(key) | Event::Keycapture(key) => key.key != "Escape",
         Event::Pointerdown(pointer) => pointer.pointer_type == "mouse",
@@ -559,27 +570,59 @@ impl<D: DataSource> Runner<D> {
         self.origins.page = None;
     }
 
-    /// A call booted the session whose page shows (`CallHow::cold`), a
-    /// launch the host may not tell from the person's (macOS cannot tell an
-    /// App Intent's from an ordinary one): until the person acts in it, the
-    /// page is the call's.
-    pub(in crate::runner) fn page_launched_for(&mut self, cause: Cause) {
-        if self.origins.activated.is_none() && !self.page.hidden {
-            self.origins.page = Some(cause);
+    pub(super) fn carried_showing(&self) -> Option<(bool, Cause)> {
+        self.origins.told.then(|| {
+            (
+                self.page.hidden,
+                self.origins
+                    .page
+                    .unwrap_or(Cause::none())
+                    .without_invocation(),
+            )
+        })
+    }
+
+    /// Capture the issuing commit before the command enters the output queue.
+    /// Only commands a host receives enter its table (LLP 1133.023 D7a).
+    pub(super) fn showing_request(
+        &self,
+        name: &str,
+        args: &[exact_plan::Value],
+    ) -> Option<(u64, Cause)> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(2);
+        if !self.origins.told
+            || !(name == "focus" && args.is_empty()
+                || matches!(
+                    name,
+                    "openURL"
+                        | "requestFullscreen"
+                        | "exitFullscreen"
+                        | "requestPictureInPicture"
+                        | "exitPictureInPicture"
+                        | "relaunch"
+                ))
+        {
+            return None;
         }
+        let id = NEXT
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .expect("show request ids exhausted");
+        Some((id, self.cause()))
     }
 
-    /// A commit that stood asked the host to show the page (a bare
-    /// `focus()`): the page is that request's, whoever asked.
-    pub(in crate::runner) fn page_requested(&mut self) {
-        self.origins.page = Some(self.cause());
+    pub(super) fn issue_showings(&mut self, commands: &[super::Command]) {
+        self.origins
+            .requests_to_show
+            .extend(commands.iter().filter_map(|c| c.showing));
     }
 
-    /// The host delivers the person's act in the app's own UI while the page
-    /// shows: an activation triggering input says the person is there.
-    pub(in crate::runner) fn page_used(&mut self, activates: bool) {
-        if !self.page.hidden && activates {
-            self.origins.page = Some(Cause::person());
+    /// Finish the host operation even when it showed nothing. A showing
+    /// with an unknown, foreign or already consumed id belongs to no one.
+    pub fn finish_show_request(&mut self, id: u64, shown: bool) {
+        let cause = self.origins.requests_to_show.remove(&id);
+        if shown {
+            self.origins.page = cause;
         }
     }
 

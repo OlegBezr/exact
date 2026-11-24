@@ -87,7 +87,11 @@ impl<D: DataSource> Runner<D> {
             seen: true,
             ..self.presented
         };
-        self.as_shown(!self.page.hidden, |r| r.set_presented(presented))
+        if self.origins.told {
+            self.as_shown(!self.page.hidden, |r| r.set_presented(presented))
+        } else {
+            self.as_person(|r| r.set_presented(presented))
+        }
     }
 
     /// `prefer presented` (LLP 1069.000 D6): `Some` holds the fact at that

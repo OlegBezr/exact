@@ -467,7 +467,8 @@ public final class ExactSession {
     /// The first batch's apply, part by part, in ms (`ApplyProfile`).
     public private(set) var applyParts: [String: Double] = [:]
     /// Commands from the batch being applied, delivered after it (D2).
-    private var pendingCommands: [(String, [Any], UInt32?)] = []
+    var showingWindow: ShowingWindow?
+    private var pendingCommands: [(String, [Any], UInt32?, UInt64?)] = []
     /// The ids the batch being applied asks `scrollIntoView` of (LLP 1070.000 §15: they win over the end-follow).
     var pendingElementScrolls: [String] { pendingCommands.compactMap { $0.0 == "scrollIntoView" ? $0.1.first as? String : nil } }
     private(set) var applying = false { didSet { releaseWaitingFirings() } }
@@ -874,7 +875,7 @@ public final class ExactSession {
         } }
         // Commands are queued here and delivered once the batch is applied
         // (D2): a delegate then runs against a settled tree.
-        presenter.onCommand = { [unowned self] name, args, source in pendingCommands.append((name, args, source)) }
+        presenter.onCommand = { [unowned self] name, args, source, showing in pendingCommands.append((name, args, source, showing)) }
     }
 
     /// Boot the plan baked into the library (or `EXACT_PLAN`'s file, an
@@ -1261,7 +1262,7 @@ public final class ExactSession {
             #endif
             let queued = pendingCommands
             pendingCommands = []
-            for (name, args, source) in queued {
+            for (name, args, source, showing) in queued {
                 if name == "copyText" {
                     guard args.count == 1, let text = args.first as? String else {
                         fputs("exact: copyText requires one string\n", stderr)
@@ -1277,7 +1278,7 @@ public final class ExactSession {
                     continue
                 }
                 if ["navigate", "traverseHistory", "reload", "stopLoading", "captureScreenshot", "openDevTools"].contains(name) { app.deliver { [weak self] in self?.webviews.command(name, args) }; continue } // an iframe's, by id (LLP 1020.002 D3, D7, D11)
-                if name == "relaunch" || name == "setPageZoom" { app.deliver { [weak self] in if name == "relaunch" { self?.relaunch() } else { self?.setPageZoom(args) } }; continue } // `setPageZoom`: LLP 1021 §5.3.1 (ZoomMac.swift)
+                if name == "relaunch" || name == "setPageZoom" { deliverCommand(showing: showing) { if name == "relaunch" { $0.relaunch() } else { $0.setPageZoom(args) } }; continue } // `setPageZoom`: LLP 1021 §5.3.1 (ZoomMac.swift)
                 if name.hasPrefix("observe") { ExactEvents.hostCommand(name, args); continue }
                 if name == "startTrace_EXPERIMENTAL" || name == "stopTrace_EXPERIMENTAL" { app.deliver { [weak self] in self?.trace(name, args) }; continue }
                 if name == "haptic" {
@@ -1316,7 +1317,7 @@ public final class ExactSession {
                 }
                 if name == "scrollToFragment" { app.deliver { [weak self] in self?.presenter.scrollToFragment(args) }; continue }
                 if ["fastSeek", "load", "requestFullscreen", "requestPictureInPicture", "exitPictureInPicture"].contains(name) {
-                    app.deliver { [weak self] in self?.presenter.mediaCommand(name, args) }
+                    deliverCommand(showing: showing) { $0.presenter.mediaCommand(name, args) }
                     continue
                 }
                 if name == "showPicker" {
@@ -1337,7 +1338,7 @@ public final class ExactSession {
                 }
                 if ["playSound", "playSounds", "stopSounds", "setSounds", "sendMIDI", "requestMIDIAccess", "setRootFontSize", "startViewTransition"].contains(name) { continue } // the runner's own: its voice table's `sound` op plays them (LLP 1096 D8), its MIDI queue's `midi` op sends (LLP 1125 D7); the root font size is laid out already (LLP 1069.000 D3); the view transition played as its batch landed (`crossFade`)
                 if app.handleCommand(name) { continue }
-                app.deliver { [weak self] in guard let self else { return }; delegate?.exactSession(self, command: name, args: args) }
+                deliverCommand(showing: showing) { $0.delegate?.exactSession($0, command: name, args: args) }
             }
         }
     }

@@ -442,7 +442,7 @@ package final class Presenter {
     /// Host intrinsic sizes, several at once under one layout.
     package internal(set) var onIntrinsic: (([(UInt32, CGSize?)]) -> Void)?
     /// A capability an action called (LLP 1005 §3), after its commit.
-    var onCommand: ((String, [Any], UInt32?) -> Void)?
+    var onCommand: ((String, [Any], UInt32?, UInt64?) -> Void)?
     /// A `key` handler called `preventDefault()` (`keyDown(at:_:)`, KeyEvents.swift).
     var defaultPrevented = false
     /// The touches whose `pointerdown` an action prevented, a finger each:
@@ -1058,7 +1058,7 @@ package final class Presenter {
                 let name = op.payload["name"] as? String ?? ""
                 if name == "preventDefault" { defaultPrevented = true; break }
                 if name == "stopPropagation" { propagationStopped = true; break }
-                onCommand?(name, op.payload["args"] as? [Any] ?? [], (op.payload["source"] as? NSNumber)?.uint32Value)
+                onCommand?(name, op.payload["args"] as? [Any] ?? [], (op.payload["source"] as? NSNumber)?.uint32Value, (op.payload["showing"] as? String).flatMap(UInt64.init))
             case .exit:
                 if flats.isFlat(id) { flats.promote(id) }
                 beginExit(id)

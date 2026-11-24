@@ -155,6 +155,8 @@ pub struct Launch {
     /// that shows runs under the page's cause. A host that does not keeps
     /// the stopgap: a page that shows is the app's (LLP 1133.023 D7a).
     pub tells_showing: bool,
+    /// The launch presents no window. Read at the first settlement.
+    pub initially_hidden: bool,
 }
 
 /// [`Launch::page`]: the page facts for the plan a boot runs.
@@ -195,6 +197,7 @@ impl Launch {
         page: None,
         by: crate::LaunchedBy::Person,
         tells_showing: false,
+        initially_hidden: false,
     };
 }
 
@@ -241,6 +244,7 @@ pub fn launching_with<T>(launch: Launch, boot: impl FnOnce() -> T) -> T {
         page: launch.page,
         by: launch.by,
         tells_showing: launch.tells_showing,
+        initially_hidden: launch.initially_hidden,
     };
     let _restore = Restore(Some(LAUNCH.with(|l| l.replace(launch))));
     boot()
@@ -275,12 +279,12 @@ pub(crate) fn launch_page(plan: &exact_plan::Plan) -> crate::Page {
     let told = LAUNCH
         .with(|l| l.borrow().page.clone())
         .map(|page| page.facts(plan));
-    told.map_or_else(Default::default, |told| crate::Page {
-        hidden: false,
+    crate::Page {
+        hidden: LAUNCH.with(|l| l.borrow().initially_hidden),
         frozen: false,
         background: None,
-        ..told
-    })
+        ..told.unwrap_or_default()
+    }
 }
 
 pub(crate) fn launch_preferences() -> Option<crate::Preferences> {

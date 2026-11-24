@@ -196,12 +196,20 @@ pub use uploads::{UploadEnd, UploadMark};
 /// A host-facing effect an action asked for; executed after commit, in order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Command {
+    showing: Option<(u64, provenance::Cause)>,
     /// The capability name.
     pub name: String,
     /// Its arguments.
     pub args: Vec<Value>,
     /// The node whose input ran the action, when a host event did: where a command that shows system UI anchors it (LLP 1069.003 D3). `None` for a timer, an answer, or anything else no input dispatched.
     pub source: Option<ViewId>,
+}
+
+impl Command {
+    /// Identity to return when the operation shows its window or finishes without showing it.
+    pub fn showing_id(&self) -> Option<u64> {
+        self.showing.map(|(id, _)| id)
+    }
 }
 
 #[derive(Clone)]
@@ -880,7 +888,13 @@ impl<D: DataSource> Runner<D> {
             strings,
             failed_mut: vec![None; plan.mutations.len()],
             audio: audio_seam::AudioState(seams.audio.state(&plan, &data)),
-            page: crate::time::launch_page(&plan),
+            page: {
+                let mut page = crate::time::launch_page(&plan);
+                if let Some((hidden, _)) = sequence.and_then(|c| c.showing) {
+                    page.hidden = hidden;
+                }
+                page
+            },
             plan,
             inspection_digest: std::cell::OnceCell::new(),
             panel_navigation: std::cell::OnceCell::new(),
@@ -981,7 +995,7 @@ impl<D: DataSource> Runner<D> {
             activities: activities::Activities::default(),
             extensions: module_seam::ModuleState(seams.modules.state()),
             // Boot is its launch's (LLP 1133.023 D7a), until `booted` below.
-            origins: provenance::Origins::booting(crate::time::launched_by()),
+            origins: provenance::Origins::booting(crate::time::launched_by(), sequence),
             processes: Default::default(),
             wakes: Default::default(),
             calls: Default::default(),
@@ -1411,7 +1425,9 @@ impl<D: DataSource> Runner<D> {
     /// own scroll to a fragment once its route's content has arrived.
     pub fn take_commands(&mut self) -> Vec<Command> {
         self.fragment_command();
-        std::mem::take(&mut self.commands)
+        let commands = std::mem::take(&mut self.commands);
+        self.issue_showings(&commands);
+        commands
     }
 
     /// The store's writes since the last take, in order, for the host to

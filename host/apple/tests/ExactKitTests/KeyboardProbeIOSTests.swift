@@ -109,7 +109,7 @@ final class KeyboardProbeIOSTests: XCTestCase {
         view.autoresizingMask = []
         let command = presenter.onCommand
         defer { presenter.onCommand = command }
-        presenter.onCommand = { name, _, _ in
+        presenter.onCommand = { name, _, _, _ in
             guard name == "test-fit" else { return }
             XCTAssertTrue(presenter.applying)
             view.bounds.size.width -= 40

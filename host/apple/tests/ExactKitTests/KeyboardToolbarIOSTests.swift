@@ -117,7 +117,7 @@ final class KeyboardToolbarIOSTests: XCTestCase {
         previous.contentOffset.y = 1500
         let replacement = UIScrollView(frame: owner.bounds)
         replacement.contentSize = previous.contentSize
-        p.onCommand = { _, _, _ in
+        p.onCommand = { _, _, _, _ in
             owner.groupedOwner = true
             owner.syncScroll()
             owner.addSubview(replacement)

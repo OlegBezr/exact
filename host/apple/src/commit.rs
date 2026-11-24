@@ -230,7 +230,7 @@ impl<D: DataSource> Host<D> {
             batch.router(&change);
         }
         for c in self.runner.take_commands() {
-            batch.command(&c.name, &c.args, c.source);
+            batch.command(&c.name, &c.args, c.source, c.showing_id());
         }
         batch.timed(&mut self.runner, false);
         (batch, error.or(layout_error))

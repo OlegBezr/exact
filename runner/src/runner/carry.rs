@@ -8,6 +8,8 @@ use exact_plan::{Plan, Value};
 /// the clock. A logic edit re-asks resources rather than preserving old answers.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Carried {
+    /// Visibility and standing of the page whose runner is being replaced.
+    pub showing: Option<(bool, super::provenance::Cause)>,
     /// The session plan number (LLP 1029.000.002 D10).
     pub generation: u64,
     /// Highest view id issued in the session, including views since destroyed.
@@ -142,6 +144,7 @@ impl<D: super::DataSource> super::Runner<D> {
     /// Session identity for a fresh reboot, without carrying application state.
     pub fn reboot_sequence(&self) -> Carried {
         Carried {
+            showing: self.carried_showing(),
             generation: self.generation,
             last_view_id: self.ids.last_issued(),
             epoch: self.kernel.epoch(),
@@ -153,6 +156,7 @@ impl<D: super::DataSource> super::Runner<D> {
     /// Everything a reload keeps.
     pub fn carry(&self) -> Carried {
         Carried {
+            showing: self.carried_showing(),
             generation: self.generation,
             last_view_id: self.ids.last_issued(),
             epoch: self.kernel.epoch(),

@@ -40,6 +40,7 @@ fn same_carried(a: &exact_runner::Carried, b: &exact_runner::Carried) -> bool {
         Carried,
     };
     let Carried {
+        showing,
         generation,
         last_view_id,
         views,
@@ -67,7 +68,8 @@ fn same_carried(a: &exact_runner::Carried, b: &exact_runner::Carried) -> bool {
         modes,
         uploads,
     } = a;
-    generation == &b.generation
+    showing == &b.showing
+        && generation == &b.generation
         && last_view_id == &b.last_view_id
         && views == &b.views
         && lists == &b.lists

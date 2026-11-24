@@ -257,7 +257,7 @@ final class RevealKeyboardIOSTests: XCTestCase {
             ]))
             XCTAssertEqual(p.keyboardTop, occupied)
             let hidden = expectation(forNotification: UIResponder.keyboardDidHideNotification, object: nil)
-            p.onCommand = { _, _, _ in
+            p.onCommand = { _, _, _, _ in
                 XCTAssertTrue(p.applying)
                 p.keyboardChanged(Notification(name: UIResponder.keyboardWillChangeFrameNotification, userInfo: [
                     UIResponder.keyboardFrameEndUserInfoKey: window.bounds,

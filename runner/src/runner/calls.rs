@@ -232,16 +232,12 @@ impl<D: DataSource> Runner<D> {
         let name = self.plan.str(tool.name).to_owned();
         let call = self.calls.current.as_mut().expect("a call");
         call.dispatched = Some(self.now_ms);
-        let cold = call.how.cold;
         let by = match call.control {
             Some(i) => format!("control:{}", self.plan.str(self.plan.controls[i].kind)),
             None => format!("tool:system:{door}"),
         };
         self.log(format!("{by} {name} dispatched"));
         let cause = Cause::call(origin == CallOrigin::Action, id);
-        if cold {
-            self.page_launched_for(cause);
-        }
         let result = self.as_cause(cause, |r| r.run_action(tool.action, args, &[]));
         match result {
             Ok(receipt) => Ok(Some(receipt)),

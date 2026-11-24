@@ -409,6 +409,7 @@ export async function main(argv, injected = {}) {
           ...(flags.display !== undefined ? { EXACT_AGENT_DISPLAY: flags.display } : {}),
           ...(fresh ? { EXACT_AGENT_STORAGE_FRESH: '1' } : {}),
           ...(flags.login ? { EXACT_LOGIN_LAUNCH: flags.login } : {}),
+          ...(host === 'macos' ? { EXACT_AGENT_LAUNCHED_BY: flags.launchEntries?.[0]?.launch ?? 'person' } : {}),
         },
         plan: flags.plan,
         world: flags.world,

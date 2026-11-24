@@ -1240,18 +1240,6 @@ impl<D: DataSource> Bridge<D> {
         self.emit(out)
     }
 
-    /// The page's facts (LLP 1069.000 D2); `person`: the person's act shows it (LLP 1133.023 D7a).
-    pub fn set_page(&mut self, bits: u32, person: bool) -> u32 {
-        let page = exact_runner::Page::from_bits(bits);
-        let out = self.host.as_mut().map_or_else(not_booted, |h| {
-            if person {
-                h.runner_mut().person_shows_page();
-            }
-            h.set_page(page)
-        });
-        self.emit(out)
-    }
-
     /// `prefer presented`: 0 false, 1 true, else the host's own.
     pub fn prefer_presented(&mut self, value: u32) -> u32 {
         let preferred = match value {

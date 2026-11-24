@@ -395,6 +395,9 @@ fn a_page_shown_without_the_persons_act_is_not_the_apps() {
     assert_eq!(shown_again(|_| {}), [Device, Device], "unexplained");
     let device = shown_again(|r| {
         r.act_from(Device, "bring", vec![]).unwrap();
+        let id = r.take_commands().pop().unwrap().showing_id().unwrap();
+        r.set_page(r.page()).unwrap();
+        r.finish_show_request(id, true);
     });
     assert_eq!(device, [Device, Device], "a device's focus()");
     let action = shown_again(|r| {
@@ -405,6 +408,8 @@ fn a_page_shown_without_the_persons_act_is_not_the_apps() {
     assert_eq!(action, [Device, Device], "a background action's focus()");
     let app = shown_again(|r| {
         r.act_from(App, "bring", vec![]).unwrap();
+        let id = r.take_commands().pop().unwrap().showing_id().unwrap();
+        r.finish_show_request(id, true);
     });
     assert_eq!(app, [App, App], "the app's own focus()");
     assert_eq!(shown_again(Runner::person_shows_page), [App, App]);
@@ -412,23 +417,34 @@ fn a_page_shown_without_the_persons_act_is_not_the_apps() {
     assert_eq!(shown_again_on(false, |_| {}), [App, App], "untold");
 }
 
-/// The person's input in a window something else showed makes the page
-/// theirs; the device's `focus()` while it shows makes it the device's.
 #[test]
-fn the_persons_input_and_a_later_request_retake_the_page() {
-    let (mut r, deck) = boot_told(SHOWN, "deck");
-    r.take_requests();
-    let origin = |r: &mut Runner<Later>| {
+fn a_show_request_can_be_used_only_once_and_only_by_its_window() {
+    let (mut a, deck) = boot_told(SHOWN, "deck");
+    let (mut b, _) = boot_told(SHOWN, "deck");
+    let issue = |r: &mut Runner<Later>| {
+        r.act("bring", vec![]).unwrap();
+        r.take_commands().pop().unwrap().showing_id().unwrap()
+    };
+    let read = |r: &mut Runner<Later>| {
+        r.take_requests();
         r.dispatch(deck, Event::Load).unwrap();
         r.take_requests()[0].request.reach.origin
     };
-    assert_eq!(origin(&mut r), CallOrigin::App, "the launch's");
-    r.act_from(CallOrigin::Device, "bring", vec![]).unwrap();
-    r.take_requests();
-    assert_eq!(origin(&mut r), CallOrigin::Device);
-    // A press the frame has no handler for still says the person is there.
-    let _ = r.dispatch(deck, Event::Press);
-    assert_eq!(origin(&mut r), CallOrigin::App);
+    let id = issue(&mut a);
+    let other = issue(&mut b);
+    assert_ne!(id, other);
+    a.finish_show_request(other, true);
+    assert_eq!(read(&mut a), CallOrigin::Device);
+    a.finish_show_request(id, true);
+    assert_eq!(read(&mut a), CallOrigin::App);
+    a.finish_show_request(id, true);
+    assert_eq!(read(&mut a), CallOrigin::Device);
+    let refused = issue(&mut a);
+    a.finish_show_request(refused, false);
+    a.finish_show_request(refused, true);
+    assert_eq!(read(&mut a), CallOrigin::Device);
+    a.person_shows_page();
+    assert_eq!(read(&mut a), CallOrigin::App);
 }
 
 /// A launch made to run a call boots under the call's cause, as does the
@@ -439,6 +455,7 @@ fn a_calls_cold_launch_boots_as_the_call() {
         (crate::LaunchedBy::Call { press: false }, CallOrigin::Tool),
         (crate::LaunchedBy::Call { press: true }, CallOrigin::Action),
         (crate::LaunchedBy::Person, CallOrigin::App),
+        (crate::LaunchedBy::Unknown, CallOrigin::Device),
     ] {
         let launch = crate::time::Launch {
             by,
@@ -456,31 +473,79 @@ fn a_calls_cold_launch_boots_as_the_call() {
     }
 }
 
-/// A call that booted the session whose page shows (an App Intent's cold
-/// launch on macOS, which the host cannot tell from the person's) takes the
-/// page until the person acts in it; a call to a running app does not.
 #[test]
-fn a_cold_calls_page_is_the_calls_until_the_person_acts() {
-    let load = |r: &mut Runner<Later>, deck| {
-        r.dispatch(deck, Event::Load).unwrap();
-        r.take_requests().last().unwrap().request.reach.origin
-    };
-    for (cold, expected) in [(true, CallOrigin::Tool), (false, CallOrigin::App)] {
-        let (mut r, deck) = boot_told(FRAME, "deck");
-        let how = crate::runner::calls::CallHow {
-            door: "agent".into(),
-            cold,
-            ..Default::default()
+fn first_presentation_on_a_host_that_has_not_opted_in_keeps_its_cause() {
+    let source = "shape Page\n  presented: bool\ncomponent App\n  resource page = exactPage() as shape Page\n  mutation m as shape number\n  task drawn when page.presented\n    after(1, saveIt)\n  action saveIt\n    send m = save(1)\n  view\n    text \"x\" testId=\"x\"\n";
+    for told in [false, true] {
+        crate::page::set_awaits_present(true);
+        let (mut r, _) = if told {
+            boot_told(source, "x")
+        } else {
+            boot_with(source, "x")
         };
-        r.call_tool("ping", "{}", how).unwrap();
-        r.advance(1.0).unwrap();
-        r.take_requests();
-        assert_eq!(load(&mut r, deck), expected, "cold {cold}");
-        let _ = r.dispatch(deck, Event::Press);
+        crate::page::set_awaits_present(false);
+        assert!(!r.presented().value());
+        r.set_page(crate::Page {
+            hidden: true,
+            ..r.page()
+        })
+        .unwrap();
+        r.page_presented().unwrap();
+        r.advance(1.).unwrap();
         assert_eq!(
-            load(&mut r, deck),
-            CallOrigin::App,
-            "cold {cold}, then a press"
+            r.take_requests()[0].request.reach.origin,
+            if told {
+                CallOrigin::Device
+            } else {
+                CallOrigin::App
+            }
         );
+    }
+}
+
+#[test]
+fn a_reload_keeps_the_pages_cause_but_retires_its_requests() {
+    let (mut r, _) = boot_told(SHOWN, "deck");
+    r.act_from(CallOrigin::Device, "bring", vec![]).unwrap();
+    let id = r.take_commands().pop().unwrap().showing_id().unwrap();
+    r.finish_show_request(id, true);
+    r.act("bring", vec![]).unwrap();
+    let stale = r.take_commands().pop().unwrap().showing_id().unwrap();
+    for carried in [r.carry(), r.reboot_sequence()] {
+        let mut reloaded = crate::time::launching_with(
+            crate::time::Launch {
+                tells_showing: true,
+                ..crate::time::Launch::NONE
+            },
+            || {
+                Runner::boot_carrying(
+                    contract::compile(SHOWN).unwrap(),
+                    Later,
+                    Kernel::with_monospace(),
+                    &carried,
+                    Default::default(),
+                    "/",
+                )
+            },
+        )
+        .unwrap();
+        let view = reloaded.kernel().find_by_test_id("deck")[0];
+        let deck = reloaded.kernel().node_by_key(view).unwrap().id;
+        for replay in [false, true] {
+            if replay {
+                reloaded.finish_show_request(stale, true);
+            }
+            reloaded.dispatch(deck, Event::Load).unwrap();
+            assert_eq!(
+                reloaded
+                    .take_requests()
+                    .last()
+                    .unwrap()
+                    .request
+                    .reach
+                    .origin,
+                CallOrigin::Device
+            );
+        }
     }
 }

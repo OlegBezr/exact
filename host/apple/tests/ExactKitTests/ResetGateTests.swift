@@ -116,7 +116,7 @@ final class ResetGateTests: XCTestCase {
         XCTAssertTrue(Set(ResetGate.knownLoss.keys).isDisjoint(with: Set(ResetGate.replayed.keys).union(ResetGate.dropped.keys)), "a known loss is in no other table")
         XCTAssertTrue(ResetGate.replayed.values.allSatisfy { !$0.1.isEmpty } && ResetGate.dropped.values.allSatisfy { !$0.isEmpty } && ResetGate.knownLoss.values.allSatisfy { !$0.isEmpty }, "each with its reason")
         XCTAssertEqual(Set(ResetGate.replayed.values.map(\.0)), Set(ResetGate.Replay.allCases), "each replay has a call that asks it")
-        let held = ["collectionFeedback(_:now:)", "focus(_:now:)", "advance(now:untilRequest:)", "setPage(_:)", "advance(now:untilRequest:)", "covers(_:)", "tellSoon(_:)"]
+        let held = ["collectionFeedback(_:now:)", "focus(_:now:)", "advance(now:untilRequest:)", "setPage(_:showing:)", "advance(now:untilRequest:)", "covers(_:)", "tellSoon(_:)"]
         XCTAssertEqual(ResetGate.replays(held), [.advance, .covers, .page, .collections], "each replay once, in order; a focus dropped")
         XCTAssertEqual(ResetGate.replays(["focus(_:now:)", "change(_:_:selection:now:)", "unlisted(_:)"]), [], "dropped, and an unlisted call with them")
     }
@@ -245,7 +245,7 @@ final class ResetGateTests: XCTestCase {
             session.tellSoon([{ $0.setPage(0) }])
             session.tellPage()
         }
-        XCTAssertEqual(held.filter { $0 == "setPage(_:)" || $0 == "tellSoon(_:)" }, ["setPage(_:)", "tellSoon(_:)", "setPage(_:)"], "\(held)")
+        XCTAssertEqual(held.filter { $0 == "setPage(_:showing:)" || $0 == "tellSoon(_:)" }, ["setPage(_:showing:)", "tellSoon(_:)", "setPage(_:showing:)"], "\(held)")
         XCTAssertEqual(session.noticesInFlight, inFlight, "a held notice counted in flight: it never lands")
         XCTAssertEqual(replays, [.page])
         XCTAssertGreaterThanOrEqual(entered, 1, "told again")

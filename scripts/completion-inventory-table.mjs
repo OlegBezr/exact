@@ -39,7 +39,7 @@ export const classifications = [
     ["apple:host/apple/src/abi/exports.rs",
       "exact_control_text_changed exact_insets exact_orientation_applied exact_resize exact_scrolled exact_segments exact_set_button_measure exact_set_console " +
       "exact_set_control_text exact_set_display_scale exact_set_fonts exact_set_inline_boxes exact_set_text_geometry exact_set_lines exact_set_measure exact_set_mode " +
-      "exact_set_page exact_set_place exact_set_preferences exact_set_root_font_size exact_set_symbol_measure exact_set_time exact_set_time_format exact_set_wake " +
+      "exact_launch_showing exact_cancel_showing exact_set_page exact_set_place exact_set_preferences exact_set_root_font_size exact_set_symbol_measure exact_set_time exact_set_time_format exact_set_wake " +
       "exact_surface_record exact_text_scale_changed exact_timeline_scrolled exact_top_layer exact_transform_motion"],
     ["painted:host/painted/src/agent.rs", "prefer prefer_fold retell_offset"],
     ["painted:host/painted/src/bars.rs", "Host::bars Host::project_bars Host::set_bar_room"],
@@ -541,7 +541,7 @@ export const classifications = [
     ["runner:runner/src/runner/module_seam/forward.rs", "Runner::polls_asking"],
     ["runner:runner/src/runner/module_seam/forward.rs", "Runner::report_views"],
     ["runner:runner/src/runner/processes.rs", "Runner::set_work_clock"],
-    ["runner:runner/src/runner/provenance.rs", "Runner::act_from Runner::as_person Runner::person_shows_page Runner::view_origin"],
+    ["runner:runner/src/runner/provenance.rs", "Runner::act_from Runner::as_person Runner::finish_show_request Runner::person_shows_page Runner::view_origin"],
     ["runner:runner/src/runner/seams.rs", "Runner::call_agent Runner::call_tool Runner::intents_state Runner::place_controls Runner::press_control"],
     ["painted:host/painted/src/canvas/jni_extensions.rs", "Java_dev_exact_canvas_Native_press Java_dev_exact_canvas_Native_cancelPress Java_dev_exact_canvas_Native_pressLive"],
     ["painted:host/painted/src/canvas/requests.rs", "CanvasHost::press_control CanvasHost::cancel_press CanvasHost::press_live"],
@@ -677,7 +677,7 @@ export const classifications = [
       "Executor::again Executor::begin_pump Executor::cancel Executor::drain Executor::forget Executor::let_go_started Executor::ordered_idle Executor::resume_ordered " +
       "Executor::run Executor::set_app_roots Executor::start Executor::wait"],
     ["render:host/render/src/requests.rs", "completion hand_out"],
-    ["runner:runner/src/runner.rs", "Runner::take_commands"],
+    ["runner:runner/src/runner.rs", "Command::showing_id Runner::take_commands"],
     ["runner:runner/src/runner/admission.rs",
       "Runner::collect_aborts Runner::collected_aborts Runner::has_module_aborts Runner::has_ordered_request_refusals Runner::has_request_refusals " +
       "Runner::refuse_request Runner::requeue_aborted_answers Runner::take_aborted_answer Runner::take_explicit_aborts Runner::take_request_refusal"],
@@ -1134,7 +1134,7 @@ export const classifications = [
   group("native callbacks", ["one-shot"], "module invocation or numbered native send and its session-bound caller", "UI-owned",
     "runner/src/runner/provenance.rs next_invocation allocates invocation ids; bound.rs forward_body and letgo.rs number_data_call number native sends so cancellation and held replies identify the call.", [
     ["runner:runner/src/runner/modules/bound.rs", "Runner::forward_body#requests:1"],
-    ["runner:runner/src/runner/provenance.rs", "Runner::next_invocation#last_id:1"],
+    ["runner:runner/src/runner/provenance.rs", "Runner::next_invocation#last_id:1 Runner::showing_request#NEXT.try_update:1"],
     ["runner:runner/src/runner/modules/letgo.rs", "Runner::number_data_call_linked#requests:1"],
   ]),
   group("holds", ["one-shot"], "open payment sheet, request id and current handler attempt", "UI-owned",

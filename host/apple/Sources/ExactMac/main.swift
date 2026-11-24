@@ -138,7 +138,6 @@ final class Adapter: ExactSessionDelegate {
         // to be activated, which macOS 14's cooperative activation decides.
         case "focus":
             if agentMode { session.log("focus window") }
-            ExactSession.appAsksToShow()
             windows.first { $0.session === session }?.front()
         // `hideWindow()` (LLP 1133.025 D4): what the person's close does to a
         // window the app keeps, the app still running; refused where it ends.
@@ -240,6 +239,14 @@ func footprint() -> UInt64 {
 /// window to fit a 720-point display, and a node the script reads at y 630
 /// would then be below the viewport's edge, where no tap reaches it.
 final class ExactWindow: ExactDrivenWindow {
+    weak var page: ExactSession?
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown: page?.personUsesWindow()
+        default: break
+        }
+        super.sendEvent(event)
+    }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         agentMode ? frameRect : super.constrainFrameRect(frameRect, to: screen)
     }
@@ -295,6 +302,8 @@ final class DocumentWindow: NSObject, NSWindowDelegate, NSWindowRestoration {
         // Below the normal level, which alone would make it float across Spaces, out of ⌘`'s cycle.
         if AgentLink.windowsBehind { window.level = .agentBehind; window.collectionBehavior.formUnion([.managed, .participatesInCycle]) }
         super.init()
+        (window as? ExactWindow)?.page = session
+        session.launchShowing(in: window, by: .unknown, hidden: first && LaunchKind.withoutWindow)
         // AppKit's own opening animation, and window tabs only where documents
         // have windows of their own (LLP 1115.000 D7.9).
         ExactDocuments.furnish(window)
@@ -500,6 +509,8 @@ final class DocumentWindow: NSObject, NSWindowDelegate, NSWindowRestoration {
         if #available(macOS 14.0, *) { app.activate() } else { app.activate(ignoringOtherApps: true) }
     }
 
+    func reopen() { session.personOrdersWindow { front() } }
+
     /// The app's `close()`: the window goes, unasked.
     func close() {
         closing = true
@@ -651,11 +662,12 @@ func frontWindow() -> DocumentWindow? {
 /// is the whole app, and keeps its frame under that name; `_blank` and
 /// File ▸ New Window have none.
 @discardableResult
-func openWindow(asTab: Bool = false, named: String? = nil, at location: String? = nil,
+func openWindow(asTab: Bool = false, person: Bool = false, named: String? = nil, at location: String? = nil,
                 restoring: (NSUserInterfaceItemIdentifier, [String: String])? = nil) -> DocumentWindow {
     let beside = frontWindow()
     let label = named ?? { windowCount += 1; return "window-\(windowCount)" }()
     let w = DocumentWindow(label: label, first: false, rooted: named != nil && named != "main")
+    w.session.launchShowing(in: w.window, by: person ? .person : .unknown, hidden: false)
     if let (identifier, archive) = restoring {
         w.window.identifier = identifier
         w.session.restoreWindowState(archive)
@@ -706,16 +718,16 @@ func openWindow(asTab: Bool = false, named: String? = nil, at location: String? 
 /// of that name opens there. `resume` (Settings…, D5) brings the window
 /// forward as it stands, or opens it where it last stood.
 func openTarget(_ location: String, _ target: String, resume: Bool = false) {
-    guard target != "_blank" else { openWindow(at: location); return }
+    guard target != "_blank" else { openWindow(person: true, at: location); return }
     guard let open = windows.first(where: { $0.label == target && !$0.closing }) else {
-        openWindow(named: target, at: resume ? lastLocation[target] ?? location : location)
+        openWindow(person: true, named: target, at: resume ? lastLocation[target] ?? location : location)
         return
     }
     if !resume, !open.session.shows(location) {
         if !open.rooted { open.session.navigate(location, followed: true) }
         else if open.session.beforeUnload() { open.session.reroot(location) }
     }
-    open.front()
+    open.reopen()
 }
 
 /// Every route in ends here (LLP 1033 D3; the router `ExactDocuments.route`
@@ -768,7 +780,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
     func applicationWillFinishLaunching(_ notification: Notification) {
         LaunchKind.install()
-        ExactComposition.installNotificationClicks(on: exact, boot: nil, activate: { session in windows.first { $0.session === session }?.front() })
+        ExactComposition.installNotificationClicks(on: exact, boot: nil, activate: { session in windows.first { $0.session === session }?.reopen() })
         ExactComposition.installWakes(on: exact)
         ExactComposition.installReach(on: exact)
     }
@@ -826,15 +838,16 @@ final class Delegate: NSObject, NSApplicationDelegate {
         if !flag, ExactDocuments.launchMode != "navigate-new" {
             let away = { (w: DocumentWindow) in !w.window.isVisible && !w.window.isMiniaturized }
             if let main = windows.first(where: { $0.label == "main" && !$0.closing }) {
-                if away(main) { main.front(); return false }
+                if away(main) { main.reopen(); return false }
             } else if !windows.isEmpty {
-                openWindow(named: "main")
+                openWindow(person: true, named: "main")
                 return false
             }
-            if let hidden = windows.first(where: away) { hidden.front(); return false }
+            if let hidden = windows.first(where: away) { hidden.reopen(); return false }
         }
+        if flag, let target = frontWindow() { target.reopen(); return false }
         guard !flag, windows.isEmpty, ExactDocuments.launchMode == "navigate-new" else { return true }
-        openWindow()
+        openWindow(person: true)
         return false
     }
     /// ⌘Q asks each window's app first (`beforeunload`, studio diary R17):
@@ -896,6 +909,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
     /// why the app comes forward; one that opens nothing leaves the window
     /// where it was.
     func application(_ application: NSApplication, open urls: [URL]) {
+        if !session.booted && !urls.isEmpty { receivedLaunchURL = true }
         var files: [URL] = []
         // @ref LLP 1038 D8 — Launch Services may batch cold or warm links.
         IncomingURLBatch.deliver(urls, development: { url in
@@ -918,7 +932,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
     /// 1069.010 D4).
     @objc func newWindowForTab(_ sender: Any?) {
         guard ExactDocuments.launchMode == "navigate-new" else { return }
-        openWindow(asTab: sender is NSWindow)
+        openWindow(asTab: sender is NSWindow, person: true)
     }
 }
 
@@ -949,11 +963,25 @@ quitSignal.resume()
 var planWatch: DispatchSourceTimer?
 var devPlanPath: String?
 var launchDocuments: [String] = []
+var receivedLaunchURL = false
 nonisolated(unsafe) var readySent = false
 
 // Delay both attachment and boot until Launch Services has delivered launch URLs.
 // @ref LLP 1038 D5/D8
 func finishLaunching() {
+    // AppKit does not identify an App Intent in its default-launch key.
+    // An ambiguous cold boot has no standing until input to this window.
+    var launch: WindowLaunch = !launchDocuments.isEmpty || launchURL != nil || receivedLaunchURL ? .person : .unknown
+    if ExactEnv.agentCarried {
+        switch ExactEnv.environment["EXACT_AGENT_LAUNCHED_BY"] {
+        case "person": launch = .person
+        case "call": launch = .call
+        case "wake": launch = .wake
+        case "notification": launch = .unknown
+        default: break
+        }
+    }
+    session.launchShowing(in: window, by: launch, hidden: LaunchKind.withoutWindow || app.isHidden)
     ExactEnv.stamp("before boot")
     let tBoot = CACurrentMediaTime()
     // The dev loop (LLP 1007 §6, here): EXACT_DEV_PLAN names the plan the
@@ -1037,10 +1065,12 @@ func finishLaunching() {
     let withoutWindow = LaunchKind.withoutWindow
     if withoutWindow {
         launchWithoutWindow()
-    } else if keepsFrontmostApp {
-        firstWindow.front()
     } else {
-        window.makeKeyAndOrderFront(nil)
+        let order = {
+            if keepsFrontmostApp { firstWindow.front() }
+            else { window.makeKeyAndOrderFront(nil) }
+        }
+        if launch == .person { session.personOrdersWindow(order) } else { order() }
     }
     if let url = launchDevelopmentURL {
         launchDevelopmentURL = nil

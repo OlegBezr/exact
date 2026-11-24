@@ -742,7 +742,13 @@ impl Batch {
 
     /// `{"op":"command","name":…,"args":[…]}` — a capability an action
     /// called (LLP 1005 §3), for the presenter to execute after the commit.
-    pub fn command(&mut self, name: &str, args: &[exact_plan::Value], source: Option<u32>) {
+    pub fn command(
+        &mut self,
+        name: &str,
+        args: &[exact_plan::Value],
+        source: Option<u32>,
+        showing: Option<u64>,
+    ) {
         let mut s = String::from("{\"op\":\"command\",\"name\":");
         quote(name, &mut s);
         s.push_str(",\"args\":[");
@@ -753,6 +759,10 @@ impl Batch {
             value_json(v, &mut s);
         }
         s.push(']');
+        if let Some(id) = showing {
+            // JSON numbers cannot represent every request id.
+            s.push_str(&format!(",\"showing\":\"{id}\""));
+        }
         if let Some(id) = source {
             s.push_str(&format!(",\"source\":{id}"));
         }
@@ -1375,7 +1385,7 @@ mod finish_bytes_tests {
                                 values: vec![exact_plan::Value::str("日本語")],
                                 types: vec![None],
                             });
-                            batch.command("focus", &[exact_plan::Value::Number(1.)], None);
+                            batch.command("focus", &[exact_plan::Value::Number(1.)], None, None);
                             batch.destroy(3);
                             batch.roots(&[1]);
                             batch.collections("items", "[]");

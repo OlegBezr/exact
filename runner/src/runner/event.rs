@@ -1042,14 +1042,13 @@ impl<D: DataSource> Runner<D> {
         // The person's act in the app's own UI is an `app` cause. What the
         // host observes of the page and a package view's message run under
         // the page's cause while it shows (`as_shown`).
-        let package = matches!(event, Event::Message(_))
+        let package = (self.origins.told || matches!(event, Event::Message(_)))
             && (self.kernel.node(view)).is_some_and(|n| {
                 n.props
                     .str(exact_kernel::PropId::NativeViewModuleName)
                     .is_some()
             });
         let observed = observed(&event) || package;
-        let activates = super::provenance::activates(&event);
         let dispatched = |r: &mut Self| match marked {
             Some(marked) => {
                 let cause = r.join_causes(r.cause(), marked);
@@ -1064,7 +1063,6 @@ impl<D: DataSource> Runner<D> {
             let shown = !self.page.hidden;
             return self.as_shown(shown, dispatched);
         }
-        self.page_used(activates);
         self.as_person(dispatched)
     }
 

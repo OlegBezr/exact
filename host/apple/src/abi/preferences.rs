@@ -282,14 +282,48 @@ impl<D: DataSource> Bridge<D> {
         }
     }
 
+    /// Only a host that identifies window showings opts in. An unspecified
+    /// AppKit launch may be an App Intent, even with an ordinary window.
+    pub fn launch_showing(&mut self, by: u32, hidden: bool) {
+        use exact_runner::LaunchedBy;
+        self.launch_facts.tells_showing = true;
+        self.launch_facts.by = match by {
+            1 => LaunchedBy::Person,
+            2 => LaunchedBy::Call { press: false },
+            3 => LaunchedBy::Wake,
+            4 => LaunchedBy::BackgroundAction,
+            _ => LaunchedBy::Unknown,
+        };
+        self.launch_facts.initially_hidden = hidden;
+    }
+
+    /// Facts and their showing arrive in one runner turn. Zero observes the
+    /// window, one identifies the person's act, and a request returns its id.
+    pub fn set_page(&mut self, bits: u32, showing: u64) -> u32 {
+        let page = exact_runner::Page::from_bits(bits);
+        let out = self.host.as_mut().map_or_else(not_booted, |h| {
+            match showing {
+                0 => {}
+                1 if !page.hidden => h.runner_mut().person_shows_page(),
+                id => h.runner_mut().finish_show_request(id, !page.hidden),
+            }
+            h.set_page(page)
+        });
+        self.emit(out)
+    }
+
+    /// Retire an operation that finished without showing its window.
+    pub fn cancel_showing(&mut self, request: u64) {
+        if let Some(h) = self.host.as_mut() {
+            h.runner_mut().finish_show_request(request, false);
+        }
+    }
+
     /// What a boot is told at launch: the date and place last told, and a
     /// live clock's reading now, where a fresh runner's clock starts.
     pub(super) fn launch(&self) -> exact_runner::time::Launch {
         exact_runner::time::Launch {
             clock: self.live_clock.map(|wall| wall()),
-            // `tellPage` says who shows the page (`PageFacts.swift`); iOS
-            // keeps the earlier rule until it has been run (LLP 1133.023 D7a).
-            tells_showing: cfg!(target_os = "macos"),
             ..self.launch_facts.clone()
         }
     }

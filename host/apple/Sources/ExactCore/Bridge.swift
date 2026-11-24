@@ -989,8 +989,9 @@ package final class Runtime {
         return count == 0 ? Batch(ops: [], timers: false, motion: false, clock: nil, error: nil) : read(count)
     } }
     package func setPreferences(_ bits: UInt32) -> Batch { on(layout: true) { read(exact_set_preferences(rt, bits)) } }
-    /// `person`: the person's act shows the page (LLP 1133.023 D7a).
-    package func setPage(_ bits: UInt32, person: Bool = false) -> Batch { on(layout: true) { read(exact_set_page(rt, bits, person ? 1 : 0)) } }
+    package func setPage(_ bits: UInt32, showing: UInt64 = 0) -> Batch { on(layout: true) { read(exact_set_page(rt, bits, showing)) } }
+    package func cancelShowing(_ id: UInt64) { on { () -> Void in _ = exact_cancel_showing(rt, id) } }
+    package func launchShowing(by: UInt32, hidden: Bool) { on { () -> Void in _ = exact_launch_showing(rt, by, hidden ? 1 : 0) } }
     /// `prefer presented` (LLP 1069.000 D6): held at a value, or nil for the host's own.
     package func preferPresented(_ value: Bool?) -> Batch { on(layout: true) { read(exact_prefer_presented(rt, value.map { $0 ? 1 : 0 } ?? 2)) } }
     /// Whether the running plan reads `onLine`; true when the owner is busy.

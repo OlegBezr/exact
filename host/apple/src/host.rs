@@ -777,7 +777,7 @@ impl<D: DataSource> Host<D> {
             batch.router(&change);
         }
         for c in host.runner.take_commands() {
-            batch.command(&c.name, &c.args, c.source);
+            batch.command(&c.name, &c.args, c.source, c.showing_id());
         }
         batch.timed(&mut host.runner, true);
         // The engine hears the whole tree once: values, no transitions; an
