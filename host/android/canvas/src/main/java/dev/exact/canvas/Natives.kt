@@ -1258,7 +1258,7 @@ class Natives(
 
     /** A kept partitioned frame's reporter. Its events go to the frame's allocation, which exact2 checks, so an
      * element let go for a new partition still ends its navigation in flight. */
-    private fun browser(e: Element) = FrameBrowser({ (e.view as? WebView)?.takeIf { !e.parked } }, { JSONObject(e.wanted).text("src") },
+    private fun browser(e: Element) = FrameBrowser({ (e.view as? WebView)?.takeIf { !e.parked } }, { JSONObject(e.wanted).text("src") }, { JSONObject(e.wanted).text("id") },
         { url -> if (!e.parked) loadFrame(e, url) }, { event, record -> android.os.Handler(context.mainLooper).post {
             Exact.frameEvent(e.id, e.slot, e.generation, e.session, event, record)
         } })

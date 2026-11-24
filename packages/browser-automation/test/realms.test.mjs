@@ -41,3 +41,17 @@ test('a context reaches its frame and a realm target is unsupported on the web',
     return [context, refused.error, refused.message.includes('realm')];
   })).toEqual([{ result: 'Wallet' }, 'NotSupportedError', true]);
 }, 60_000);
+
+test('a channel is refused by name before page code runs', async () => {
+  expect(await inFrame(async () => {
+    const api = (await import('/binding.js')).implementation();
+    const args = { id: 'tab', functionDeclaration: '() => window.invoked = true',
+      arguments: [{ type: 'channel', value: { channel: 'playback' } }] };
+    const refusals = await Promise.all([api.callFunction(args), api.callFunction({ ...args, sandbox: 'video' }), api.addPreloadScript(args)]);
+    const ordinary = await api.callFunction({id: 'tab', arguments: [{type: 'channel', name: 'news'}], functionDeclaration: 'value => value.name'});
+    const payload = await api.callFunction({id: 'tab', arguments: [{type: 'channel', value: {channel: 'news', payload: 1}}],
+      functionDeclaration: 'x => x.value.payload'});
+    return [ordinary.result, payload.result, refusals.every(r => r.error === 'NotSupportedError' && r.message.includes('script.message')),
+      typeof document.querySelector('iframe').contentWindow.invoked];
+  })).toEqual(['news', 1, true, 'undefined']);
+}, 60_000);

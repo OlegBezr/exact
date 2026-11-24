@@ -598,6 +598,12 @@ started and a remote Play's later reports run as the app's. Both follow
 the hidden-page rule while hidden. An identified remote Play or Pause
 handler runs as an `action`.
 
+**Narrowed (Charlie, 2026-11-24, "ask panel about questions then follow recs of panel"; panel 3–1; LLP 1133.023 D7a).**
+The runner refuses a request to bring a hidden page forward when a tool
+call or background action caused it, including work it scheduled or
+registered. Device-caused and uncaused shows are the third known gap.
+Host relabelling and a request identity across hosts stay out.
+
 **Out (Charlie, 2026-11-24, "recs ok"; LLP 1133.023 D7a).** Carrying
 the initiating cause with every observed event.
 
@@ -1214,6 +1220,11 @@ reading. Nothing that isn't HTML is added by it.
   running the script, so an approval cannot land in a replacement document.
   The web keeps same-origin frame evaluation and reports realm targeting unsupported.
   An Android provider without document-start injection keeps plain page-world results.
+- **Sandbox messages (Charlie, 2026-11-24, "recs ok").** LLP 1020.002 D9
+  unblocks Float’s playback transitions and the wallet’s requests. Data code
+  holding `browser.automation` receives bounded `script.message` events from
+  a named sandbox with the posting document’s realm and host-supplied origin.
+  A posted event survives navigation and runs with the device’s authority.
 - **Expanded (LLP 1096; admitted by the orchestrator under Charlie's
   2026-10-04 delegation, "make decisions without me"):** short sounds an
   action can schedule: a `sound` declaration (a WAV in `assets/`, at most 10
@@ -1993,7 +2004,15 @@ browser as the oracle, the same shape layout already has. In exchange, not in v1
 - **A gesture arena, claims, leases, compositions, or an interactive-navigation
   model.** Recognition, hit-testing, and scroll-vs-pan arbitration are the
   platform's (`touch-action`, `UIGestureRecognizer`); owning them is the
-  permanent bug annuity LLP 0559 F1 describes. Scroll always wins.
+  permanent bug annuity LLP 0559 F1 describes. Scroll wins except at the
+  sheet boundary below.
+  **Expanded (Charlie, 2026-11-24, "recs ok"):** A `scroll` or vertical `list`
+  may bind `heightDragFor` to an ancestor (Pocket Lab's in-card sheet).
+  The host owns the contact. Upward travel grows the target to `max-height`
+  before scrolling. Downward travel consumes the offset before lowering the
+  target to `min-height`. Only a drag that moved the sheet sends
+  `heightrelease`, once, with its displayed height and velocity. A scroll-only
+  release and its deceleration belong to the scroller (LLP 1041 §8.5).
   **Expanded (Charlie, 2026-09-28: approved `panrelease`, with Spark as the
   consumer LLP 1057 asked for):** `panrelease=action`, fired once when a `pan`
   that began ends, with its release velocity (vx, vy) in pan's units per

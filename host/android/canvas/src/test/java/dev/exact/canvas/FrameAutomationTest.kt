@@ -65,6 +65,7 @@ class FrameAutomationTest {
 
     /** A reply proxy that keeps what it was asked to run. */
     private class Proxy : JavaScriptReplyProxy() {
+        val token = java.util.UUID.randomUUID().toString().replace("-", "")
         val scripts = ArrayList<Pair<String, WebViewOutcomeReceiver<String, JavaScriptExecutionException>>>()
         override fun postMessage(message: String) {}
         override fun postMessage(message: ByteArray) {}
@@ -74,14 +75,14 @@ class FrameAutomationTest {
     }
 
     /** The world's script posting to its listener, as the main frame does. */
-    private fun post(web: WebView, world: String, data: String, proxy: Proxy, source: Proxy = proxy) {
-        val text = if (data == "ready") data else {
+    private fun post(web: WebView, world: String, data: String, proxy: Proxy, source: Proxy = proxy, origin: String = "https://example.com:443") {
+        val text = if (data == "ready") "ready:${proxy.token}" else {
             val message = JSONObject(data)
             val marker = proxy.scripts.lastOrNull()?.first?.let { Regex("""token (?:\?\?=|===) "([^"]+)""").find(it)?.groupValues?.get(1) }
             message.put("marker", marker).toString()
         }
         compat.worldListeners.getValue(web).getValue(world)
-            .onPostMessage(web, WebMessageCompat(text), Uri.parse("https://example.com:443"), true, source)
+            .onPostMessage(web, WebMessageCompat(text), Uri.parse(origin), true, source)
     }
 
     /** The last script [proxy] ran answers its value, as the world's script posts it. */
@@ -262,6 +263,138 @@ class FrameAutomationTest {
         assertEquals("agent", arm.controller)
         commit(web, "https://example.com/next")
         assertEquals("AbortError", entered.error())
+    }
+
+    @Test fun aPostKeepsItsProxyAndOriginAfterANewDocumentCommits() {
+        val natives = natives()
+        natives.ensure(1, 1, 0, 0, props("tab"), 0)
+        val web = compat.last()
+        val args = JSONObject().put("id", "tab").put("channelSession", "first").put("functionDeclaration", "post => post('pause')")
+            .put("arguments", JSONArray("""[{"type":"channel","value":{"channel":"playback"}}]"""))
+        val messages = mutableListOf<JSONObject>()
+        val other = mutableListOf<JSONObject>()
+        val first: (JSONObject) -> Unit = { messages.add(it) }
+        val second: (JSONObject) -> Unit = { other.add(it) }
+        fun register(session: String, receiver: (JSONObject) -> Unit): JSONObject {
+            var answer: JSONObject? = null
+            FrameAutomations.run("addPreloadScript", args.put("channelSession", session), receiver) { answer = it }
+            return answer!!
+        }
+        fun capability() = Regex("[0-9a-f-]{36}").find(compat.worldScripts.getValue(web).last().second)!!.value
+        fun emit(key: String, json: String, source: Proxy) =
+            post(web, "video", JSONObject().put("capability", key).put("json", json).toString(), source)
+        assertEquals("NotSupportedError", register("first", first).getString("error"))
+        args.put("sandbox", "video")
+        val script = register("first", first).getString("script")
+        val key = capability()
+        assertTrue(register("second", second).has("script"))
+        val otherKey = capability()
+        assertNotEquals(key, otherKey)
+        val proxy = Proxy()
+        commit(web, "https://example.com/first")
+        emit(key, "1", proxy)
+        val early = messages.removeAt(0).getJSONObject("source")
+        val live = call("evaluate", "id" to null, "target" to JSONObject().put("realm", early.getString("realm")), "expression" to "2")
+        assertTrue(proxy.scripts.isEmpty())
+        post(web, "video", "ready", proxy)
+        proxy.scripts.last().second.onResult("true")
+        answer(web, proxy, "video", "2")
+        assertEquals(2, live[0]!!.getInt("result"))
+        val realm = live[0]!!.getString("realm")
+        assertEquals(realm, early.getString("realm"))
+        // The call is still awaiting its guest promise when it navigates. AndroidX delivers its
+        // last post after the commit and before the execution callback for the call itself.
+        val once = mutableListOf<JSONObject>()
+        var aborted: JSONObject? = null
+        val pendingArgs = JSONObject(args.toString()).put("channelSession", "calling")
+            .put("functionDeclaration", "post => { post('pause'); return new Promise(() => {}) }")
+        FrameAutomations.run("callFunction", pendingArgs, { once.add(it) }) { aborted = it }
+        val body = proxy.scripts.last().first
+        val callKey = Regex("[0-9a-f-]{36}").find(body)!!.value
+        val number = Regex("n: (\\d+)").find(body)!!.groupValues[1].toInt()
+        post(web, "video", JSONObject().put("n", number).put("bind", true).toString(), proxy)
+        commit(web, "https://example.com/next")
+        assertEquals("AbortError", aborted!!.getString("error"))
+        emit(callKey, "\"pause\"", proxy)
+        assertEquals(realm, once.single().getJSONObject("source").getString("realm"))
+
+        val outgoingRequest = Proxy()
+        emit(key, "\"outgoing\"", outgoingRequest)
+        val outgoingRealm = messages.removeAt(0).getJSONObject("source").getString("realm")
+        val waitingForOutgoing = call("evaluate", "id" to null, "target" to JSONObject().put("realm", outgoingRealm), "expression" to "41")
+        commit(web, "https://example.com/replacement")
+        assertEquals("no such frame", waitingForOutgoing.error())
+        val automation = natives.automations("tab").single()!!
+        automation.starting()
+        emit(key, "\"request\"", Proxy())
+        val superseded = messages.removeAt(0).getJSONObject("source").getString("realm")
+        val late = call("evaluate", "id" to null, "target" to JSONObject().put("realm", superseded), "expression" to "42")
+        automation.starting()
+        assertEquals("no such frame", late.error())
+        automation.committed(null)
+        // A wallet posts at document start. Its reply can reach the host before the navigation commit.
+        for (readyBeforeCommit in listOf(true, false)) {
+            val incoming = Proxy()
+            lateinit var reply: Array<JSONObject?>
+            commit(web, "https://example.com/wallet") {
+                if (readyBeforeCommit) post(web, "video", "ready", incoming)
+                emit(key, "\"request\"", incoming)
+                val source = messages.removeAt(0).getJSONObject("source")
+                reply = call("evaluate", "id" to null, "target" to JSONObject().put("realm", source.getString("realm")), "expression" to "42")
+                assertNull("the incoming document can receive a reply", reply.error())
+            }
+            if (!readyBeforeCommit) post(web, "video", "ready", incoming)
+            assertNull(reply.error())
+            incoming.scripts.last().second.onResult("true")
+            answer(web, incoming, "video", "42")
+            assertEquals(42, reply[0]!!.getInt("result"))
+        }
+        commit(web, "https://elsewhere.example/next")
+        val outgoing = Proxy()
+        emit(key, "0", outgoing)
+        messages.removeAt(0)
+        val read = call("evaluate", "sandbox" to "video", "expression" to "3")
+        assertTrue(outgoing.scripts.isEmpty())
+        val current = Proxy()
+        post(web, "video", "ready", current)
+        answer(web, current, "video", "3")
+        assertEquals(3, read[0]!!.getInt("result"))
+        emit(key, "\"pause\"", proxy)
+        assertTrue(other.isEmpty())
+        val message = messages.single()
+        assertEquals("playback", message.getString("channel"))
+        assertEquals("\"pause\"", message.getString("json"))
+        assertEquals(realm, message.getJSONObject("source").getString("realm"))
+        assertEquals("https://example.com", message.getJSONObject("source").getString("origin"))
+        assertEquals("tab", message.getJSONObject("source").getString("context"))
+        val installed = compat.worldScripts.getValue(web).size
+        FrameAutomations.release("first")
+        assertEquals(installed - 1, compat.worldScripts.getValue(web).size)
+        assertEquals("NotFoundError", call("removePreloadScript", "script" to script).error())
+        emit(key, "4", current)
+        emit(otherKey, "5", current)
+        assertEquals(1, messages.size)
+        assertEquals("5", other.single().getString("json"))
+    }
+
+    @Test fun rejectedPreloadsLeaveNoChannelRegistrations() {
+        val natives = natives()
+        natives.ensure(1, 1, 0, 0, props("tab"), 0)
+        val frame = natives.automations("tab").single()!!
+        val recipients = FrameAutomation::class.java.getDeclaredField("recipients").also { it.isAccessible = true }.get(frame) as Map<*, *>
+        val before = recipients.size
+        for (i in 1..3) {
+            val arguments = JSONArray().put(JSONObject().put("type", "channel").put("value", JSONObject().put("channel", "req-$i"))).put(1)
+            val args = JSONObject().put("id", "tab").put("sandbox", "video").put("channelSession", "observe")
+                .put("arguments", arguments).put("functionDeclaration", "post => {}")
+            FrameAutomations.run("addPreloadScript", args, {}) { assertEquals("invalid argument", it.getString("error")) }
+        }
+        assertEquals("native registrations after three rejected preloads", before, recipients.size)
+        val call = JSONObject().put("id", "tab").put("sandbox", "not-yet-loaded").put("channelSession", "refused")
+            .put("arguments", JSONArray("""[{"type":"channel","value":{"channel":"wallet"}}]"""))
+            .put("functionDeclaration", "post => {}")
+        FrameAutomations.run("callFunction", call, {}) { assertEquals("InvalidStateError", it.getString("error")) }
+        assertEquals(before, recipients.size)
     }
 
     @Test fun aProviderWithoutDocumentStartStillEvaluatesInThePage() {

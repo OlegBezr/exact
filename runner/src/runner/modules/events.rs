@@ -33,6 +33,7 @@ struct Raised {
     row: usize,
     args: Vec<Json>,
     origin: CallOrigin,
+    cause: Cause,
 }
 
 impl<D: DataSource> Runner<D> {
@@ -48,22 +49,22 @@ impl<D: DataSource> Runner<D> {
         args: &str,
         origin: CallOrigin,
     ) -> Result<(), String> {
-        self.queue_module_event(extension, name, args, origin, false)
+        let args: Vec<Json> = serde_json::from_str(args)
+            .map_err(|_| format!("{extension}.{name}: the arguments are a JSON array"))?;
+        let registrar = self.native_shortcut_cause(extension, name, &args);
+        self.queue_module_event(extension, name, args, origin, false, registrar)
     }
 
     pub(super) fn queue_module_event(
         &mut self,
         extension: &str,
         name: &str,
-        args: &str,
+        args: Vec<Json>,
         origin: CallOrigin,
         presentation: bool,
+        registered_by: Option<Cause>,
     ) -> Result<(), String> {
         let key = format!("{extension}.{name}");
-        let args: Vec<Json> = match serde_json::from_str(args) {
-            Ok(Json::Array(args)) => args,
-            _ => return Err(format!("{key}: the arguments are a JSON array")),
-        };
         let Some(row) = (self.plan.module_events.iter()).position(|e| {
             self.plan.str(e.extension) == extension && self.plan.str(e.declared) == name
         }) else {
@@ -84,12 +85,17 @@ impl<D: DataSource> Runner<D> {
         };
         // Each event's own bound: past it, its own oldest is dropped.
         let hold = declared.hold.max(1) as usize;
+        let raised = Cause::raised(origin);
+        let cause = registered_by
+            .filter(|c| c.hidden_show_reason().is_some())
+            .map_or(raised, |c| self.join_causes(raised, c));
         let queued = &mut self.extensions.events.queued;
         queued.push_back(Raised {
             row,
             args,
             origin,
             presentation,
+            cause,
         });
         let mut dropped = Vec::new();
         while queued.iter().filter(|r| r.row == row).count() > hold {
@@ -188,8 +194,7 @@ impl<D: DataSource> Runner<D> {
         if raised.origin == CallOrigin::App {
             self.note_activation();
         }
-        let cause = Cause::raised(raised.origin);
-        self.as_cause(cause, |r| r.run_action(row.action, args, &[]))
+        self.as_cause(raised.cause, |r| r.run_action(row.action, args, &[]))
             .map(Some)
     }
 

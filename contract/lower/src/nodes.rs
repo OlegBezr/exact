@@ -11,7 +11,7 @@ pub(super) struct ElementStep<'n> {
     pub(super) enters: bool,
     pub(super) positioned: bool,
     pub(super) button_context: Option<&'static str>,
-    pub(super) popover_child: bool,
+    pub(super) menu_parent: Option<menu_rows::Parent>,
     pub(super) bounded: bool,
     /// Whether this element stacks its children top to bottom.
     pub(super) stacks: bool,
@@ -1169,6 +1169,13 @@ impl Lowerer<'_> {
         } else {
             std::borrow::Cow::Borrowed(authored_children.as_slice())
         };
+        let menu_parent = menu_rows::Parent::of_children(
+            self.menu_parent,
+            native_button || t.node_type == NodeType::Pressable,
+            expanded,
+        );
+        let menu_row =
+            self.menu_parent.is_some() && menu_parent != Some(menu_rows::Parent::Section);
         Ok(ElementStep {
             id,
             children,
@@ -1183,8 +1190,8 @@ impl Lowerer<'_> {
                 || t.fixed_styles
                     .iter()
                     .any(|(id, v)| *id == StyleId::PositionType && *v != "static"),
-            button_context: controls::button_context(tag, control, self.popover_child),
-            popover_child: expanded.iter().any(|a| a.name == "popover"),
+            button_context: controls::button_context(tag, control, menu_row),
+            menu_parent,
             bounded: scroll_bounds::bounded_column(tag, expanded, self.parent_bounded_column),
             stacks: scroll_bounds::stacks(tag, t.fixed_styles, expanded),
             horizontal_flex: if attrs

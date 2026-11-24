@@ -32,13 +32,36 @@ import java.util.UUID
  * that start after the app first named it: the names are kept across launches ([named]), and each frame's view gets
  * every one's channel when it is made.
  */
-internal class FrameAutomation(private val web: () -> WebView?, private val changed: () -> Unit) {
+internal class FrameAutomation(private val web: () -> WebView?, private val contextId: () -> String, private val changed: () -> Unit) {
     /** `"agent"` after a call that acts, until a person's touch or key reaches the frame (D9). */
     var controller = "person"
         private set
 
-    private class Preload(val id: String, val source: String, val sandbox: String)
+    private class Preload(val id: String, val source: String, val sandbox: String, val session: String?)
     private val preloads = ArrayList<Preload>()
+    private class Recipient(val sandbox: String, val session: String, val channel: String, val send: (JSONObject) -> Unit) {
+        var pending = 0
+        var admitted = false
+    }
+    private val recipients = HashMap<String, Recipient>()
+
+    private fun capability(sandbox: String, session: String, channel: String, send: (JSONObject) -> Unit, reserved: MutableSet<String>): String {
+        val key = recipients.entries.firstOrNull { (_, r) -> r.sandbox == sandbox && r.session == session && r.channel == channel }?.key
+            ?: UUID.randomUUID().toString().also {
+                withChannels += this
+                recipients[it] = Recipient(sandbox, session, channel, send)
+            }
+        if (reserved.add(key)) recipients.getValue(key).pending++
+        return key
+    }
+
+    private fun releaseSession(session: String) {
+        recipients.entries.removeAll { it.value.session == session }
+        for (preload in preloads.filter { it.session == session }) {
+            handlers.remove(preload.id)?.remove()
+            preloads.remove(preload)
+        }
+    }
 
     /** What is installed on [view]: each preload's handler, each world, and each world's channel with the number of
      * navigations begun on the view before it was installed. */
@@ -49,9 +72,13 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
 
     /** The document the frame shows, and each world's reply proxy in each document, by the page it posted from. */
     private var page: Page? = null
-    private class World(val proxy: JavaScriptReplyProxy, val marker: String, val origin: String)
+    private class Document {
+        val id = UUID.randomUUID().toString()
+        var token: String? = null
+    }
+    private class World(val proxy: JavaScriptReplyProxy, val doc: Document, val token: String, val origin: String)
     // AndroidX pairs one JavaScriptReplyProxy with one injected JavaScript object in the frame.
-    private val markers = java.util.WeakHashMap<JavaScriptReplyProxy, String>()
+    private val markers = java.util.WeakHashMap<JavaScriptReplyProxy, Document>()
     private val confirmed = HashMap<Page?, MutableMap<String, World>>()
     private val proxies = HashMap<Pair<Page?, String>, World>()
     private class Realm(val marker: String, val origin: String, val id: String)
@@ -59,7 +86,8 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
     private val routes = HashMap<String?, String>()
     // This lexical constant adds no property, handler or listener on window. Each document gets its own value.
     private val binding = "_exact" + UUID.randomUUID().toString().replace("-", "")
-    private fun plant(origin: String = "this.origin") = "const $binding = window === top ? { __proto__: null, document, token: null, origin: $origin } : null"
+    private fun plant(origin: String = "this.origin", token: String = "null") =
+        "const $binding = window === top ? { __proto__: null, document, token: $token, origin: $origin } : null"
     private var pageIdentity: ScriptHandler? = null
     /** Posts made while a navigation to a new document is uncommitted: only that document can have made them. */
     private var navigating = false
@@ -67,13 +95,15 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
     /** Navigations begun on the view, and how many had begun when the current document's began. */
     private var starts = 0
     private var documentStart = 0
-    /** Calls waiting for a world's post from the current document, by world. */
-    private val waiting = HashMap<String, ArrayList<(World) -> Unit>>()
 
     private var nextId = 0
     /** Calls in flight: each one's answer, and the world it runs in (null: the page's). */
     private class Pending(val reply: (JSONObject) -> Unit, val world: String?, var takeAt: Long?,
-                          var checking: Boolean, var realm: Realm? = null, var source: World? = null)
+                          var checking: Boolean, val admitChannels: (() -> Unit)?, var realm: Realm? = null, var source: World? = null) {
+        var onReady: ((World) -> Unit)? = null
+        var postingDocument: Document? = null
+        var mayCrossCommit = false
+    }
     private val pending = HashMap<Int, Pending>()
     private var personInput = 0L
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
@@ -106,13 +136,24 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
     private fun forgetView() {
         pageIdentity = null
         realms.clear()
-        handlers.clear(); worlds.clear(); channels.clear(); proxies.clear(); confirmed.clear(); early.clear(); waiting.clear()
+        handlers.clear(); worlds.clear(); channels.clear(); proxies.clear(); confirmed.clear(); early.clear()
         page = null
         navigating = false
         starts = 0; documentStart = 0
     }
 
-    fun starting() { navigating = true; early.clear(); starts++ }
+    fun starting() {
+        cancelled()
+        navigating = true
+        starts++
+    }
+
+    fun cancelled() {
+        if (!navigating) return
+        navigating = false
+        early.clear()
+        endAll("AbortError", "the navigation did not commit") { !it.mayCrossCommit }
+    }
 
     /** A new document committed (or one came back from the back-forward cache): a script in the old one is aborted. */
     fun committed(page: Page?) {
@@ -121,7 +162,12 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
         this.page = page
         navigating = false
         documentStart = starts
-        endAll("AbortError", "the document navigated away")
+        // A reply waiting for the incoming document belongs on the far side of this commit.
+        endAll("AbortError", "the document navigated away") { call ->
+            val keep = call.mayCrossCommit && early[call.world]?.let { it.doc === call.postingDocument } != false
+            call.mayCrossCommit = false
+            keep
+        }
         for ((name, proxy) in early) ready(name, proxy)
         early.clear()
     }
@@ -148,16 +194,17 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
 
     /** A partition change makes a new frame: its preload scripts go with it, as on Apple. */
     fun adopt(old: FrameAutomation) {
+        if (old.recipients.isNotEmpty()) withChannels += this
+        recipients.putAll(old.recipients)
         preloads += old.preloads
         nextId = maxOf(nextId, old.nextId)
         view?.let { v -> if (ISOLATED) preloads.forEach { install(v, it) } }
     }
 
-    private fun endAll(error: String, message: String) {
-        val ended = pending.values.toList()
-        pending.clear()
-        waiting.clear()
-        ended.forEach { it.reply(if (it.checking) missingRealm() else failure(error, message)) }
+    private fun endAll(error: String, message: String, keep: (Pending) -> Boolean = { false }) {
+        val ended = pending.filterValues { !keep(it) }
+        pending.keys.removeAll(ended.keys)
+        ended.values.forEach { it.reply(if (it.checking) missingRealm() else failure(error, message)) }
     }
 
     private fun admitted(call: Pending) {
@@ -184,7 +231,21 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
 
     // Calls
 
-    fun run(op: String, args: JSONObject, reply: (JSONObject) -> Unit) {
+    fun run(op: String, args: JSONObject, recipient: ((JSONObject) -> Unit)?, reply: (JSONObject) -> Unit) {
+        val reserved = mutableSetOf<String>()
+        fun finish(result: JSONObject) {
+            for (key in reserved) {
+                val r = recipients[key] ?: continue
+                if (!result.has("error")) r.admitted = true
+                if (--r.pending == 0 && !r.admitted) recipients.remove(key)
+            }
+            reply(result)
+        }
+        try { run(op, args, recipient, reserved, ::finish) }
+        catch (e: RuntimeException) { finish(failure("NotSupportedError", "$op: the WebView refused: $e")) }
+    }
+
+    private fun run(op: String, args: JSONObject, recipient: ((JSONObject) -> Unit)?, reserved: MutableSet<String>, reply: (JSONObject) -> Unit) {
         val sandbox = if (args.isNull("sandbox")) null else args.optString("sandbox")
         if (sandbox != null && (sandbox.isEmpty() || sandbox.startsWith("exact."))) {
             return reply(failure("SyntaxError", "${sandbox.ifEmpty { "an empty name" }} is not a sandbox: a name, not one beginning exact."))
@@ -192,12 +253,39 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
         if (sandbox != null && !ISOLATED) {
             return reply(failure("NotSupportedError", "$op: this device's WebView has no isolated worlds (JS_INJECTION_IN_FRAME_AND_WORLD), so a sandbox runs nowhere"))
         }
+        val arguments = args.optJSONArray("arguments") ?: JSONArray()
+        val values = (0 until arguments.length()).map { arguments.opt(it) }
+        fun channelValue(value: Any?) = value is JSONObject && value.opt("type") == "channel" &&
+            value.length() == 2 && value.optJSONObject("value")?.let { it.length() == 1 && it.opt("channel") is String } == true
+        val hasChannel = op == "callFunction" && values.any(::channelValue)
+        val session = args.optString("channelSession")
+        var argumentSource = if (op == "addPreloadScript") "" else "...JSON.parse(${JSONObject.quote(arguments.toString())})"
+        if (hasChannel || op == "addPreloadScript" && values.isNotEmpty()) {
+            if (sandbox == null) return reply(failure("NotSupportedError", "script.message requires a named sandbox"))
+            if (recipient == null) return reply(failure("NotSupportedError", "script.message has no receiver"))
+            val expressions = values.mapIndexed { i, arg ->
+                if (arg is JSONObject && channelValue(arg)) {
+                    val channel = arg.getJSONObject("value").getString("channel")
+                    val key = capability(sandbox, session, channel, recipient, reserved)
+                    """((post, capability) => value => {
+                        const json = JSON.stringify(value);
+                        if (json === undefined) throw new TypeError('script.message needs JSON');
+                        if (new TextEncoder().encode(json).length > $LIMIT) throw new DOMException('script.message exceeds 65536 bytes', 'QuotaExceededError');
+                        post(JSON.stringify({capability, json}));
+                    })($CHANNEL.postMessage.bind($CHANNEL), ${JSONObject.quote(key)})"""
+                } else {
+                    if (op == "addPreloadScript") return reply(failure("invalid argument", "preload arguments must be ChannelValues"))
+                    "values[$i]"
+                }
+            }
+            argumentSource = "...(values => [${expressions.joinToString(",")}])(JSON.parse(${JSONObject.quote(arguments.toString())}))"
+        }
         // The preload scripts are the frame's, kept while it has no view and installed on the next.
         attach()
         when (op) {
             "addPreloadScript" -> {
                 if (sandbox == null) return reply(failure("NotSupportedError", "addPreloadScript: Android's WebView runs a preload script in every frame of the page's world, and Exact puts nothing of its own there to keep it to the main one; name a sandbox"))
-                val p = Preload("script-${++nextId}", args.optString("functionDeclaration"), sandbox)
+                val p = Preload("script-${++nextId}", "(\n${args.optString("functionDeclaration")}\n)($argumentSource)", sandbox, session.takeIf { values.isNotEmpty() })
                 view?.let { name(it, sandbox); install(it, p) }
                 preloads += p
                 return reply(JSONObject().put("script", p.id))
@@ -213,22 +301,35 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
         }
         val view = view ?: return reply(if (args.optJSONObject("target")?.opt("realm") is String) missingRealm()
             else failure("InvalidStateError", "$op: the frame is out of view, with no page"))
+        val admitChannels = if (reserved.isEmpty()) null else ({ reserved.forEach { recipients[it]?.admitted = true } })
         when (op) {
-            "evaluate", "callFunction" -> script(op, args, sandbox, view, reply)
+            "evaluate", "callFunction" -> script(op, args, sandbox, view, argumentSource, admitChannels, reply)
             else -> reply(failure("NotSupportedError", "$op is not offered on Android (LLP 1020.002 §11)"))
         }
     }
 
-    private fun script(op: String, args: JSONObject, sandbox: String?, view: WebView, reply: (JSONObject) -> Unit) {
+    private fun script(op: String, args: JSONObject, sandbox: String?, view: WebView, argumentSource: String, admitChannels: (() -> Unit)?, reply: (JSONObject) -> Unit) {
         val target = args.optJSONObject("target")?.optString("realm")?.takeIf { !args.getJSONObject("target").isNull("realm") }
         if (target == null && args.optBoolean("userActivation")) take()
         val awaited = if (args.isNull("awaitPromise")) true else args.optBoolean("awaitPromise", true)
-        val arguments = JSONObject.quote((args.optJSONArray("arguments") ?: JSONArray()).toString())
+        val number = ++nextId
+        // A call can end at navigation while its last post is still in transit. Acknowledge the
+        // registration before giving the function to guest code, even if its result never settles.
+        val arguments = if (admitChannels == null) argumentSource else """
+            ...(await new Promise(resolve => {
+              const bound = e => {
+                if (e.data !== 'bound:$number') return;
+                $CHANNEL.removeEventListener('message', bound);
+                resolve([$argumentSource]);
+              };
+              $CHANNEL.addEventListener('message', bound);
+              $CHANNEL.postMessage(JSON.stringify({n: $number, bind: true, marker: $binding.token}));
+            }))
+        """.trimIndent()
         val value = if (op == "evaluate") "(\n${args.optString("expression")}\n)"
-            else "(\n${args.optString("functionDeclaration")}\n)(...JSON.parse($arguments))"
-        // The expression runs in a function of its own, so no name of Exact's is in its scope; an exception is caught
-        // and answered by its name, which the platform's own answer would lose.
-        val ran = "(() => { try { return { v: $value }; } catch (e) { return { e }; } })()"
+            else "(\n${args.optString("functionDeclaration")}\n)($arguments)"
+        val async = if (admitChannels == null) "" else "async "
+        val ran = "(${async}() => { try { return { v: $value }; } catch (e) { return { e }; } })()"
         val settle = when {
             sandbox == null && awaited -> "if (v && typeof v.then === 'function') return { __exactPromise: true };"
             sandbox == null -> "if (v && typeof v.then === 'function') return '{}';"
@@ -239,15 +340,12 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
         if (sandbox != null && target == null) {
             try { name(view, sandbox) } catch (e: RuntimeException) { return reply(failure("NotSupportedError", "$op: the WebView refused: $e")) }
         }
-        val number = ++nextId
-        val call = Pending(reply, sandbox, personInput.takeIf { target != null && args.optBoolean("userActivation", false) }, target != null)
+        val call = Pending(reply, sandbox, personInput.takeIf { target != null && args.optBoolean("userActivation", false) }, target != null, admitChannels)
         pending[number] = call
         fun answer(result: JSONObject) { pending.remove(number)?.reply?.invoke(result) }
-        fun identity(marker: String, origin: String): Realm? {
-            val old = realms[sandbox]
-            if (old?.marker == marker && old.origin == origin) return old.takeIf { target == null || target == it.id }
+        fun identity(marker: String, origin: String, document: String = marker): Realm? {
             val route = routes.getOrPut(sandbox) { UUID.randomUUID().toString() }
-            val id = "$route.$marker"
+            val id = "$route.$document"
             if (target != null && target != id) return null
             return Realm(marker, origin, id).also { realms[sandbox] = it }
         }
@@ -306,15 +404,16 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
             readRealm { execute(it, false) }
             return
         }
-        val body = "((post, r) => { (async () => { try { $text } catch (e) { $THROWN } })()" +
+        val waitForArguments = if (admitChannels == null) "" else "r = await r;"
+        val body = "((post, r) => { (async () => { try { $waitForArguments $text } catch (e) { $THROWN } })()" +
             ".then(x => post(JSON.stringify({ n: $number, marker: $binding.token, r: x })), () => post(JSON.stringify({ n: $number, marker: $binding.token, r: null })));" +
             " return true; })($CHANNEL.postMessage.bind($CHANNEL), $ran)"
-        var sent = false
         fun send(world: World) {
             if (number !in pending) return
-            val realm = identity(world.marker, world.origin) ?: return answer(missingRealm())
+            val realm = identity(world.token, world.origin, world.doc.id) ?: return answer(missingRealm())
             call.realm = realm
-            sent = true
+            call.onReady = null
+            call.mayCrossCommit = false
             call.source = world
             fun execute(source: String, receive: (String?) -> Unit) {
                 try { world.proxy.executeJavaScript(source, object : WebViewOutcomeReceiver<String, JavaScriptExecutionException> {
@@ -339,15 +438,28 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
                 }
             }
         }
+        fun waitForReady(timeout: JSONObject, document: Document? = null) {
+            call.onReady = ::send
+            call.postingDocument = document
+            call.mayCrossCommit = document != null && navigating
+            main.postDelayed({ if (call.onReady != null) answer(timeout) }, READY_WAIT)
+        }
         val key = page to sandbox
-        if (target != null) confirmed[page]?.get(target)?.let { return send(it) }
+        if (target != null) {
+            confirmed[page]?.get(target)?.let { return send(it) }
+            val document = markers.values.firstOrNull { target == "${routes[sandbox]}.${it.id}" }
+            if (document != null && (document.token == null || early[sandbox]?.doc === document)) {
+                // Both the channel post and ready can precede the native commit, in either order.
+                waitForReady(missingRealm(), document)
+                return
+            }
+        }
         proxies[key]?.let { return send(it) }
         if (target != null) return answer(missingRealm())
         // The world's channel was on the view before this document began, so its post is on its way.
         val installed = channels[sandbox]
         if (installed != null && (navigating || installed < documentStart)) {
-            waiting.getOrPut(sandbox) { ArrayList() } += ::send
-            main.postDelayed({ if (!sent) answer(failure("InvalidStateError", "$op: the document's sandbox $sandbox did not start")) }, READY_WAIT)
+            waitForReady(failure("InvalidStateError", "$op: the document's sandbox $sandbox did not start"))
             return
         }
         answer(failure("InvalidStateError",
@@ -387,21 +499,44 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
         if (name in channels) return
         val world = world(view, name)
         WebViewCompat.addWebMessageListener(view, CHANNEL, setOf("*"), world) { _, message, origin, isMainFrame, proxy ->
-            if (!isMainFrame || this.view !== view || message.type != WebMessageCompat.TYPE_STRING) return@addWebMessageListener
+            if (!isMainFrame || message.type != WebMessageCompat.TYPE_STRING) return@addWebMessageListener
             val data = message.data ?: return@addWebMessageListener
-            if (data == "ready") {
-                val marker = markers.getOrPut(proxy) { UUID.randomUUID().toString() }
-                val world = World(proxy, marker, serializedOrigin(origin))
+            if (data.startsWith("ready:")) {
+                val token = data.removePrefix("ready:")
+                if (token.length != 32 || token.any { it !in "0123456789abcdef" }) return@addWebMessageListener
+                val doc = markers.getOrPut(proxy) { Document() }
+                if (doc.token != null && doc.token != token) return@addWebMessageListener
+                doc.token = token
+                if (this.view !== view) return@addWebMessageListener
+                val world = World(proxy, doc, token, serializedOrigin(origin))
                 if (navigating) early[name] = world else ready(name, world)
                 return@addWebMessageListener
             }
             val posted = runCatching { JSONObject(data) }.getOrNull() ?: return@addWebMessageListener
+            if (posted.has("capability")) {
+                val recipient = recipients[posted.optString("capability")] ?: return@addWebMessageListener
+                if (recipient.sandbox != name) return@addWebMessageListener
+                val json = posted.opt("json") as? String ?: return@addWebMessageListener
+                if (json.toByteArray(Charsets.UTF_8).size > LIMIT) return@addWebMessageListener
+                val doc = markers.getOrPut(proxy) { Document() }
+                val route = routes.getOrPut(name) { UUID.randomUUID().toString() }
+                val source = JSONObject().put("realm", "$route.${doc.id}").put("origin", serializedOrigin(origin)).put("context", contextId())
+                recipient.send(JSONObject().put("channel", recipient.channel).put("json", json).put("source", source))
+                return@addWebMessageListener
+            }
+            if (this.view !== view) return@addWebMessageListener
             val n = posted.optInt("n")
             val call = pending[n] ?: return@addWebMessageListener
             val realm = call.realm ?: return@addWebMessageListener
             val source = call.source ?: return@addWebMessageListener
             if (call.world != name || source.proxy !== proxy || realm.origin != serializedOrigin(origin) ||
                 posted.optString("marker") != realm.marker) return@addWebMessageListener
+            if (posted.optBoolean("bind")) {
+                val accept = call.admitChannels ?: return@addWebMessageListener
+                accept()
+                proxy.postMessage("bound:$n")
+                return@addWebMessageListener
+            }
             confirmed.getOrPut(page) { HashMap() }[realm.id] = source
             admitted(call)
             val reply = pending.remove(n)!!.reply
@@ -411,7 +546,8 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
                 else -> failure("Error", "the script's exception has no text")
             })
         }
-        WebViewCompat.addJavaScriptOnEvent(view, "${plant()}; if (window === top) $CHANNEL.postMessage('ready');",
+        val token = "Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('')"
+        WebViewCompat.addJavaScriptOnEvent(view, "${plant(token = token)}; if (window === top) $CHANNEL.postMessage('ready:' + $binding.token);",
             WebViewCompat.INJECTION_EVENT_DOCUMENT_START, setOf("*"), world)
         channels[name] = starts
     }
@@ -419,11 +555,16 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
     /** The current document's post in [name]'s world: its proxy, and the calls that waited for it. */
     private fun ready(name: String, proxy: World) {
         proxies[page to name] = proxy
-        waiting.remove(name)?.forEach { it(proxy) }
+        for (call in pending.values.toList()) {
+            if (call.world == name && (call.postingDocument == null || call.postingDocument === proxy.doc)) {
+                call.onReady?.invoke(proxy)
+            }
+        }
     }
 
     private fun install(view: WebView, p: Preload) {
-        handlers[p.id] = WebViewCompat.addJavaScriptOnEvent(view, "if (window === top) (\n${p.source}\n)();",
+        channel(view, p.sandbox)
+        handlers[p.id] = WebViewCompat.addJavaScriptOnEvent(view, "if (window === top) ${p.source};",
             WebViewCompat.INJECTION_EVENT_DOCUMENT_START, setOf("*"), world(view, p.sandbox))
     }
 
@@ -441,6 +582,10 @@ internal class FrameAutomation(private val web: () -> WebView?, private val chan
 
         /** Every frame's automation. */
         private val live = LinkedHashSet<FrameAutomation>()
+
+        // A retired WebView can still deliver a post. Release the receiver there as well.
+        private val withChannels = java.util.Collections.newSetFromMap(java.util.WeakHashMap<FrameAutomation, Boolean>())
+        fun release(session: String) { withChannels.toList().forEach { it.releaseSession(session) } }
 
         /** The sandboxes the app has named, newest last, at most [KEPT], in its preferences across launches. */
         private var names: LinkedHashSet<String>? = null
@@ -497,7 +642,10 @@ object FrameAutomations {
     /** Every reader, each with its frames. */
     internal val readers: MutableSet<Natives> = java.util.Collections.newSetFromMap(java.util.WeakHashMap())
 
-    @JvmStatic fun run(op: String, args: JSONObject, reply: (JSONObject) -> Unit) {
+    @JvmStatic fun run(op: String, args: JSONObject, reply: (JSONObject) -> Unit) = run(op, args, null, reply)
+    @JvmStatic fun release(session: String) = FrameAutomation.release(session)
+
+    @JvmStatic fun run(op: String, args: JSONObject, recipient: ((JSONObject) -> Unit)?, reply: (JSONObject) -> Unit) {
         val target = args.optJSONObject("target")
         val invalid = { FrameAutomation.failure("invalid argument", "use a string context and optional sandbox, or a string realm") }
         if (!args.isNull("target") && target == null) return reply(invalid())
@@ -510,7 +658,7 @@ object FrameAutomations {
             if (!target.isNull("realm")) {
                 val (frame, sandbox) = FrameAutomation.resolveRealm(target.getString("realm"), readers.flatMap { it.automations(null) }) ?: return reply(FrameAutomation.missingRealm())
                 args.put("sandbox", sandbox)
-                return runOn(frame, op, args, reply)
+                return frame.run(op, args, recipient, reply)
             }
             args.put("sandbox", target.opt("sandbox"))
         }
@@ -520,15 +668,6 @@ object FrameAutomations {
         if (frames.size != 1) return reply(FrameAutomation.failure("NotFoundError", "no unique live iframe with id $id"))
         val automation = frames[0] ?: return reply(FrameAutomation.failure("NotSupportedError",
             "$op: iframe $id has no partition; only a partitioned frame is driven"))
-        runOn(automation, op, args, reply)
-    }
-
-    private fun runOn(automation: FrameAutomation, op: String, args: JSONObject, reply: (JSONObject) -> Unit) {
-        try {
-            automation.run(op, args, reply)
-        } catch (e: RuntimeException) {
-            // The WebView provider refused (an unsupported operation, a world it will not make).
-            reply(FrameAutomation.failure("NotSupportedError", "$op: the WebView refused: $e"))
-        }
+        automation.run(op, args, recipient, reply)
     }
 }
