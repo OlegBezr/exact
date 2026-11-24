@@ -338,7 +338,7 @@ if (siteBase !== '/') {
     ['rt.js', "export { animationClocks, launchVisits } from './navigation.js';", `export { animationClocks } from './navigation.js';
 import { launchVisits as browserVisits } from './navigation.js';
 import { appLocation } from './site.js'; export const launchVisits = () => browserVisits().map(appLocation);`],
-    ['rt.js', 'export const launchLocation = () => (checkpoint(), browserLocation());', 'export const launchLocation = () => (checkpoint(), appLocation(browserLocation()));'],
+    ['rt.js', 'export const launchLocation = pageLocation;', 'export const launchLocation = () => appLocation(pageLocation());'],
     ['router.js', 'import { canonical, locationOf,', 'import { locationOf,'],
     ['router.js', 'export { canonical, locationOf };', `import { canonical, appLocation, siteLocation, siteCanonical } from './site.js';
 export { canonical, locationOf };`],

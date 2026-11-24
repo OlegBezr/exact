@@ -443,7 +443,13 @@ export function install(exact, { passive = false } = {}) {
         // The agent's `back` from a route (LLP 1116.006 D4; the driver took an open dialog's first): the browser's Back.
         if (req.back) return (pageHistory() ?? navigation).back(document.getElementById('exact-root'));
         // The browser's own traversal (LLP 1038 D11); popstate reaches the app.
-        if (req.history) { history.go(req.history); await new Promise(r => setTimeout(r, 300)); return { history: req.history, delivery: 'platform' }; }
+        if (req.history) {
+          const routes = pageHistory();
+          if (routes) return routes.travel(document.getElementById('exact-root')?.querySelector('[navigationBack]'), req.history);
+          history.go(req.history);
+          await new Promise(r => setTimeout(r, 300));
+          return { history: req.history, delivery: 'platform' };
+        }
         {
           const el = views.get(req.id);
           if (el && (inertAncestor(el) || ['hidden', 'collapse'].includes(getComputedStyle(backButton(el) ?? el).visibility))) return { handled: true, error: `view ${req.id} is hidden or inert` };

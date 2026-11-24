@@ -521,7 +521,7 @@ async function verbRun({ dir, name, game = false, exact2, args }, reply) {
       done(code ?? 128 + (constants.signals[signal] ?? 0));
     });
   });
-  const script = ([file, ...args], more = [], stdio = 'inherit') => spawned(process.execPath, [resolve(exact2, file), ...args, ...more], stdio);
+  const script = ([file, ...args], more = [], stdio = 'inherit', { piped, env } = {}) => spawned(process.execPath, [resolve(exact2, file), ...args, ...more], stdio, undefined, piped, env);
   const bun = (command) => command === 'bun' ? process.execPath : command;
   // A flag the command's script refuses (scripts/help.mjs), refused here first so that the refusal comes before any work
   const refusedFlag = async () => (await import(resolve(exact2, 'scripts/help.mjs')).catch(() => null))?.guardFlags(verb, rest, { exit: (code) => ({ code }) })?.code;
@@ -696,9 +696,16 @@ if (verb === 'contract') {
   // Each file's agent owns its server, so it can restart between that file's tests.
   let failed = 0;
   const files = tests.length ? tests : (await import(resolve(exact2, 'scripts/app.mjs'))).authoredTests(dir);
+  // Each file has its own agent. It tells the parent which simulator it checked before the next file starts.
+  const checked = host === 'ios' && drivesNative && files.length > 1 ? new Map() : null;
   for (const file of files.length ? files : [resolve(dir, 'app.test.contract')]) {
     if (files.length > 1) console.log(`# ${relative(process.cwd(), file)}`);
-    const code = await script(verbs.test, ['--test', file, ...rest]);
+    const code = await script(verbs.test, ['--test', file, ...rest], checked ? [0, 1, 2, 'ipc'] : 'inherit', checked ? {
+      env: { EXACT_IOS_TEST_CHECKED: [...checked].map(entry => entry.join(':')).join(',') },
+      piped: child => child.on('message', message => {
+        if (typeof message?.checkedSimulatorAccessibility === 'string') checked.set(message.checkedSimulatorAccessibility, message.status);
+      }),
+    } : undefined);
     if (stopped) return log(code || 128 + (constants.signals[stopped] ?? 0));
     failed = code || failed;
   }
