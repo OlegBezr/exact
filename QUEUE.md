@@ -1464,6 +1464,8 @@ sits on that list carries the trade it would take.
 
 ## Cheap, any time
 
+- A rendered page needs a reload after a failed entry import. Serve the entry as 404 on the first press, restore the file and press again. The capture script keeps the rejected promise.
+
 - An app-set window frame is saved like any other (#1412). Expand with `setBounds`, quit and relaunch: the window reopens expanded. To restore the saved compact frame after quitting during or after expansion, the host needs to distinguish a person’s move or resize (including through Accessibility) from AppKit correcting the app’s animation between vertically offset displays. Only the person’s change should replace the saved frame.
 - An embedder's plain `NSWindow` still freezes page layout during an animated `setFrame` inside `native.call`. Run the window-frame fixture's 300-by-200 resize in an embedder window and compare the root and viewport at each resize notification (#1412).
 - Snapshot viewport injection rejects `safeAreaTop: number` as a string field. Declare it on a widget’s `snapshot_viewport` shape and compile the widget.
