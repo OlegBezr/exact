@@ -1,0 +1,153 @@
+#if os(iOS)
+import XCTest
+import UIKit
+@testable import ExactKit
+@testable import ExactNavigation
+
+extension NavigationBarIOSTests {
+    func testHeaderFamilyPreservesTitleAndItemMetricsAcrossRouteUpdates() throws {
+        let session = try fixture("header-family-route-updates", module: false, plan: "HEADER_FAMILY")
+        let host = session.presenter.navigationHost
+        let nav = try XCTUnwrap(host.primaryNavigation)
+        session.presenter.press(try node(session, "open").id)
+        until("the Notes route is visible") {
+            nav.topViewController?.navigationItem.title == "Notes" && nav.transitionCoordinator == nil
+        }
+        let route = try XCTUnwrap(nav.topViewController as? RouteController)
+        let item = route.navigationItem
+        let header = try node(session, "header")
+        let family = Int(header.number("font_family"))
+        let heading = try XCTUnwrap(HeaderShape.bar(of: route.node)?.heading)
+        func style(_ id: UInt32, _ rows: [String: Any]) {
+            session.presenter.apply(wireBatch([["op": "style", "id": id, "style": rows]]))
+        }
+        func prepare() {
+            host.prepareRoutes(nav.viewControllers.compactMap { $0 as? RouteController }, in: nav)
+            nav.view.layoutIfNeeded()
+        }
+        func drawn(_ title: String) throws -> UIFont {
+            func labels(_ view: UIView) -> [UILabel] {
+                guard !view.isHidden, view.alpha > 0 else { return [] }
+                if let label = view as? UILabel, label.text == title { return [label] }
+                return view.subviews.flatMap(labels)
+            }
+            nav.view.layoutIfNeeded()
+            return try XCTUnwrap(labels(nav.navigationBar).first?.font, title)
+        }
+        func setFamily(_ enabled: Bool) {
+            style(header.id, enabled ? ["font_family": family, "written": ["font_family"]] : ["written": []])
+        }
+        let window = try XCTUnwrap(self.window)
+        window.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        window.updateTraitsIfNeeded()
+        prepare()
+        let inline = try drawn("Notes")
+        style(heading.id, ["font_weight": 600, "written": ["font_weight"]])
+        let weighted = try drawn("Notes")
+        XCTAssertEqual(weighted.pointSize, inline.pointSize, "writing only font-weight keeps the inline size")
+        style(heading.id, ["written": []])
+        window.traitOverrides.preferredContentSizeCategory = .large
+        window.updateTraitsIfNeeded()
+        prepare()
+
+        let hatch = try XCTUnwrap(item.standardAppearance?.copy() as? UINavigationBarAppearance)
+        hatch.titleTextAttributes[.font] = UIFont(name: "Menlo", size: 23)
+        item.standardAppearance = hatch
+        prepare()
+        XCTAssertEqual(try drawn("Notes").familyName, "Menlo", "a route hatch owns the navigation item")
+
+        setFamily(false)
+        item.standardAppearance = nil
+        let red = UINavigationBarAppearance()
+        red.configureWithOpaqueBackground()
+        red.backgroundColor = .red
+        red.buttonAppearance.normal.titleTextAttributes[.font] = UIFont.boldSystemFont(ofSize: 24)
+        nav.navigationBar.standardAppearance = red
+        window.traitOverrides.preferredContentSizeCategory = .extraLarge
+        window.updateTraitsIfNeeded()
+        prepare()
+        let barItem = try drawn("Save")
+        setFamily(true)
+        let changed = try drawn("Save")
+        XCTAssertEqual(changed.pointSize, barItem.pointSize, "the item keeps its appearance's point size")
+        let blue = try XCTUnwrap(red.copy() as? UINavigationBarAppearance)
+        blue.backgroundColor = .blue
+        nav.navigationBar.standardAppearance = blue
+        prepare()
+        XCTAssertEqual(item.standardAppearance?.backgroundColor, .blue, "the item follows the bar's current background")
+    }
+
+    func testHeaderFamilyRemovalPreservesTheInheritedScrollEdgeTitleColor() throws {
+        let session = try fixture("edge-family", module: false, plan: "HEADER_FAMILY")
+        let nav = try XCTUnwrap(session.presenter.navigationHost.primaryNavigation)
+        session.presenter.press(try node(session, "open").id)
+        until("the Notes route is visible") {
+            nav.topViewController?.navigationItem.title == "Notes" && nav.transitionCoordinator == nil
+        }
+        let route = try XCTUnwrap(nav.topViewController as? RouteController)
+        let item = route.navigationItem
+        let header = try node(session, "header"), family = Int(header.number("font_family"))
+        func setFamily(_ enabled: Bool) {
+            let style: [String: Any] = enabled ? ["font_family": family, "written": ["font_family"]] : ["written": []]
+            session.presenter.apply(wireBatch([["op": "style", "id": header.id, "style": style]]))
+        }
+        func transparent(_ enabled: Bool) {
+            session.presenter.apply(wireBatch([["op": "props", "id": route.node.id, "set": ["navigationBar": enabled ? "transparent" : "auto"]]]))
+        }
+        setFamily(false)
+        let base = UINavigationBarAppearance()
+        base.titleTextAttributes[.foregroundColor] = UIColor.orange
+        item.standardAppearance = base
+        item.scrollEdgeAppearance = nil
+        nav.navigationBar.scrollEdgeAppearance = nil
+        setFamily(true)
+        transparent(true)
+        let edge = try XCTUnwrap(item.scrollEdgeAppearance?.copy() as? UINavigationBarAppearance)
+        edge.backButtonAppearance.normal.titlePositionAdjustment = UIOffset(horizontal: 3, vertical: 0)
+        item.scrollEdgeAppearance = edge
+        transparent(false)
+        setFamily(false)
+        let restored = try XCTUnwrap(item.scrollEdgeAppearance ?? nav.navigationBar.scrollEdgeAppearance ?? item.standardAppearance)
+        XCTAssertEqual(restored.titleTextAttributes[.foregroundColor] as? UIColor, .orange)
+        XCTAssertEqual(restored.backButtonAppearance.normal.titlePositionAdjustment.horizontal, 3)
+    }
+
+    func testUnavailableHeaderFamilyKeepsEachVisibleSystemFontWeight() throws {
+        let session = try fixture("header-family-fallback-weight", module: false, plan: "HEADER_FAMILY")
+        let navigation = try XCTUnwrap(session.presenter.navigationHost.primaryNavigation)
+        session.presenter.press(try node(session, "open").id)
+        until("the Notes route is visible") {
+            navigation.topViewController?.navigationItem.title == "Notes" && navigation.transitionCoordinator == nil
+        }
+        for _ in 0..<3 { session.presenter.press(try node(session, "save").id) }
+        let header = try node(session, "header")
+        let missing = Int(header.number("font_family"))
+        let window = try XCTUnwrap(self.window)
+        func weight(_ title: String) throws -> CGFloat {
+            func label(in view: UIView) -> UILabel? {
+                guard !view.isHidden, view.alpha > 0 else { return nil }
+                if let label = view as? UILabel, label.text == title { return label }
+                return view.subviews.lazy.compactMap(label(in:)).first
+            }
+            navigation.view.layoutIfNeeded()
+            let font = try XCTUnwrap(label(in: navigation.navigationBar)?.font, title)
+            let traits = try XCTUnwrap(font.fontDescriptor.object(forKey: .traits) as? [UIFontDescriptor.TraitKey: Any])
+            return try XCTUnwrap(traits[.weight] as? CGFloat, title)
+        }
+        let titles = ["Notes", "Save", "Shelf"]
+        for legibility in [UILegibilityWeight.regular, .bold] {
+            window.traitOverrides.legibilityWeight = legibility
+            window.updateTraitsIfNeeded()
+            func setFamily(_ style: [String: Any]) {
+                session.presenter.apply(wireBatch([["op": "style", "id": header.id, "style": style]]))
+            }
+            setFamily(["written": []])
+            let stock = try titles.map(weight)
+            setFamily(["font_family": missing, "written": ["font_family"]])
+            for (title, expected) in zip(titles, stock) {
+                XCTAssertEqual(try weight(title), expected, accuracy: 0.001, "\(title), \(legibility == .bold ? "bold" : "regular") legibility")
+            }
+        }
+    }
+}
+#endif
