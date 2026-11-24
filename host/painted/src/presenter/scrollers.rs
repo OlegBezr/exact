@@ -512,7 +512,7 @@ impl<D: DataSource> Presenter<D> {
 
     /// An agent's phased wheel supplies one reader sample on the existing clock.
     pub(crate) fn reader_wheel(&mut self, id: ViewId, dx: f32, dy: f32) -> Result<String, String> {
-        if self.host.route_visibility(id).1 || self.box_of(id).is_none() {
+        if id != PAGE && (self.host.route_visibility(id).1 || self.box_of(id).is_none()) {
             return Err(format!("view {id} is hidden or inert"));
         }
         let limits = self.collection_scroll_limits();

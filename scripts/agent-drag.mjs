@@ -214,14 +214,14 @@ export async function dragTap({ s, carrier, node, target, host, timing, tapRefus
   const inside = ([x, y]) => x >= 0 && y >= 0 && x <= vp.w && y <= vp.h;
   // Android's reader owns scrolling; Presenter.pointer_* cannot hold its scroll contact.
   // Use the reader's deterministic scroll samples, and report that delivery explicitly.
-  if (host === 'android' && carrier.reader && ['ScrollView', 'List'].includes(b.type) && !mouse) {
+  if (host === 'android' && carrier.reader && (dx || dy || ['ScrollView', 'List'].includes(b.type)) && !mouse) {
     if (!inside(start)) throw new Error(`drag: start (${start}) leaves the viewport (${vp.w} × ${vp.h})`);
-    const req = { op: 'tap', id: node.id, scrollDrag: [dx, dy], ms: over, from: start };
+    const req = { op: 'tap', id: node.id, scrollDrag: [dx, dy], ms: dx || dy ? over : 0, from: start, ...(hold ? { hold } : {}) };
     const owner = await carrier.ask({ ...req, probe: true });
     if (owner.error) throw new Error(`drag: ${owner.error}`);
     if (owner.scrollDrag !== 'presenter') {
       if (owner.scrollDrag !== 'reader') throw new Error('drag: Android reader did not identify the scroll owner');
-      if (during.length || press || hold || opts.path || modifiers) throw new Error('drag: Android reader scroll samples do not hold a native touch; press, hold, during, path and modifiers need native input');
+      if (during.length || press || opts.path || modifiers) throw new Error('drag: Android reader scroll samples do not hold a native touch; press, during, path and modifiers need native input');
       const r = await carrier.ask(req);
       if (r.error || r.delivery === 'unsupported') throw new Error(`drag: ${r.error ?? r.reason ?? 'unsupported'}`);
       return noted(await s.landed({ ...r, target, ...(scrolled ? { scrolled } : {}), drag: said, carrier: host, mode: timing }), [...still(r, target), ...await reorderNotes(s, mark)]);
