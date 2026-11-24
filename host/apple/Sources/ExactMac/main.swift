@@ -129,8 +129,8 @@ final class Adapter: ExactSessionDelegate {
         case "close": windows.first { $0.session === session }?.close()
         // A quit the app holds (LLP 1069.010): its window leaves full screen
         // and fades before the quit, `ExactWindowCommands`.
-        case "exitFullscreen", "setWindowOpacity":
-            guard let window = windows.first(where: { $0.session === session })?.window else { return }
+        case "exitFullscreen", "setWindowOpacity", "setBounds", "setAspectRatio":
+            guard let window = windows.first(where: { $0.session === session })?.window else { return session.log("\(name) refused: no session window") }
             if agentMode { session.log("\(name)\(args.isEmpty ? "" : " \(args[0])")") }
             _ = ExactWindowCommands.perform(name, args, on: window, log: session.log)
         // Bare `focus()`, as the web's `window.focus()` (LLP 1133.025 §8): the
@@ -257,7 +257,7 @@ final class DocumentWindow: NSObject, NSWindowDelegate, NSWindowRestoration {
     let rooted: Bool
     let session: ExactSession
     let view: ExactView
-    let window: NSWindow
+    let window: ExactWindow
     /// The document delivered here last; `nil` while the window shows the
     /// app's own start, which the next document takes rather than opening
     /// a window beside it.
@@ -514,6 +514,7 @@ final class DocumentWindow: NSObject, NSWindowDelegate, NSWindowRestoration {
             "fullScreen": window.styleMask.contains(.fullScreen), "opacity": Double(window.alphaValue),
             "footprintBefore": footprintBefore,
         ]
+        row.merge(ExactWindowPlacement.observed(window)) { _, value in value }
         // The first window's is from the process's start (what `metrics`
         // reports); a later one's from when it was asked for.
         if let drawn = session.firstDrawMs { row["firstPixelMs"] = ((drawn - (label == "main" ? 0 : openedMs)) * 10).rounded() / 10 }

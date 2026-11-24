@@ -805,6 +805,33 @@ pub(super) fn check_command(
             span,
         );
     }
+    if name == "setBounds" {
+        if let [bounds, rest @ ..] = args {
+            if matches!(infer(bounds, scope, shapes)?, Ty::Record(s) if s == "DOMRect")
+                && (rest.is_empty()
+                    || matches!(rest, [flag] if infer(flag, scope, shapes)? == Ty::Bool))
+            {
+                return Ok(());
+            }
+        }
+        return err(
+            "type-window-bounds",
+            "`setBounds(bounds, animate)` takes a DOMRect and an optional boolean",
+            span,
+        );
+    }
+    if name == "setAspectRatio" {
+        if matches!(args, [ratio] if infer(ratio, scope, shapes)? == Ty::Number
+            && !matches!(ratio, Expr::Unary(UnOp::Neg, inner, _) if matches!(**inner, Expr::Number(n, _) if n > 0.0)))
+        {
+            return Ok(());
+        }
+        return err(
+            "type-window-aspect",
+            "`setAspectRatio(ratio)` takes a positive width-to-height ratio, or zero to unlock",
+            span,
+        );
+    }
     if name == "hideWindow" && !args.is_empty() {
         return err(
             "type-hide-window",

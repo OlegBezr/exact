@@ -34,6 +34,30 @@ final class WindowCommandsMacTests: XCTestCase {
         XCTAssertFalse(ExactWindowCommands.perform("close", [], on: window) { said.append($0) }, "not a window command of these")
     }
 
+    func testBoundsPlaceAnEmbeddingAppsWindow() throws {
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 120, width: 480, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let top = try XCTUnwrap(NSScreen.screens.first).frame.maxY
+        XCTAssertTrue(ExactWindowCommands.perform("setBounds", [[96, 140, 510, 302]], on: window) { XCTFail($0) })
+        waitForMainQueue()
+        XCTAssertEqual(window.frame, NSRect(x: 96, y: top - 442, width: 510, height: 302))
+    }
+
+    func testAspectRatioConstrainsContentAndZeroClearsIt() {
+        let window = shown()
+        XCTAssertTrue(ExactWindowCommands.perform("setAspectRatio", [16.0 / 9.0], on: window) { XCTFail($0) })
+        let ratio = window.contentAspectRatio
+        XCTAssertEqual(ratio.width / ratio.height, 16 / 9, accuracy: 0.00001)
+        var refusal = ""
+        XCTAssertTrue(ExactWindowCommands.perform("setAspectRatio", [-1], on: window) { refusal = $0 })
+        XCTAssertTrue(refusal.contains("setAspectRatio refused"))
+        XCTAssertEqual(window.contentAspectRatio, ratio)
+        XCTAssertTrue(ExactWindowCommands.perform("setAspectRatio", [0], on: window) { XCTFail($0) })
+        XCTAssertEqual(window.contentResizeIncrements, NSSize(width: 1, height: 1))
+        XCTAssertEqual(window.contentAspectRatio, .zero)
+    }
+
     /// LLP 1133.025 D4: `hideWindow()` puts away the window of an app that
     /// keeps running, as the person's close does (`PageFactsMacTests` holds
     /// what the page then reads), and showing it again is a restore. Where

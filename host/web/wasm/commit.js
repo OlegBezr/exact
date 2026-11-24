@@ -860,6 +860,8 @@ function apply(batch) {
             if (document.fullscreenElement) {
               document.exitFullscreen().catch((e) => log(`exitFullscreen: refused: ${e.name}`));
             }
+          } else if (op.name === "setBounds" || op.name === "setAspectRatio") {
+            log(`${op.name} refused: the browser has no such window command`);
           } else if (op.name === "setWindowOpacity") {
             log("setWindowOpacity refused: a page cannot change its window's opacity");
           } else if (op.name === "hideWindow") {
