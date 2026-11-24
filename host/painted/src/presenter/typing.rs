@@ -181,11 +181,19 @@ impl<D: DataSource> Presenter<D> {
             if !fitted.is_empty() || text.is_empty() || removes {
                 edit.data = Some(fitted.to_owned());
                 edit.cancelable = false;
-                if let Some(e) = self.apply_field_edit(target, next, caret, bound, now, edit) {
+                if let Some(e) = self.apply_field_edit(
+                    target,
+                    next,
+                    field::EditSelection::Presenter(caret),
+                    bound,
+                    now,
+                    edit,
+                ) {
                     return Err(e);
                 }
             } else if caret != self.field_selection(target) {
                 self.mark_field(target, &value, caret, false);
+                self.hosted_commanded(target, caret);
             }
         }
         let value = self.field_text(target);

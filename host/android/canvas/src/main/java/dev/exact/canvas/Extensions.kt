@@ -345,10 +345,7 @@ class ExtensionContext internal constructor(
      * origin. Its one channel to the runner is [changed], as on Apple (`exact-event:`,
      * `runner/src/runner/modules/events.rs`); the sequence number keeps two alike from coalescing. Main thread.
      */
-    fun emit(event: String, args: JSONArray) {
-        Extensions.emitted += 1
-        changed("exact-event:" + JSONObject().put("extension", name).put("event", event).put("args", args).put("seq", Extensions.emitted))
-    }
+    fun emit(event: String, args: JSONArray) = Extensions.emit(name, event, args)
 
     /**
      * Under the agent, what the implementation discloses of its own objects for `state.extensions` (LLP 1133.008 D8
@@ -485,6 +482,11 @@ class ExtensionContext internal constructor(
         /** The embedder's decision on leaving the app ([leave]); null lets every URL go. */
         @JvmStatic var leaving: ((String, String) -> Boolean)? = null
 
+        /** A receiver's presentation while the activity shows. The session hears it after first frame with device origin. Main thread. */
+        @JvmStatic fun emitWhileVisible(extension: String, event: String, args: JSONArray, hold: Int) {
+            if (Extensions.visibleNow) Activations.emit(extension, event, args, hold)
+        }
+
         /** [ExtensionContext.activation] for extension [extension] with no session: a receiver's, which posts what an
          * extension scheduled while the app was not running. */
         @JvmStatic fun activation(context: Context, extension: String, event: String, args: JSONArray, navigate: String? = null): android.content.Intent =
@@ -591,7 +593,10 @@ internal object Extensions {
     /** The one session's track table. */
     val tracks = Tracks()
     /** The events raised so far ([ExtensionContext.emit]). */
-    var emitted = 0
+    private var emitted = 0
+    fun emit(extension: String, event: String, args: JSONArray) {
+        Exact.changed("exact-event:" + JSONObject().put("extension", extension).put("event", event).put("args", args).put("seq", ++emitted))
+    }
     private var application: Context? = null
     /** The activity is resumed ([resumed], [paused]). */
     private var foreground = false

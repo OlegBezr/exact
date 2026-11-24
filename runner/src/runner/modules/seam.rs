@@ -181,6 +181,14 @@ impl<D: DataSource> Modules<D> for LinkedModules {
         r.listed_choice_linked(body)
     }
 
+    fn next_list_show(&self, r: &Runner<D>) -> Option<f64> {
+        r.next_list_show()
+    }
+
+    fn show_listed(&self, r: &mut Runner<D>) -> Result<Option<CommitReceipt>, RunnerError> {
+        r.show_listed()
+    }
+
     fn listed_due(&self, r: &mut Runner<D>, now_ms: f64) {
         r.listed_due_linked(now_ms)
     }

@@ -23,6 +23,8 @@ minSdk the app's manifest's `host.android.minimumOS` gives: 31 (Android 12) with
 and 11", below). targetSdk 36, compileSdk 37.2, AGP 9.4.1, Kotlin 2.4.10, `arm64-v8a` by default. Views, with no Compose,
 AppCompat or Material library.
 
+The Android reader displays `image` sources from HTTPS URLs (LLP 1011 §2).
+
 An `iframe` with `sandbox`, including `sandbox=""`, is refused before a WebView is created or navigated. The log
 names `iframe <id>: sandbox is unsupported on Android`. Adding `sandbox` destroys the frame's existing WebView.
 
@@ -288,8 +290,6 @@ Intl is disabled. JSI, Boost and base ICU archives must be listed. The candidate
 version must match the cached host compiler.
 Run `exact setup` first to install that compiler. The published bundle continues
 to build without Intl; the bake does not warn about a top-level Intl use.
-
-Not there: a picture from a URL (below, "Not done").
 
 ## Driving the reader (LLP 1107 D1)
 
@@ -781,9 +781,7 @@ A PNG-only filter offers no HEIC conversion. The converted result must still mee
 
 **Not on it yet:** `saveFile` and the document-handle pickers (`showOpenFilePicker`, `showDirectoryPicker`,
 `showSaveFilePicker`) are still refused, and the journal
-then says the channel does not carry them yet. `@exact/notifications` has no Android implementation until LLP 1133.004
-stage 3. Accessibility events
-(D13) will take it too.
+then says the channel does not carry them yet. Accessibility events (D13) will take it too.
 
 `x_log_requests=1` at launch (exact2's `EXACT_LOG_REQUESTS`) logs each request as exact2 queues it and as the reader
 acts on it, with what `performHapticFeedback` returned: a haptic and a clipboard write show nowhere else.
@@ -832,9 +830,10 @@ An app's optional native module views (LLP 1024) live in the same `modules/andro
 libraries are named in `app.json` under `host.android.maven` ("Maven libraries" below). Define
 `class exact.app.Modules : dev.exact.canvas.NativeModules` with a `modules: Map<String, NativeModule>` roster;
 the APK resolves it only at the first module view. Each module creates and updates its real Android `View`.
-`events(view, emit)` binds before its first update; call `emit("change", value)` or `emit("input", value)` with
-string values, `emit("message", payload)` with the guest message, `emit("load", "")`, or `emit("press", "")`.
-Retired bindings and events for an old node allocation are ignored.
+`events(view, emit)` binds before its first update; call `emit("change", value)` with
+a string value, `emit("message", payload)` with the guest message, `emit("load", "")`, or `emit("press", "")`.
+A view reports focus with `emit("focus", "")` and blur with `emit("blur", "")`. A live, eligible view can take or release focus even
+without a handler. Other events need a handler on the node. Retired bindings and events for an old node allocation are ignored.
 
 A hosted view receives `dispatchTouchEvent` in its current painted content coordinates, inside its CSS border and padding
 (LLP 1133.008 D8). The inverse of the allocation's full transform maps every pointer into the view, including through
@@ -887,6 +886,10 @@ the person's camera unless the author changed a prop. Only changed fields are ap
 zoom together preserves the person's bearing and tilt.
 
 ## Module implementations (LLP 1133.001 D5)
+
+An app that binds `@exact/notifications` can request permission and post local notifications.
+For `showTrigger`, Android uses an inexact alarm to post the notification, even while the app is in the background.
+Tapping an action brings the app to the foreground (LLP 1133.004.000 D4–D5).
 
 A package that implements a module on Android (`"platform": "android"` in its `exact.json`, with its `class` and its
 Kotlin under `sources.kotlin`) is compiled into the APK when the app binds it (LLP 1133.001 D4):
@@ -1896,9 +1899,6 @@ The cut was the smallest one. Left in the reader:
   the APK linked (`androidLinked`) and its Hermes bytecode version: a generation needing more is refused. Its
   `rustMode` is `off` in every trust (D1): the library links no Rust executor, so no generation's Rust pair is
   admitted.
-- **No picture from a URL.** The Linux host's pictures are files under the asset root (`host/painted/src/image`), on
-  every shell it has: Shelf's covers, which Open Library serves, are the grey box behind them in Discover and a gap on
-  a book's page. Nothing of this host's is missing for it; the loader has no door for a remote source.
 - **The benchmark still builds its own copy** of the reader, which no longer matches this repository's JNI names.
 
 ## The Material reference

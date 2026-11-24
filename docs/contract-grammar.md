@@ -2177,6 +2177,7 @@ host.
 | Payload appended to captured arguments | Handler names |
 | --- | --- |
 | A string, then optionally an `InputEvent` | `change`, `input` on a text field, textarea, `select`, date or time input, and `type="radio"` (the radio's `value`); an action taking one more parameter also hears the [target](#form-controls-radio-inputevent-setselectionrange) |
+| A tag string, then optionally a `NotificationEvent` | `notificationshow` on the root for a local post presented while visible, and `notificationclick` for a click ([notifications](reference.md#notifications)) |
 | One string | `message`, `error`, `pictureinpictureerror` (why picture in picture failed) |
 | A string, then optionally a `KeyboardEvent` | `keycapture` (capture-phase `keydown`), `key` (bubble-phase `keydown`) and `keyup`: the key's name; an action taking one more parameter also hears the [modifiers, the physical key and whether it repeats](#keys) |
 | Two numbers, then optionally a `ScrollEvent` | `scroll`: left and top; an action taking one more parameter also hears the scroller's extents (below) |

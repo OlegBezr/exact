@@ -1,7 +1,13 @@
 # Queue
 
+- An Android native module that emits `submit`, `key` or `hover` on a node with the matching handler never reaches it. Compare those callbacks with the iOS module event roster in LLP 1024.
 - Check an Android in-list reorder grip inside a height-drag handle with vertical scrolling allowed. The ancestor still claims the vertical axis at down. Compare a quick swipe there with one on the grip alone.
 - Compare the Android reader driver with native input on a text field inside a scroller and on a scrolled list inside a partially expanded sheet. Drag from an unselected part of the field, then drag the list through its top edge. The deterministic scroll samples do not exercise either native handoff.
+- Queue a notification click at 0 ms and call Rust’s `advance_until_request(5000)` with no pending presentation. The click waits for `apply_announced` and its handler then sees 5000 ms (#1454).
+- Raise 17 notification clicks before a web microtask runs, with the root handler mounted. The 16-entry hold drops the first click before the mounted handler can hear it (LLP 1133.004 D6, #1454).
+- Schedule two local notifications with explicit `tag=""` and different deadlines. Apple creates two requests with distinct identifiers. The web cancels the first timer and posts only the second (#1454 review, reproduced against the parent).
+- An Android notification alarm already queued for delivery can post a replacement early. Schedule the same tag for a later time, then deliver the first broadcast. `Later.due` reads the replacement by identifier alone (#1454 review).
+- A root module-event handler taking only the tag accepts an ill-typed second argument. Raise a two-argument event with a valid tag and a non-record payload and check the handler’s journal (LLP 1133.004 D6, #1454 review).
 - On iPhone 17 with iOS 26.5, add an inline “Detail” heading and a trailing “View the complete record” button to the pushed header in #1519. UIKit draws a leading chevron and shifts the title left. On 1915bddd9, `layout back` returns a hidden 0×0 box for the visible chevron.
 - On an iPhone 17 running iOS 26.5, `AgentBarPointerIOSTests.testAHostedItemBubblesPointersWithoutPressing` hits the navigation bar over the readout. `SplitIOSTests.testTheDetailColumnsTransitionIsItsBases` finds row-a outside the list port after expanding the split. Both reproduce on b77df3b3d.
 - Check the closed Duo’s system Back and ambiguous tab items on device. On iPhone 17, give two tabs the same title and omit the first control’s identifier. Only identifiable tabs can supply a frame. A disabled sibling strip can let the hit through to a different item under it (`NavigationBarIOSTests.testAnUnnamedControlBesideTheBarWithTheItemsBoxIsTheItemsButton`).

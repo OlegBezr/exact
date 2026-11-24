@@ -34,7 +34,7 @@
 //! its own outcome; a data-code call settles from its reply.
 
 use super::super::provenance::Cause;
-use super::super::{DataSource, Runner};
+use super::super::{CommitReceipt, DataSource, Runner, RunnerError};
 use super::{error_code, response, CallOrigin, Json, ModulesRow, Pending, Waits};
 use crate::request::{Dispatch, Outcome, Reply, Work};
 use crate::HoldAnswer;
@@ -61,6 +61,8 @@ pub type AppState = Arc<Mutex<BTreeMap<String, Json>>>;
 pub(in crate::runner) struct Declared {
     /// Each keyed list, by its state name, oldest first.
     lists: BTreeMap<String, Vec<Listed>>,
+    /// Pending presentations in reverse deadline order. The oldest due entry is last.
+    shows: Vec<ListShow>,
     /// The session's values, by state name.
     values: BTreeMap<String, Json>,
     /// The app's values; a session the host shares none with keeps its own.
@@ -92,6 +94,15 @@ struct Listed {
     source: String,
     /// Its options as the call wrote them, `null` for one left out.
     fields: Map<String, Json>,
+}
+
+struct ListShow {
+    state: String,
+    at: f64,
+    reference: u64,
+    extension: String,
+    event: String,
+    args: String,
 }
 
 struct HeldEffect {
@@ -430,6 +441,17 @@ impl<D: DataSource> Runner<D> {
                 .plan
                 .str(self.plan.sources[row.source.0 as usize].name)
                 .to_owned();
+            let now = self.time.epoch_at_zero + self.now_ms;
+            let presentation = sub["list"]["show"]["event"].as_str().map(|event| {
+                let at = list
+                    .get("at")
+                    .and_then(Json::as_str)
+                    .and_then(|key| fields.get(key))
+                    .and_then(Json::as_f64)
+                    .unwrap_or(now);
+                fields.insert("delivered".into(), json!(at <= now));
+                (event, at)
+            });
             let entry = Listed {
                 reference,
                 source,
@@ -455,6 +477,38 @@ impl<D: DataSource> Runner<D> {
                 self.registered(reference, replaced.filter(|_| !value.is_null()));
             }
             self.announce_listed(&state);
+            if let Some(old) = replaced.filter(|_| !value.is_null()) {
+                self.extensions
+                    .declared
+                    .shows
+                    .retain(|show| show.reference != old);
+            }
+            if let Some((event, at)) = presentation {
+                let args = keyed_args(
+                    &sub["list"],
+                    &sub["list"]["show"],
+                    Json::Object(fields.clone()),
+                );
+                if at <= now {
+                    if !self.page.hidden {
+                        self.emit_list_show(&extension, event, &args);
+                    }
+                } else {
+                    let shows = &mut self.extensions.declared.shows;
+                    let index = shows.partition_point(|entry| entry.at > at);
+                    shows.insert(
+                        index,
+                        ListShow {
+                            state,
+                            at,
+                            reference,
+                            extension: extension.clone(),
+                            event: event.into(),
+                            args,
+                        },
+                    );
+                }
+            }
         }
         // `"unlist": key`, or `{"key", "kind"}` for the entries of one kind.
         let (unlist, unkind) = match &sub["unlist"] {
@@ -465,14 +519,25 @@ impl<D: DataSource> Runner<D> {
             let value = fields.get(key).cloned().unwrap_or(Json::Null);
             let lists = self.lists_of(row);
             for state in lists {
-                self.with_list(&extension, &state, |entries| {
-                    let before = entries.len();
+                let removed = self.with_list(&extension, &state, |entries| {
+                    let mut removed = Vec::new();
                     entries.retain(|e| {
-                        e.fields.get(key) != Some(&value)
-                            || unkind.is_some_and(|k| e.fields.get("kind") != Some(k))
+                        let keep = e.fields.get(key) != Some(&value)
+                            || unkind.is_some_and(|k| e.fields.get("kind") != Some(k));
+                        if !keep {
+                            removed.push(e.reference);
+                        }
+                        keep
                     });
-                    ((), entries.len() != before)
+                    let changed = !removed.is_empty();
+                    (removed, changed)
                 });
+                for reference in removed {
+                    self.extensions
+                        .declared
+                        .shows
+                        .retain(|show| show.reference != reference);
+                }
                 self.announce_listed(&state);
             }
             self.log(format!("{declared}: unlisted"));
@@ -682,6 +747,49 @@ impl<D: DataSource> Runner<D> {
         match at.and_then(|f| e.fields.get(&f).and_then(Json::as_f64)) {
             Some(t) => t <= now,
             None => true,
+        }
+    }
+
+    pub(super) fn next_list_show(&self) -> Option<f64> {
+        // A queued handler can start a request before the clock reaches the next deadline.
+        if self.has_module_event()
+            && (!self.extensions.declared.shows.is_empty() || self.has_queued_presentation())
+        {
+            return Some(self.now_ms);
+        }
+        self.extensions
+            .declared
+            .shows
+            .last()
+            .map(|show| show.at - self.time.epoch_at_zero)
+    }
+
+    pub(super) fn show_listed(&mut self) -> Result<Option<CommitReceipt>, RunnerError> {
+        // Earlier raised events have the first commits. The clock can stop on each one's request.
+        if !self.has_module_event() {
+            if let Some(show) = self.extensions.declared.shows.pop() {
+                let listed = self.with_list(&show.extension, &show.state, |entries| {
+                    let Some(entry) = entries
+                        .iter_mut()
+                        .find(|entry| entry.reference == show.reference)
+                    else {
+                        return (false, false);
+                    };
+                    entry.fields.insert("delivered".into(), json!(true));
+                    (true, true)
+                });
+                if listed && !self.page.hidden {
+                    self.emit_list_show(&show.extension, &show.event, &show.args);
+                }
+            }
+        }
+        self.hear_module_event()
+    }
+
+    fn emit_list_show(&mut self, extension: &str, event: &str, args: &str) {
+        if let Err(why) = self.queue_module_event(extension, event, args, CallOrigin::Device, true)
+        {
+            self.log(why);
         }
     }
 
@@ -931,24 +1039,21 @@ impl<D: DataSource> Runner<D> {
         let Some(event) = tap["event"].as_str() else {
             return Ok(json!({ "ref": reference, "delivery": "substituted" }).to_string());
         };
-        // In every keyed list, an entry posted without its key is tapped
-        // with "" for it (the Notifications API's untagged `tag`).
-        let mut entry = entry.clone();
-        if let Some(key) = self.substitute(row)["list"]["key"].as_str() {
-            if entry.is_object() && entry.get(key).is_none_or(Json::is_null) {
-                entry[key] = json!("");
-            }
-        }
-        let args = entry_args(&tap, &entry);
+        let args = keyed_args(&self.substitute(row)["list"], &tap, entry.clone());
         let extension = self.plan.str(row.extension).to_owned();
-        self.raise_module_event(
-            &extension,
-            event,
-            &Json::Array(args).to_string(),
-            CallOrigin::App,
-        )?;
+        self.raise_module_event(&extension, event, &args, CallOrigin::App)?;
         Ok(json!({ "ref": reference, "event": event, "delivery": "substituted" }).to_string())
     }
+}
+
+/// A presentation or tap carries the empty string for an untagged post.
+fn keyed_args(list: &Json, event: &Json, mut entry: Json) -> String {
+    if let Some(key) = list["key"].as_str() {
+        if entry.is_object() && entry.get(key).is_none_or(Json::is_null) {
+            entry[key] = json!("");
+        }
+    }
+    Json::Array(entry_args(event, &entry)).to_string()
 }
 
 /// The event's arguments a listed entry's tap declares: each a field of the

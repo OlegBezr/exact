@@ -389,6 +389,16 @@ pub trait Modules<D: DataSource> {
         r.log(format!("{extension}.{state}: a choice from an implementation whose list the runner does not keep here, refused"));
     }
 
+    /// The next local presentation on the session clock.
+    fn next_list_show(&self, r: &Runner<D>) -> Option<f64> {
+        None
+    }
+
+    /// Mark the entry presented and emit its event if the page is visible.
+    fn show_listed(&self, r: &mut Runner<D>) -> Result<Option<CommitReceipt>, RunnerError> {
+        Ok(None)
+    }
+
     /// The agent clock reached `now_ms`: each entry of a list with a due
     /// time that is now due fires, once; a list another session changed is
     /// announced to this one's readers.
