@@ -3,7 +3,7 @@
 // a builder reading it learns where the verbs are (`bun exact.mjs --help`), not this code. An
 // exact.mjs written before this file held all of it, and still runs; `bun exact.mjs update` thins it.
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { constants, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { noteBunLoaded } from '../js/bake/src/__exact_env.mjs';
@@ -521,7 +521,7 @@ async function verbRun({ dir, name, game = false, exact2, args }, reply) {
       done(code ?? 128 + (constants.signals[signal] ?? 0));
     });
   });
-  const script = ([file, ...args], more = [], stdio = 'inherit') => spawned(process.execPath, [resolve(exact2, file), ...args, ...more], stdio);
+  const script = ([file, ...args], more = [], stdio = 'inherit', env) => spawned(process.execPath, [resolve(exact2, file), ...args, ...more], stdio, undefined, undefined, env);
   const bun = (command) => command === 'bun' ? process.execPath : command;
   // A flag the command's script refuses (scripts/help.mjs), refused here first so that the refusal comes before any work
   const refusedFlag = async () => (await import(resolve(exact2, 'scripts/help.mjs')).catch(() => null))?.guardFlags(verb, rest, { exit: (code) => ({ code }) })?.code;
@@ -696,12 +696,16 @@ if (verb === 'contract') {
   // Each file's agent owns its server, so it can restart between that file's tests.
   let failed = 0;
   const files = tests.length ? tests : (await import(resolve(exact2, 'scripts/app.mjs'))).authoredTests(dir);
-  for (const file of files.length ? files : [resolve(dir, 'app.test.contract')]) {
-    if (files.length > 1) console.log(`# ${relative(process.cwd(), file)}`);
-    const code = await script(verbs.test, ['--test', file, ...rest]);
-    if (stopped) return log(code || 128 + (constants.signals[stopped] ?? 0));
-    failed = code || failed;
-  }
+  // Across files each iOS agent inspects the simulator only if no earlier agent in this run has.
+  const checks = host === 'ios' && drivesNative && files.length > 1 ? mkdtempSync(resolve(tmpdir(), 'exact-ios-test-checks-')) : null;
+  try {
+    for (const file of files.length ? files : [resolve(dir, 'app.test.contract')]) {
+      if (files.length > 1) console.log(`# ${relative(process.cwd(), file)}`);
+      const code = await script(verbs.test, ['--test', file, ...rest], 'inherit', checks ? { EXACT_IOS_TEST_CHECKS: checks } : {});
+      if (stopped) return log(code || 128 + (constants.signals[stopped] ?? 0));
+      failed = code || failed;
+    }
+  } finally { if (checks) rmSync(checks, { recursive: true, force: true }); }
   return log(failed);
 }
 

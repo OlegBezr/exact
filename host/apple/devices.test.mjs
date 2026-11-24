@@ -374,28 +374,58 @@ test('an AX launch loads the runtime before launch and restores its setting, inc
         expect(udid).toBe('our-simulator');
         calls.push(args);
         const [verb, domain, key] = args;
-        expect([domain, key]).toEqual(['com.apple.Accessibility', 'ApplicationAccessibilityEnabled']);
-        if (verb === 'read') return { status: value == null ? 1 : 0, out: value ?? '', err: value == null ? UNSET[n % UNSET.length] : '' };
+        expect(domain).toBe('com.apple.Accessibility');
+        if (verb === 'read') {
+          expect(key).toBeUndefined();
+          return { status: value == null ? 1 : 0, out: value == null ? '' : `    ApplicationAccessibilityEnabled = ${value};`, err: value == null ? UNSET[n % UNSET.length] : '' };
+        }
+        expect(key).toBe('ApplicationAccessibilityEnabled');
         value = verb === 'delete' ? undefined : args.at(-1) === 'true' ? '1' : '0';
         return { status: 0 };
       };
       const launch = async () => { expect(value).toBe('1'); if (fails) throw Error('launch failed'); return 'carrier'; };
-      if (fails) await expect(withAccessibilityRuntime('our-simulator', true, launch, run)).rejects.toThrow('launch failed');
-      else expect(await withAccessibilityRuntime('our-simulator', true, launch, run)).toBe('carrier');
+      if (fails) await expect(withAccessibilityRuntime('our-simulator', true, launch, { run })).rejects.toThrow('launch failed');
+      else expect(await withAccessibilityRuntime('our-simulator', true, launch, { run })).toBe('carrier');
       expect(value).toBe(initial);
       expect(calls.map(args => args[0])).toEqual(initial === '1' ? ['read'] : ['read', 'write', initial == null ? 'delete' : 'write']);
       calls.length = 0;
-      expect(await withAccessibilityRuntime('our-simulator', false, async () => 'plain', run)).toBe('plain');
+      expect(await withAccessibilityRuntime('our-simulator', false, async () => 'plain', { run })).toBe('plain');
       expect(calls).toEqual([]);
     }
   }
-  await expect(withAccessibilityRuntime('our-simulator', true, () => { throw Error('must not launch'); }, async () => ({ status: 1, err: 'simulator unavailable' }))).rejects.toThrow('simulator unavailable');
+  await expect(withAccessibilityRuntime('our-simulator', true, () => { throw Error('must not launch'); }, { run: async () => ({ status: 1, err: 'simulator unavailable' }) })).rejects.toThrow('simulator unavailable');
   // verify's launches try (LLP 1156.006.000 D15): a simulator that will not answer is launched without the runtime.
   const said = [], error = console.error;
   console.error = (line) => said.push(line);
-  try { expect(await withAccessibilityRuntime('our-simulator', 'try', async () => 'plain', async () => ({ status: -1, err: 'no answer in 10 s' }))).toBe('plain'); }
+  try { expect(await withAccessibilityRuntime('our-simulator', 'try', async () => 'plain', { run: async () => ({ status: -1, err: 'no answer in 10 s' }) })).toBe('plain'); }
   finally { console.error = error; }
   expect(said).toEqual(["note: simulator accessibility: no answer in 10 s; launched without UIKit's accessibility runtime, so the accessibility tree is not read"]);
+});
+
+test('the first simulator launch warns only for defaults already on, with a command for each', async () => {
+  const { withAccessibilityRuntime } = await import('./touches.mjs');
+  const udid = 'warning-two-keys', said = [], reads = [], warn = console.warn;
+  console.warn = line => said.push(line);
+  try {
+    const run = async (_, args) => {
+      reads.push(args);
+      return { status: 0, out: '{\n    AutomationEnabled = 1;\n    AccessibilityEnabled = 0;\n    ApplicationAccessibilityEnabled = 1;\n}' };
+    };
+    for (const ax of [false, true, false]) {
+      expect(await withAccessibilityRuntime(udid, ax, () => 'launched', { run })).toBe('launched');
+    }
+    expect(reads).toEqual([['read', 'com.apple.Accessibility'], ['read', 'com.apple.Accessibility']]);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain('1.5 seconds to every app launch');
+    expect(said[0].split('\n').filter(line => line.includes('simctl')).map(line => line.trim())).toEqual(
+      ['AutomationEnabled', 'ApplicationAccessibilityEnabled'].map(key => `xcrun simctl spawn ${udid} defaults delete com.apple.Accessibility ${key}`));
+    const calls = [];
+    const clean = async (_, args) => { calls.push(args[0]); return { status: 0, out: '{}' }; };
+    for (const ax of [true, false]) await withAccessibilityRuntime('warning-own-ax', ax, () => {}, { run: clean });
+    expect(calls).toEqual(['read', 'write', 'delete']);
+    expect(await withAccessibilityRuntime('warning-read-failed', false, () => 'ok', { run: async () => ({ status: -1, err: 'timed out' }) })).toBe('ok');
+    expect(said).toHaveLength(1);
+  } finally { console.warn = warn; }
 });
 
 test('AX setup, launch and restoration share the simulator launch lock with ordinary drives', async () => {
@@ -409,10 +439,10 @@ test('AX setup, launch and restoration share the simulator launch lock with ordi
   };
   const run = async (_, args) => {
     await probe(args[0]);
-    return { status: 0, out: '0' };
+    return { status: 0, out: '    ApplicationAccessibilityEnabled = 0;' };
   };
   for (const ax of [true, false]) {
-    await withAccessibilityRuntime(udid, ax, async () => { await probe(ax ? 'AX launch' : 'ordinary launch'); return 'carrier'; }, run);
+    await withAccessibilityRuntime(udid, ax, async () => { await probe(ax ? 'AX launch' : 'ordinary launch'); return 'carrier'; }, { run });
   }
   expect(unlocked).toEqual([]);
 });
@@ -424,7 +454,7 @@ test('an AX restoration failure closes the launched carrier before releasing the
   for (const closeFails of [false, true]) {
     const directory = mkdtempSync(resolve(tmpdir(), 'devices-ax-close-'));
     let closed = false;
-    const run = async (_, args) => args[0] === 'read' ? { status: 0, out: '0' }
+    const run = async (_, args) => args[0] === 'read' ? { status: 0, out: '    ApplicationAccessibilityEnabled = 0;' }
       : args.at(-1) === 'true' ? { status: 0 } : { status: 1, err: 'restore failed' };
     try {
       const launch = () => withAccessibilityRuntime(udid, true, async () => ({
@@ -433,7 +463,7 @@ test('an AX restoration failure closes the launched carrier before releasing the
           closed = true;
           if (closeFails) throw Error('close failed');
         },
-      }), run);
+      }), { run });
       const failed = exclusiveIOS(udid, 'app', launch, { directory });
       await expect(failed).rejects.toThrow(closeFails ? /restore failed.*close failed/ : 'restore failed');
       expect(closed).toBe(true);
@@ -449,13 +479,13 @@ test('touch restoration cannot disable accessibility between an AX read and laun
   const udid = `touch-restore-lock-${process.pid}`;
   let value = '1';
   const reading = Promise.withResolvers(), finish = Promise.withResolvers();
-  const launch = withAccessibilityRuntime(udid, true, async () => { expect(value).toBe('1'); return 'carrier'; }, async (_, args) => {
+  const launch = withAccessibilityRuntime(udid, true, async () => { expect(value).toBe('1'); return 'carrier'; }, { run: async (_, args) => {
     expect(args[0]).toBe('read');
     const before = value;
     reading.resolve();
     await finish.promise;
-    return { status: 0, out: before };
-  });
+    return { status: 0, out: `    ApplicationAccessibilityEnabled = ${before};` };
+  } });
   await reading.promise;
   const restoration = restoreAccessibility(udid, { ApplicationAccessibilityEnabled: '0' }, async (_, args) => {
     if (args[2] === 'ApplicationAccessibilityEnabled') value = '0';
@@ -484,12 +514,12 @@ test('touch cleanup inside a launch reuses its lock, and delayed cleanup takes t
     delayed = later.promise.then(() => restoreAccessibility(udid, {}, run));
     await restoreAccessibility(udid, {}, run);
     throw Error('launch failed');
-  })).rejects.toThrow('launch failed');
+  }, { run })).rejects.toThrow('launch failed');
   later.resolve();
   expect(await delayed).toBe(null);
 });
 
-test('a touch session records the accessibility keys it found and puts them back so, or unset after a session that left them on', async () => {
+test('a touch session records the accessibility keys it found and restores them, including pre-existing automation', async () => {
   const { foundAccessibility, restoreAccessibility } = await import('./touches.mjs');
   // What a session found is recorded, and a session after one killed before its end takes that record, not the keys
   // the killed one left on.
@@ -513,8 +543,8 @@ test('a touch session records the accessibility keys it found and puts them back
   // A simulator no session had used, and one whose person turned ApplicationAccessibilityEnabled on for `tree --ax`.
   expect(await put({})).toEqual({ calls: ['delete AccessibilityEnabled', 'delete ApplicationAccessibilityEnabled', 'delete AutomationEnabled'], failed: null });
   expect((await put({ ApplicationAccessibilityEnabled: '1', AccessibilityEnabled: '0' })).calls).toEqual(['delete AutomationEnabled', 'write AccessibilityEnabled -bool false', 'write ApplicationAccessibilityEnabled -bool true']);
-  // AutomationEnabled already on: an earlier session (or a killed drive) left all three, so all go.
-  expect((await put({ AutomationEnabled: '1', AccessibilityEnabled: '1', ApplicationAccessibilityEnabled: '1' })).calls).toEqual(['delete AccessibilityEnabled', 'delete ApplicationAccessibilityEnabled', 'delete AutomationEnabled']);
+  // Automation may have been enabled on purpose outside Exact.
+  expect((await put({ AutomationEnabled: '1', AccessibilityEnabled: '1', ApplicationAccessibilityEnabled: '1' })).calls).toEqual(['write AccessibilityEnabled -bool true', 'write ApplicationAccessibilityEnabled -bool true', 'write AutomationEnabled -bool true']);
   expect((await put({ ApplicationAccessibilityEnabled: '1' }, 1)).failed).toBe('ApplicationAccessibilityEnabled: no');
   // A delete that failed otherwise (the simulator gone, no answer) is a failure, so the record is kept for the next session.
   expect((await put({ ApplicationAccessibilityEnabled: '1' }, 0, { status: -1, err: 'no answer in 10 s' })).failed).toBe('AutomationEnabled: no answer in 10 s; AccessibilityEnabled: no answer in 10 s');

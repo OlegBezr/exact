@@ -4,15 +4,15 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { iosTriple } from './build.mjs';
-import { claimLive } from '../../scripts/app.mjs';
-import { decodeProfile, identity, installedProfiles, phoneBridge, profile } from './devices.mjs';
+import { claimLive, readManifest } from '../../scripts/app.mjs';
+import { chooseSimulator, decodeProfile, identity, installedProfiles, phoneBridge, profile } from './devices.mjs';
 import { watchCloak } from './cloak.mjs';
-import { retainCleanupError, simulatorDisplay } from '../../scripts/agent-launch.mjs';
+import { retainCleanupError, simulatorDisplay, simulatorDisplayLockPath } from '../../scripts/agent-launch.mjs';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -288,31 +288,81 @@ const simDefaults = (udid, args) => new Promise((done) => {
   p.on('error', (e) => { clearTimeout(timer); done({ status: -1, out, err: String(e) }); });
   p.on('close', (status, signal) => { clearTimeout(timer); done({ status: signal ? -1 : status, out, err: signal ? 'no answer in 10 s' : err }); });
 });
+const accessibilityRecord = udid => resolve(homedir(), '.cache/exact/simulator-accessibility', `${udid}.json`);
+const checkedAccessibility = new Set();
+
+/** Read the domain once, before a launch changes any key. A missing domain means all three are unset. */
+async function accessibilityKeys(udid, run = simDefaults) {
+  const r = await run(udid, ['read', AX]);
+  if (r.status !== 0 && !/does not exist|not found|Could not find key/.test(r.err)) throw new Error(`simulator accessibility: ${r.err}`);
+  return Object.fromEntries(AX_KEYS.map(k => [k, new RegExp(`^\\s*${k} = (\\d+);`, 'm').exec(r.out)?.[1]]));
+}
+
+/** Under the display lock. A touch session keeps its record until it has restored the keys. */
+function accessibilityCheckPending(udid) {
+  if (checkedAccessibility.has(udid) || existsSync(accessibilityRecord(udid))) return false;
+  const directory = process.env.EXACT_IOS_TEST_CHECKS;
+  return !directory || !existsSync(resolve(directory, udid));
+}
+
+function reportAccessibility(udid, keys) {
+  if (!accessibilityCheckPending(udid)) return;
+  checkedAccessibility.add(udid);
+  const directory = process.env.EXACT_IOS_TEST_CHECKS;
+  if (directory) try { writeFileSync(resolve(directory, udid), ''); } catch { /* still report in this process */ }
+  const on = AX_KEYS.filter(key => keys[key] === '1');
+  if (!on.length) return;
+  console.warn([
+    `warning: Exact found these ${AX} settings already on when this run started on simulator ${udid}: ${on.join(', ')}.`,
+    "Loading UIKit's accessibility runtime can add about 1.5 seconds to every app launch on this simulator.",
+    'If you want to clear these settings, run:',
+    ...on.map(key => `  xcrun simctl spawn ${udid} defaults delete ${AX} ${key}`),
+  ].join('\n'));
+}
+
+/** Setup inspects only the simulator a drive would use if it is already booted and its display is free. */
+export async function checkSimulatorAccessibility(dir, app) {
+  let lock;
+  try {
+    app ??= dir && readManifest(dir, basename(dir)).app.id;
+    const dev = chooseSimulator(undefined, { app, dir, rememberChoice: false });
+    if (dev.state !== 'Booted' || !dev.runtime.includes('.iOS-') || !accessibilityCheckPending(dev.udid)) return;
+    // Darwin's O_SHLOCK (sys/fcntl.h) shares the launcher's flock without building its Rust helper in setup --check.
+    // Before the first drive there is no lock file. It is permanent once created, so discard a read a drive raced.
+    const path = simulatorDisplayLockPath(dev.udid);
+    try { lock = openSync(path, 0x10 | constants.O_NONBLOCK | constants.O_NOFOLLOW); }
+    catch (error) { if (error.code !== 'ENOENT') return; }
+    const keys = await accessibilityKeys(dev.udid);
+    if (lock !== undefined || !existsSync(path)) reportAccessibility(dev.udid, keys);
+  } catch { /* setup can check its SDK without an available simulator */ }
+  finally { if (lock !== undefined) closeSync(lock); }
+}
+
 /** Hold the simulator's shared launch lock through AX setup, launch and restoration.
- * The loaded runtime stays with the process. Ordinary drives perform no defaults reads or writes.
+ * The loaded runtime stays with the process. An ordinary drive only reads the defaults on its first launch.
  * `enabled` is `'try'` for a launch that reads the tree if it can (verify, LLP 1156.006.000 D15): a simulator that
  * will not say or take the setting is launched without the runtime, with a note, where `true` refuses. */
-export async function withAccessibilityRuntime(udid, enabled, launch, run = simDefaults) {
+export async function withAccessibilityRuntime(udid, enabled, launch, { run = simDefaults, check = true } = {}) {
   return withAccessibilityLock(udid, async () => {
-    if (!enabled) return launch();
+    if (!enabled && !(check && accessibilityCheckPending(udid))) return launch();
     const key = 'ApplicationAccessibilityEnabled', args = [AX, key];
     const refuse = (message) => {
       if (enabled !== 'try') throw new Error(message);
       console.error(`note: ${message}; launched without UIKit's accessibility runtime, so the accessibility tree is not read`);
       return launch();
     };
-    const before = await run(udid, ['read', ...args]);
-    // An unset key is no failure. `defaults` words it three ways: macOS's "does not exist", and iOS 27's "Domain … not
-    // found" and "Could not find key … in domain …", which a simulator no session has touched answers.
-    if (before.status !== 0 && !/does not exist|not found|Could not find key/.test(before.err)) return refuse(`simulator accessibility: ${before.err}`);
-    if (before.status === 0 && before.out.trim() === '1') return launch();
+    let before;
+    try { before = await accessibilityKeys(udid, run); }
+    catch (error) { return enabled ? refuse(error.message) : launch(); }
+    if (check) reportAccessibility(udid, before);
+    if (!enabled || before[key] === '1') return launch(before);
     const set = await run(udid, ['write', ...args, '-bool', 'true']);
     if (set.status !== 0) return refuse(`simulator accessibility: ${set.err}`);
     let carrier;
     try { carrier = await launch(); return carrier; }
     finally {
       try {
-        const restored = await run(udid, before.status === 0 ? ['write', ...args, '-bool', 'false'] : ['delete', ...args]);
+        const restored = await run(udid, before[key] != null ? ['write', ...args, '-bool', 'false'] : ['delete', ...args]);
         if (restored.status !== 0) throw new Error(`simulator accessibility could not be restored: ${restored.err}`);
       } catch (error) {
         try { await carrier?.close(); } catch (failure) { retainCleanupError(error, failure); }
@@ -321,28 +371,19 @@ export async function withAccessibilityRuntime(udid, enabled, launch, run = simD
     }
   });
 }
-/** The three keys as simulator `udid` has them (`'1'`, `'0'`, or undefined when unset), or null when it could not say. */
-async function accessibilityKeys(udid) {
-  const r = await simDefaults(udid, ['read', AX]);
-  if (r.status !== 0 && !/does not exist|not found/.test(r.err)) return null;
-  return Object.fromEntries(AX_KEYS.map((k) => [k, new RegExp(`^\\s*${k} = (\\d+);`, 'm').exec(r.out)?.[1]]));
-}
 /** The keys as a session finds them: the record a session killed before its end left of what it found, else read
  * now and recorded (`record`, a file; under the device's lock, so no other session's). Null when they could not be read. */
-export async function foundAccessibility(udid, record, read = accessibilityKeys) {
+export async function foundAccessibility(udid, record, read = udid => accessibilityKeys(udid).catch(() => null)) {
   try { return JSON.parse(readFileSync(record, 'utf8')); } catch { /* none: this session reads them */ }
   const keys = await read(udid);
   if (keys) { mkdirSync(dirname(record), { recursive: true }); writeFileSync(record, JSON.stringify(keys)); }
   return keys;
 }
-/** The keys put back as a session `found` them. AutomationEnabled already on means an earlier session's XCTest left
- * all three on (a person sets ApplicationAccessibilityEnabled alone, for `tree --ax`), so they go back to unset.
- * Resolves with what failed, or null. */
+/** Restore the recorded values, including automation that was on before Exact. Resolves with what failed, or null. */
 export async function restoreAccessibility(udid, found, run = simDefaults) {
   return withAccessibilityLock(udid, async () => {
-    const left = found.AutomationEnabled === '1';
     const failed = (await Promise.all(AX_KEYS.map(async (k) => {
-      const v = left ? undefined : found[k];
+      const v = found[k];
       const r = await run(udid, v == null ? ['delete', AX, k] : ['write', AX, k, '-bool', v === '1' ? 'true' : 'false']);
       // Deleting a key or domain that is not there fails, and leaves what was wanted.
       return r.status === 0 || (v == null && /Could not find key|not found/.test(r.err)) ? null : `${k}: ${r.err.trim() || `exit ${r.status}`}`;
@@ -365,11 +406,11 @@ export async function restoreAccessibility(udid, found, run = simDefaults) {
  * ends (`AX_KEYS`). `handoff` awaits this connection's close and returns the port and token
  * for a hosted XCTest to connect; ownership and accessibility stay held until `close` or `end`.
  */
-export async function openTouches({ udid, appId, foldable, device = false, installApp }) {
+export async function openTouches({ udid, appId, foldable, device = false, installApp, accessibility }) {
   const lockRelease = lock(udid);
   const started = Date.now();
   const cloak = device ? null : watchCloak(udid, foldable);
-  const axRecord = resolve(homedir(), '.cache/exact/simulator-accessibility', `${udid}.json`), axFound = device ? Promise.resolve(null) : foundAccessibility(udid, axRecord);
+  const axRecord = accessibilityRecord(udid), axFound = device ? Promise.resolve(null) : foundAccessibility(udid, axRecord, accessibility && (() => accessibility));
   let restored = null;
   // Unread keys were never turned on: the session ends before a write or a runner's start (`readKeys`).
   const putBack = () => (restored ??= axFound.then(async (keys) => {

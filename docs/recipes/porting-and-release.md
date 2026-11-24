@@ -18,13 +18,12 @@ development build. The first takes two minutes: start `--prebuild --release`; la
 `ios --release` waits for a build still running, then takes seconds.
 Apple bundles declare Exact's required-reason APIs. Add app disclosures in
 `PrivacyInfo.xcprivacy` beside `app.json` ([privacy manifests](../reference.md#apple-privacy-manifests)).
-A `--touch platform` drive turns the simulator's accessibility on while it runs (an app launched
-with it on loads UIKit's accessibility runtime: 1.4 s) and restores what it found at its end. A
-launch that slow (`main→didFinishLaunching` over a second) had it on before; turn it off:
-
-```sh
-for k in AutomationEnabled AccessibilityEnabled ApplicationAccessibilityEnabled; do xcrun simctl spawn <udid> defaults delete com.apple.Accessibility $k; done
-```
+When the simulator loads UIKit's accessibility runtime, every app launch can spend about
+1.5 seconds between `main` and `didFinishLaunching`. An XCTest UI session can leave the
+simulator defaults on across reboots. `test ios` and `agent ios` report the keys that were
+already on when the run started. `setup --check --platform ios` can report them while the
+selected simulator is booted. If you want them cleared, run the printed `defaults delete`
+commands. A drive that needs accessibility restores the settings it found.
 
 Time the installed build, not a plan swapped in by `agent ios`: `bun exact.mjs
 ios` each variant first. `SIMCTL_CHILD_EXACT_SMOKE=1 xcrun simctl launch --console-pty <udid>
