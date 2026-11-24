@@ -420,6 +420,8 @@ package protocol NavigationHosting: AnyObject {
     func agentBack() -> String?
     func activateChrome(_ node: NodeView, before: (CGPoint?) -> Bool) -> [String: Any]?
     func drawnSearch(_ node: NodeView) -> UITextField?
+    /// The control a shown route's search field is collapsed into, and its box; nil while the field itself shows.
+    func collapsedSearch(_ node: NodeView) -> (view: UIView, box: CGRect)?
     func barButtonItem(_ node: NodeView) -> (bar: UINavigationBar, item: UIBarButtonItem, of: UINavigationItem)?
     /// The tabs a route's search scope control shows, by segment; nil when
     /// `segments` is no route's scope control.
@@ -689,6 +691,7 @@ package final class NoNavigation: NavigationHosting {
     package func agentBack() -> String? { nil }
     package func activateChrome(_ node: NodeView, before: (CGPoint?) -> Bool) -> [String: Any]? { nil }
     package func drawnSearch(_ node: NodeView) -> UITextField? { nil }
+    package func collapsedSearch(_ node: NodeView) -> (view: UIView, box: CGRect)? { nil }
     package func barButtonItem(_ node: NodeView) -> (bar: UINavigationBar, item: UIBarButtonItem, of: UINavigationItem)? { nil }
     package func searchScopeTabs(of segments: UISegmentedControl) -> [UInt32]? { nil }
     #endif
