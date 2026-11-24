@@ -79,7 +79,6 @@ struct HeaderShape: Equatable {
             return .systemFont(ofSize: 17, weight: bold ? .semibold : .regular)
         }
         init(_ button: NodeView, hosted: Bool = false, family: Int? = nil) {
-            self.family = family
             var symbol: String?, text = "", ink: (NodeView, String)?
             func walk(_ node: NodeView) {
                 for child in Self.shown(node) {
@@ -141,6 +140,7 @@ struct HeaderShape: Equatable {
             font = rows["font_size"] != nil || rows["font_weight"] != nil
                 ? ButtonConfigurationIOS.font(Self.titleFont(bold: button.traitCollection.legibilityWeight == .bold), rows: rows) : nil
             #endif
+            self.family = font == nil ? nil : family
             // The platform's tint unless the author said otherwise (LLP
             // 1115.000 D2): a `color` written on the symbol, else on the title's
             // text, else on the button, a platform colour as much as a literal.
@@ -270,7 +270,9 @@ struct HeaderShape: Equatable {
         header = rule.header
         #if os(iOS)
         // Only a route projects its header family onto a navigation bar.
-        let family = routeFamily ? rule.header.authoredFontFamily : nil
+        let family = routeFamily ? rule.header.authoredFontFamily.flatMap { id in
+            id < 8 || rule.header.text?.catalog[id]?.isEmpty == false ? id : nil
+        } : nil
         #else
         let family: Int? = nil
         #endif
@@ -330,52 +332,4 @@ struct HeaderShape: Equatable {
     }
 }
 
-extension BarPress {
-    func applyItemFont(_ font: UIFont?, to item: UIBarButtonItem) {
-        if item.titleTextAttributes(for: .normal)?[.font] as? UIFont != font {
-            for state: UIControl.State in [.normal, .highlighted, .disabled, .selected, .focused] {
-                var attributes = item.titleTextAttributes(for: state) ?? [:]
-                attributes[.font] = font
-                item.setTitleTextAttributes(attributes.isEmpty ? nil : attributes, for: state)
-            }
-        }
-    }
-
-    #if os(iOS)
-    func applyFamily(_ family: Int?, to item: UIBarButtonItem, font: UIFont?, engine: TextEngine?) {
-        for state: UIControl.State in [.normal, .highlighted, .disabled, .focused] {
-            let key = state.rawValue
-            var attrs = item.titleTextAttributes(for: state) ?? [:]
-            let current = attrs[.font] as? UIFont
-            if let last = installedFonts[key], current != last {
-                // A font the app set after projection owns this state.
-                continue
-            }
-            let original = installedFonts[key] == nil ? current : savedFonts[key]
-            let base = font ?? original
-            let next: UIFont?
-            if let original, original.familyName != UIFont.systemFont(ofSize: original.pointSize).familyName {
-                next = original
-            } else if let family, let base, let engine {
-                next = engine.headerFont(base, family: family)
-            } else { next = base }
-            if next != current {
-                attrs[.font] = next
-                item.setTitleTextAttributes(attrs.isEmpty ? nil : attrs, for: state)
-            }
-            if family != nil, next != original {
-                savedFonts[key] = original
-                installedFonts[key] = next
-            } else {
-                savedFonts[key] = nil
-                installedFonts[key] = nil
-            }
-        }
-        if family == nil {
-            savedFonts.removeAll()
-            installedFonts.removeAll()
-        }
-    }
-    #endif
-}
 #endif

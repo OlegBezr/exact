@@ -17,18 +17,6 @@ final class NavigationTitleInk {
     private var transparent = false
 
     #if os(iOS)
-    private struct FamilyStyle: Equatable {
-        let family: Int
-        let heading: NodeStyle?
-        let level: Int
-        let ink: UIColor?
-        let traits: UITraitCollection
-        let transparent: Bool
-    }
-    private var familyStyle: FamilyStyle?
-    private var familyAppearances: [FamilyAppearance]?
-    var hasHeaderFamily: Bool { familyAppearances != nil }
-
     /// UIKit's own title fonts, which a row the author left unsaid keeps: the
     /// inline title's `headline` (17-point semibold at the default size) and
     /// the large title's bold `largeTitle` (34 points), each in `traits`
@@ -53,19 +41,34 @@ final class NavigationTitleInk {
     }
     #endif
 
-    func update(_ color: UIColor?, fonts: Fonts? = nil, item: UINavigationItem, bar: UINavigationBar?, transparent: Bool) {
+    private(set) var hasHeaderFamily = false
+
+    func update(_ color: UIColor?, fonts: Fonts? = nil, item: UINavigationItem, bar: UINavigationBar?, transparent: Bool,
+                family: HeaderFamily? = nil) {
         let current = [item.standardAppearance, item.compactAppearance, item.scrollEdgeAppearance, item.compactScrollEdgeAppearance]
-        if color == ink, fonts == self.fonts, transparent == self.transparent, current == projected { return }
-        ink = color
+        if family == nil, !hasHeaderFamily, color == ink, fonts == self.fonts, transparent == self.transparent, current == projected { return }
+        let styled = color != nil || fonts != nil
+        if saved == nil, styled || transparent || family != nil { saved = current }
+        guard var saved else { return }
+        let standard = bar?.standardAppearance ?? UINavigationBarAppearance()
+        let defaults = [standard, bar?.compactAppearance, bar?.scrollEdgeAppearance, bar?.compactScrollEdgeAppearance]
+        #if os(iOS)
+        if (hasHeaderFamily || family != nil), let projected {
+            for i in current.indices where current[i] != projected[i] {
+                let inherited = defaults[i] ?? (i == 3 ? saved[2] ?? defaults[2] ?? saved[1] ?? defaults[1] : nil) ?? saved[0] ?? standard
+                saved[i] = HeaderFamily.nativeEdit(current[i], after: projected[i], base: saved[i] ?? inherited)
+            }
+        }
+        #endif
+        self.saved = saved
+        self.ink = color
         self.fonts = fonts
         self.transparent = transparent
-        let styled = color != nil || fonts != nil
-        if saved == nil, styled || transparent { saved = current }
-        guard let saved else { return }
-        let base = bar?.standardAppearance ?? UINavigationBarAppearance()
+        let wasBranded = hasHeaderFamily
+        hasHeaderFamily = family != nil
         func painted(_ appearance: UINavigationBarAppearance?) -> UINavigationBarAppearance? {
             guard styled else { return appearance }
-            let copy = (appearance ?? base).copy() as! UINavigationBarAppearance
+            let copy = (appearance ?? standard).copy() as! UINavigationBarAppearance
             if let color { copy.titleTextAttributes[.foregroundColor] = color }
             if let font = fonts?.title { copy.titleTextAttributes[.font] = font }
             #if !os(tvOS)
@@ -74,26 +77,45 @@ final class NavigationTitleInk {
             #endif
             return copy
         }
-        let next = [
+        var next = [
             painted(saved[0]),
-            painted(styled ? saved[1] ?? bar?.compactAppearance : saved[1]),
-            painted(transparent ? NavigationHost.clearScrollEdge : styled ? saved[2] ?? bar?.scrollEdgeAppearance : saved[2]),
-            painted(transparent ? NavigationHost.clearScrollEdge : styled ? saved[3] ?? bar?.compactScrollEdgeAppearance : saved[3])
+            painted(styled ? saved[1] ?? defaults[1] : saved[1]),
+            painted(transparent ? NavigationHost.clearScrollEdge : styled ? saved[2] ?? defaults[2] : saved[2]),
+            painted(transparent ? NavigationHost.clearScrollEdge : styled ? saved[3] ?? defaults[3] : saved[3])
         ]
-        item.standardAppearance = next[0]
-        item.compactAppearance = next[1]
-        item.scrollEdgeAppearance = next[2]
-        item.compactScrollEdgeAppearance = next[3]
-        projected = next
-        if !styled, !transparent { self.saved = nil }
+        #if os(iOS)
+        if let family, let bar {
+            for i in next.indices {
+                guard let base = next[i] ?? defaults[i] else { continue }
+                next[i] = family.appearance(over: base, native: saved[i], traits: bar.traitCollection)
+            }
+        }
+        #endif
+        if family != nil || wasBranded, next == current { projected = next }
+        else {
+            item.standardAppearance = next[0]
+            item.compactAppearance = next[1]
+            item.scrollEdgeAppearance = next[2]
+            item.compactScrollEdgeAppearance = next[3]
+            projected = next
+        }
+        if !styled, !transparent, family == nil { self.saved = nil }
     }
+}
 
+struct HeaderFamily {
     #if os(iOS)
-    private typealias Appearance = UINavigationBarAppearance
+    let id: Int
+    let shape: HeaderShape
+    let engine: TextEngine
+    init?(_ shape: HeaderShape) {
+        guard let id = shape.family, let engine = shape.header.text else { return nil }
+        self.id = id
+        self.shape = shape
+        self.engine = engine
+    }
+    typealias Appearance = UINavigationBarAppearance
     private typealias Attributes = ReferenceWritableKeyPath<Appearance, [NSAttributedString.Key: Any]>
-    private static let slots: [ReferenceWritableKeyPath<UINavigationItem, Appearance?>] = [
-        \.standardAppearance, \.compactAppearance, \.scrollEdgeAppearance, \.compactScrollEdgeAppearance
-    ]
     private static let itemAttributes: [Attributes] = [
         \.buttonAppearance.normal.titleTextAttributes, \.buttonAppearance.highlighted.titleTextAttributes,
         \.buttonAppearance.disabled.titleTextAttributes, \.buttonAppearance.focused.titleTextAttributes,
@@ -105,163 +127,82 @@ final class NavigationTitleInk {
     private static let titleAttributes: [Attributes] = [\.titleTextAttributes, \.largeTitleTextAttributes]
     private static let stock = Appearance()
 
-    /// UIKit copies an item's appearance. Keep the underlying slot (including nil for
-    /// inheritance) and the two sides of our edit so a hatch can change that copy.
-    private struct FamilyAppearance {
-        var original: Appearance?
-        var base: Appearance?
-        var installed: Appearance?
-        var hatchFonts: Set<Attributes> = []
-        var clear = false
 
-        mutating func read(_ current: Appearance?) {
-            guard current != installed else { return }
-            guard let current, let base, let installed else {
-                original = current
-                hatchFonts.removeAll()
-                return
-            }
-            let copy = current.copy() as! Appearance
-            for path in titleAttributes + itemAttributes {
-                let drawn = installed[keyPath: path][.font] as? UIFont
-                if current[keyPath: path][.font] as? UIFont != drawn {
-                    if current[keyPath: path][.font] != nil { hatchFonts.insert(path) }
-                    else { hatchFonts.remove(path) }
-                } else if base[keyPath: path][.font] as? UIFont != drawn {
-                    copy[keyPath: path][.font] = base[keyPath: path][.font]
-                }
-            }
-            for path in titleAttributes {
-                let drawn = installed[keyPath: path][.foregroundColor] as? UIColor
-                if current[keyPath: path][.foregroundColor] as? UIColor == drawn,
-                   base[keyPath: path][.foregroundColor] as? UIColor != drawn {
-                    copy[keyPath: path][.foregroundColor] = base[keyPath: path][.foregroundColor]
-                }
-            }
-            if clear { background(of: copy, from: base, replacing: installed) }
-            original = copy
-        }
-    }
-
-    private static func background(of copy: Appearance, from source: Appearance, replacing previous: Appearance? = nil) {
-        func take<T: Equatable>(_ path: ReferenceWritableKeyPath<Appearance, T>) {
-            if previous == nil || copy[keyPath: path] == previous?[keyPath: path] { copy[keyPath: path] = source[keyPath: path] }
-        }
-        take(\.backgroundEffect)
-        take(\.backgroundColor)
-        take(\.backgroundImage)
-        take(\.backgroundImageContentMode)
-        take(\.shadowImage)
-        take(\.shadowColor)
-    }
-
-    /// Under Liquid Glass a kept item's label can keep the old appearance font after
-    /// a trait change. Setting and releasing just its font makes UIKit resolve the
-    /// current appearance again, including its choice of compact or scroll-edge slot.
-    private func refreshInheritedItemFonts(_ item: UINavigationItem, in bar: UINavigationBar) {
-        guard #available(iOS 26, *), LinkedDesign.liquidGlass, bar.topItem === item else { return }
-        let standard = item.standardAppearance ?? bar.standardAppearance
-        for button in (item.leftBarButtonItems ?? []) + (item.rightBarButtonItems ?? []) {
-            guard button.customView == nil, button.image == nil, button.title?.isEmpty == false else { continue }
-            let saved = button.titleTextAttributes(for: .normal)
-            guard saved?[.font] == nil else { continue }
-            let appearance = button.style == .prominent || button.style == .done ? standard.doneButtonAppearance : standard.buttonAppearance
-            guard let font = appearance.normal.titleTextAttributes[.font] else { continue }
-            var attrs = saved ?? [:]
-            attrs[.font] = font
-            button.setTitleTextAttributes(attrs, for: .normal)
-            button.setTitleTextAttributes(saved, for: .normal)
-        }
-    }
-
-    func removeFamily(from item: UINavigationItem, in bar: UINavigationBar?) {
-        guard var appearances = familyAppearances else { return }
-        for (i, slot) in Self.slots.enumerated() {
-            appearances[i].read(item[keyPath: slot])
-            if item[keyPath: slot] != appearances[i].original { item[keyPath: slot] = appearances[i].original }
-        }
-        familyAppearances = nil
-        familyStyle = nil
-        if let bar { refreshInheritedItemFonts(item, in: bar) }
-    }
-
-    func updateFamily(_ family: Int, shape: HeaderShape, item: UINavigationItem, bar: UINavigationBar, transparent: Bool) {
-        guard let engine = shape.header.text else { return }
-        if familyAppearances == nil {
-            if let saved, let projected {
-                let defaults = [bar.standardAppearance, bar.compactAppearance, bar.scrollEdgeAppearance, bar.compactScrollEdgeAppearance]
-                familyAppearances = saved.indices.map { i in
-                    FamilyAppearance(original: saved[i], base: saved[i] ?? defaults[i] ?? bar.standardAppearance,
-                                     installed: projected[i], clear: self.transparent && i >= 2)
-                }
-                self.saved = nil
-                self.projected = nil
-                self.ink = nil
-                fonts = nil
-                self.transparent = false
-            } else {
-                familyAppearances = Self.slots.map { FamilyAppearance(original: item[keyPath: $0]) }
-            }
-        }
-        var appearances = familyAppearances!
-        let current = Self.slots.map { item[keyPath: $0] }
-        let edited = current != appearances.map(\.installed)
-        if edited {
-            for i in current.indices { appearances[i].read(current[i]) }
-        }
-        let sources = [appearances[0].original ?? bar.standardAppearance,
-                       appearances[1].original ?? bar.compactAppearance,
-                       appearances[2].original ?? bar.scrollEdgeAppearance,
-                       appearances[3].original ?? bar.compactScrollEdgeAppearance]
-        let heading = shape.heading, ink = heading?.ownUIColor("text_color")
-        let traits = bar.traitCollection
-        let style = FamilyStyle(family: family, heading: heading?.style, level: shape.level, ink: ink, traits: traits, transparent: transparent)
-        var bases = sources
-        if transparent {
-            bases[2] = sources[2] ?? sources[0]
-            bases[3] = sources[3] ?? sources[2] ?? sources[1] ?? sources[0]
-        }
-        if !edited && style == familyStyle && bases == appearances.map(\.base) { return }
-        familyStyle = style
+    func appearance(over base: Appearance, native: Appearance?, traits: UITraitCollection) -> Appearance {
+        let copy = base.copy() as! Appearance
         let inline = UIFont.preferredFont(forTextStyle: .headline, compatibleWith: traits.inlineBarTraits).pointSize
         let large = UIFont.preferredFont(forTextStyle: .largeTitle, compatibleWith: traits).pointSize
-        let known = family < 8 || engine.catalog[family]?.isEmpty == false
-        var changed = false
-        for (i, slot) in Self.slots.enumerated() {
-            let edge = transparent && i >= 2
-            // A nil edge normally derives its background and typography from the standard slot.
-            // When transparency requires an explicit edge, start with the same inherited attributes.
-            let source = bases[i]
-            let copy = source?.copy() as? Appearance
-            if let copy {
-                if edge { Self.background(of: copy, from: NavigationHost.clearScrollEdge) }
-                for path in Self.titleAttributes + Self.itemAttributes {
-                    let title = Self.titleAttributes.contains(path)
-                    if title, let ink { copy[keyPath: path][.foregroundColor] = ink }
-                    guard !appearances[i].hatchFonts.contains(path) else { continue }
-                    guard let original = copy[keyPath: path][.font] as? UIFont ?? Self.stock[keyPath: path][.font] as? UIFont else { continue }
-                    if let stock = Self.stock[keyPath: path][.font] as? UIFont, original.familyName != stock.familyName { continue }
-                    let isLarge = path == \Appearance.largeTitleTextAttributes
-                    let stock = Self.stock[keyPath: path][.font] as? UIFont
-                    // The appearance stores the default point size. UIKit resolves its stock
-                    // fonts in the title's traits, capping the inline title and bar items alike.
-                    let base = original == stock ? original.withSize(isLarge ? large : inline) : original
-                    let own = title ? heading?.authoredTitleFont(over: base, sized: isLarge == (shape.level == 1)) : nil
-                    if title && heading?.authoredFontFamily != nil { copy[keyPath: path][.font] = own }
-                    else if known { copy[keyPath: path][.font] = engine.headerFont(own ?? base, family: family) }
-                    else if let own { copy[keyPath: path][.font] = own }
+        for path in Self.titleAttributes + Self.itemAttributes {
+            let stock = Self.stock[keyPath: path][.font] as? UIFont
+            if let explicit = native?[keyPath: path][.font] as? UIFont, explicit != stock {
+                copy[keyPath: path][.font] = explicit
+                continue
+            }
+            let title = Self.titleAttributes.contains(path)
+            let isLarge = path == \Appearance.largeTitleTextAttributes
+            let size = isLarge ? large : inline
+            guard var source = base[keyPath: path][.font] as? UIFont ?? stock else { continue }
+            if title, let heading = shape.heading, heading.authoredFontFamily != nil { continue }
+            if title, let heading = shape.heading, !heading.wrote("font_size"), heading.wrote("font_weight") || heading.wrote("font_style") {
+                source = source.withSize(size)
+            } else if source == stock {
+                source = source.withSize(size)
+                if traits.legibilityWeight == .bold {
+                    let weight: UIFont.Weight
+                    if title { weight = isLarge ? .black : .heavy }
+                    else if path == \Appearance.doneButtonAppearance.normal.titleTextAttributes { weight = .heavy }
+                    else { weight = LinkedDesign.liquidGlass ? .bold : .semibold }
+                    source = .systemFont(ofSize: size, weight: weight)
                 }
             }
-            appearances[i].base = source?.copy() as? Appearance
-            appearances[i].clear = edge
-            appearances[i].installed = copy
-            if item[keyPath: slot] != copy {
-                item[keyPath: slot] = copy
-                changed = true
+            copy[keyPath: path][.font] = engine.headerFont(source, family: id)
+        }
+        return copy
+    }
+
+    /// An app can change one field on a copy of the item appearance. Import just
+    /// its edits into the native slot, including removal of an attribute.
+    static func nativeEdit(_ edit: Appearance?, after last: Appearance?, base: Appearance) -> Appearance? {
+        guard let edit, let last else { return edit }
+        let result = base.copy() as! Appearance
+        func field<T: Equatable>(_ path: ReferenceWritableKeyPath<Appearance, T>) {
+            if edit[keyPath: path] != last[keyPath: path] { result[keyPath: path] = edit[keyPath: path] }
+        }
+        func attributes(_ path: Attributes) {
+            let before = last[keyPath: path] as NSDictionary, after = edit[keyPath: path] as NSDictionary
+            guard !before.isEqual(after) else { return }
+            var values = result[keyPath: path]
+            for key in Set(last[keyPath: path].keys).union(edit[keyPath: path].keys) {
+                if let old = before[key] as? NSObject, old.isEqual(after[key]) { continue }
+                values[key] = after[key]
+            }
+            result[keyPath: path] = values
+        }
+        field(\.backgroundEffect)
+        field(\.backgroundColor)
+        field(\.backgroundImage)
+        field(\.backgroundImageContentMode)
+        field(\.shadowImage)
+        field(\.shadowColor)
+        field(\.titlePositionAdjustment)
+        if #available(iOS 27, *) { field(\.overrideUserInterfaceStyle) }
+        if edit.backIndicatorImage != last.backIndicatorImage || edit.backIndicatorTransitionMaskImage != last.backIndicatorTransitionMaskImage {
+            result.setBackIndicatorImage(edit.backIndicatorImage, transitionMaskImage: edit.backIndicatorTransitionMaskImage)
+        }
+        for path in titleAttributes { attributes(path) }
+        if #available(iOS 26, *) { attributes(\.subtitleTextAttributes); attributes(\.largeSubtitleTextAttributes) }
+        let buttons: [ReferenceWritableKeyPath<Appearance, UIBarButtonItemAppearance>] = [\.buttonAppearance, \.doneButtonAppearance, \.backButtonAppearance]
+        let states: [KeyPath<UIBarButtonItemAppearance, UIBarButtonItemStateAppearance>] = [\.normal, \.highlighted, \.disabled, \.focused]
+        for button in buttons {
+            for state in states {
+                let path = button.appending(path: state)
+                attributes(path.appending(path: \.titleTextAttributes))
+                field(path.appending(path: \.titlePositionAdjustment))
+                field(path.appending(path: \.backgroundImage))
+                field(path.appending(path: \.backgroundImagePositionAdjustment))
             }
         }
-        familyAppearances = appearances
-        if changed { refreshInheritedItemFonts(item, in: bar) }
+        return result
     }
     #endif
 }

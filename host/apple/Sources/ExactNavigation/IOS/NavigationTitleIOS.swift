@@ -306,8 +306,8 @@ final class HeaderTitleView: UIControl {
         addTarget(self, action: #selector(pressed), for: .touchUpInside)
         // Symbols are sized from their line's font: rebuild them and resolve
         // the heading's unsaid metrics when the text size changes.
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self]) { (view: HeaderTitleView, _: UITraitCollection) in
-            guard let (group, text) = view.shown else { return }
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self]) { (view: HeaderTitleView, previous: UITraitCollection) in
+            guard let (group, text) = view.shown, group.family != nil || previous.preferredContentSizeCategory != view.traitCollection.preferredContentSizeCategory else { return }
             view.shown = nil
             view.subtitle.font = .preferredFont(forTextStyle: .footnote, compatibleWith: view.traitCollection)
             view.update(group, title: text, ink: view.shownInk ?? .label)
@@ -380,6 +380,7 @@ final class HeaderTitleView: UIControl {
 
     private var shown: (HeaderTitle, String)?
     private var shownInk: UIColor?
+    private var assignedFont: UIFont?
 
     /// The title drawn from `group`, `text` in the heading's colour `ink`.
     /// `ink` reaches the label only as its line is built: assigning a
@@ -396,6 +397,7 @@ final class HeaderTitleView: UIControl {
         // alone, since invalidating its size relaid the whole navigation
         // bar out each time (~1 ms a batch, a fling's every frame).
         if let shown, shown.0 == group, shown.0.testId == group.testId, shown.1 == text, shownInk?.isEqual(ink) == true { return }
+        let familyChanged = group.family != nil || shown?.0.family != nil
         shown = (group, text)
         shownInk = ink
         title.textColor = ink
@@ -407,12 +409,16 @@ final class HeaderTitleView: UIControl {
         avatarWidth.constant = group.avatar?.size ?? 0
         avatarHeight.constant = group.avatar?.size ?? 0
         let base = UIFont.preferredFont(forTextStyle: .headline, compatibleWith: traitCollection)
-        title.font = group.heading.authoredTitleFont(over: base) ?? base
-        #if os(iOS)
-        if group.heading.authoredFontFamily == nil, let family = group.family, let engine = group.heading.text {
-            title.font = engine.headerFont(title.font, family: family)
+        if !familyChanged || assignedFont == nil || title.font == assignedFont {
+            var font = group.heading.authoredTitleFont(over: base) ?? base
+            #if os(iOS)
+            if group.heading.authoredFontFamily == nil, let family = group.family, let engine = group.heading.text {
+                font = engine.headerFont(font, family: family)
+            }
+            #endif
+            title.font = font
+            assignedFont = font
         }
-        #endif
         title.attributedText = group.titleGlyphs.isEmpty ? nil : Self.titleLine(group, text: text, font: title.font, colour: title.textColor)
         if group.titleGlyphs.isEmpty { title.text = text }
         subtitle.attributedText = Self.line(group, font: subtitle.font, colour: subtitle.textColor)

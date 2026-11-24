@@ -387,8 +387,7 @@ final class BarPress: NSObject {
     weak var host: NavigationHost?
     struct SavedForeground { let value: Any? }
     var activeForeground: SavedForeground?
-    var installedFonts: [UInt: UIFont] = [:]
-    var savedFonts: [UInt: UIFont] = [:]
+    var assignedFont: UIFont?
     init(_ id: UInt32, _ host: NavigationHost) { self.id = id; self.host = host }
     @objc func press() {
         guard let host, let node = host.presenter.views[id] else { return }
@@ -705,16 +704,13 @@ extension NavigationHost {
             segmentedTitle(shows ? shape?.segments : nil, in: c)
             richTitle(shows ? shape : nil, in: c)
             #if os(iOS)
-            if shows, let shape, let family = shape.family, let bar = nav?.navigationBar {
-                c.titleInk.updateFamily(family, shape: shape, item: c.navigationItem, bar: bar, transparent: transparent)
-            } else {
-                c.titleInk.removeFamily(from: c.navigationItem, in: nav?.navigationBar)
-                let fonts = shows ? NavigationTitleInk.fonts(of: shape?.heading, level: shape?.level ?? 0, traits: c.traitCollection) : nil
-                c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, fonts: fonts, item: c.navigationItem, bar: nav?.navigationBar, transparent: transparent)
-            }
+            let family = shows ? shape.flatMap(HeaderFamily.init) : nil
+            let fonts = shows ? NavigationTitleInk.fonts(of: shape?.heading, level: shape?.level ?? 0, traits: c.traitCollection) : nil
             #else
-            c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, item: c.navigationItem, bar: nav?.navigationBar, transparent: transparent)
+            let family: HeaderFamily? = nil, fonts: NavigationTitleInk.Fonts? = nil
             #endif
+            c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, fonts: fonts, item: c.navigationItem,
+                              bar: nav?.navigationBar, transparent: transparent, family: family)
             guard c.projected != signature || !c.hatched else { continue }
             c.projected = signature
             guard presenter.session?.natives.hatchesConnected == true else { continue }
@@ -1401,7 +1397,7 @@ extension NavigationHost {
                 made.bar.action = nil
             }
             c.barItemsMade[i.id] = (i, made.bar, made.press, button?.incarnation)
-            return configure(made.bar, i, image: image, press: made.press)
+            return configure(made.bar, i, image: image, press: made.press, previousFamily: made.item.family)
         }
         let press = BarPress(i.id, self)
         c.barPresses.append(press)
@@ -1420,7 +1416,7 @@ extension NavigationHost {
     }
 
     /// What a bar item says of its control besides its face.
-    private func configure(_ item: UIBarButtonItem, _ i: HeaderShape.Item, image: UIImage?, press: BarPress) -> UIBarButtonItem {
+    private func configure(_ item: UIBarButtonItem, _ i: HeaderShape.Item, image: UIImage?, press: BarPress, previousFamily: Int? = nil) -> UIBarButtonItem {
         item.accessibilityLabel = i.label ?? (i.title.isEmpty ? nil : i.title)
         item.accessibilityIdentifier = i.testId
         item.isEnabled = !i.disabled
@@ -1435,17 +1431,24 @@ extension NavigationHost {
             : i.tint.map { tint in UIColor { TextEngine.color(tint[$0.userInterfaceStyle == .dark ? 1 : 0]) } }
         item.tintColor = i.hasPaintedFace ? nil : color ?? i.accent
         // UIKit's font where none is written, also once a kept item's author removes theirs.
-        let font = image == nil ? i.font : nil
+        let base = image == nil ? i.font : nil
+        var font = base
         #if os(iOS)
-        let family = image == nil && !i.hasPaintedFace ? i.family : nil
-        if family != nil || !press.installedFonts.isEmpty {
-            press.applyFamily(family, to: item, font: font, engine: presenter.views[i.id]?.text)
-        } else {
-            press.applyItemFont(font, to: item)
+        if let family = i.family, let base, let engine = presenter.views[i.id]?.text {
+            font = engine.headerFont(base, family: family)
         }
-        #else
-        press.applyItemFont(font, to: item)
         #endif
+        if item.titleTextAttributes(for: .normal)?[.font] as? UIFont != font || (previousFamily != nil && press.assignedFont != font) {
+            for state: UIControl.State in [.normal, .highlighted, .disabled, .selected, .focused] {
+                var attributes = item.titleTextAttributes(for: state) ?? [:]
+                if i.family != nil || previousFamily != nil {
+                    guard attributes[.font] as? UIFont == press.assignedFont else { continue }
+                }
+                attributes[.font] = font
+                item.setTitleTextAttributes(attributes.isEmpty ? nil : attributes, for: state)
+            }
+            press.assignedFont = font
+        }
         var highlighted = item.titleTextAttributes(for: .highlighted) ?? [:]
         if let value = i.activeTitleColor, let button = presenter.views[i.id] {
             if press.activeForeground == nil { press.activeForeground = .init(value: highlighted[.foregroundColor]) }
