@@ -20,7 +20,6 @@ package struct StackSplit: Equatable {
     /// Whether the press of the view asked about writes the router; nil
     /// where none was asked about.
     package let pressWrites: Bool?
-
     package init(list: UInt32?, width: Double?, rows: [UInt32: UInt32], locations: [UInt32: String] = [:], pressWrites: Bool? = nil) {
         (self.list, self.width, self.rows, self.locations, self.pressWrites) = (list, width, rows, locations, pressWrites)
     }
@@ -43,9 +42,9 @@ extension Runtime {
     /// rule; nil for one that pushes, and while the runner is busy.
     /// `pressed`: a view being pressed, whose press is said to write the
     /// router or not.
-    package func stackSplit(_ view: UInt32, retaining list: UInt32?, pressed: UInt32? = nil) -> StackSplit? {
+    package func stackSplit(_ view: UInt32, retaining list: UInt32?, pressed: UInt32? = nil, excluding results: UInt32? = nil) -> StackSplit? {
         return on(busy: nil) {
-            let len = exact_stack_split(rt, view, list ?? 0, pressed ?? 0)
+            let len = exact_stack_split(rt, view, list ?? 0, pressed ?? 0, results ?? 0)
             return StackSplit(json: Data(bytes: exact_out(rt), count: Int(len)))
         }
     }

@@ -124,6 +124,13 @@ extension Agent {
     /// judges. Nil for any other node; a refusal for a bar item the bar
     /// shows no control for.
     func drawnPlace(_ node: NodeView) -> Result<(view: UIView, region: CGRect, barred: Bool, inBar: Bool), AimRefusal>? {
+        #if os(iOS)
+        if node.headerSearch != nil {
+            if let editor = presenter.navigation.drawnSearch(node) { return .success((editor, editor.bounds, true, false)) }
+            if let button = presenter.navigation.collapsedSearch(node) { return .success((button.view, button.box, true, false)) }
+            return .failure(AimRefusal(why: "no visible UIKit search control for the current route"))
+        }
+        #endif
         if let (control, segment) = presenter.segments.drawn(node) {
             return .success((control, segment, presenter.navigation.barSegment(node) != nil, false))
         }

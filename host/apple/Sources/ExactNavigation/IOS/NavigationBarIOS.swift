@@ -136,7 +136,13 @@ final class NavigationDelegateProxy: ForwardingDelegate, UINavigationControllerD
     /// route's own part asks for (LLP 1013.001), else UIKit's.
     func navigationController(_ nav: UINavigationController, animationControllerFor operation: UINavigationController.Operation,
                               from: UIViewController, to: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        app?.navigationController?(nav, animationControllerFor: operation, from: from, to: to)
+        #if os(iOS)
+        // The animator request names both endpoints before the coordinator is available.
+        if operation == .pop, let host, let split = host.split, split.paired, split.holds(nav) {
+            host.observeSplitPop(in: split, from: nav, to: to, departing: from)
+        }
+        #endif
+        return app?.navigationController?(nav, animationControllerFor: operation, from: from, to: to)
             ?? host?.routeTransition(nav, operation: operation, from: from, to: to)
     }
 }
@@ -254,6 +260,16 @@ extension NavigationHost {
     func activateChrome(_ node: NodeView, before: (CGPoint?) -> Bool = { _ in true }) -> [String: Any]? {
         guard !ExactEnv.authoredChrome else { return nil }
         let id = Int(node.id)
+        #if os(iOS)
+        if let button = collapsedSearch(node) {
+            let point = button.view.convert(CGPoint(x: button.box.midX, y: button.box.midY), to: nil)
+            guard before(point), !node.disabled, !node.inert, presenter.views[node.id] === node,
+                  let current = collapsedSearch(node), current.view === button.view, current.activate() else {
+                return ["error": "The native Search button requires a platform touch or has moved."]
+            }
+            return ["tapped": id, "delivery": "host-activation", "native": "search-button"]
+        }
+        #endif
         if tabBarShows, let root = container, let tabs = NavigationTabs.of(root, presenter), let index = tabs.tabs.firstIndex(where: { $0 === node }) {
             guard !node.disabled else { return ["error": "tab #\(id) is disabled"] }
             guard before(nil), !node.disabled, !node.inert, presenter.views[node.id] === node else { return ["error": "tab #\(id) changed during its pointer handlers"] }
@@ -433,13 +449,12 @@ extension NavigationHost {
     /// authored source changed, then run the route hatch — before UIKit lays
     /// the stack out (LLP 1075.003 §3.2, §3.5 "projected defaults"). A plain
     /// tab (PlainTabIOS) has no bar: its route's header is its content. A
-    /// split's detail counts as pushed from its first route; `firstPushed`
-    /// says the same of another stack (the list's results on top).
-    func prepareRoutes(_ routes: [RouteController], in stack: UIViewController, firstPushed: Bool = false) {
+    /// split's detail counts as pushed from its first route.
+    func prepareRoutes(_ routes: [RouteController], in stack: UIViewController) {
         // A split's detail counts as pushed, its first route included (LLP 1127 D7), whatever projects its stack again
         // (an appearance change, a bar's picture arriving): projected as a root, its first route would lose its Back,
         // and its bar where it has no header of its own
-        let firstPushed = firstPushed || split.map { stack === $0.detail } == true
+        let splitDetail = split.map { stack === $0.detail } == true
         let nav = stack as? UINavigationController
         if let nav {
             hatchNavigation(nav)
@@ -457,7 +472,7 @@ extension NavigationHost {
             // the system Back alone on a pushed route with none of its own
             // (no header, a hidden one, one that is not a bar's), or no bar
             // where the route says so or has nothing to go back to.
-            c.pushed = index + front > 0 || firstPushed
+            c.pushed = index + front > 0 || splitDetail
             let transparent = RouteGeometry.transparentBar(c.node)
             let (shape, bar) = barShape(of: c, in: nav)
             let shows = bar != .hidden
@@ -469,7 +484,7 @@ extension NavigationHost {
                 }
             }
             // Let a root under More go back: UIKit's Back returns to More's list
-            let canGoBack = (index > 0 || firstPushed ? canInvokeBack : front > 0) && shape?.authoredBack != true
+            let canGoBack = (index > 0 || splitDetail ? canInvokeBack : front > 0) && shape?.authoredBack != true
             let scroller = contentScroller(of: c), scroll = contentScrollView(of: c)
             let dataset = c.node.props["dataset"]
             func barSource(_ key: (HeaderShape.Item) -> String) -> BarSource {
@@ -493,13 +508,18 @@ extension NavigationHost {
                 }
             }
             #if os(iOS)
-            scope(c, shape: shows ? shape : nil)
+            let field = shows ? shape?.search : nil
+            let optedIn = field?.props["accessibilityControls"]?.contains { !$0.isWhitespace } == true
+            let resultsOwner = optedIn && split?.searchOwner === c ? c : nil
+            scope(c, shape: shows && resultsOwner == nil ? shape : nil)
             #endif
             collapse(c, shape: shape, shows: shows, scroller: scroller)
             showReadouts(shows ? shape : nil, in: c)
             reachBottom(c, presented: presented)
             c.paintBackdrop()
-            searchField(shows ? shape?.search : nil, in: c, covered: index < routes.count - 1)
+            #if os(iOS)
+            searchField(field, in: c, covered: index < routes.count - 1, resultsOwner: resultsOwner)
+            #endif
             segmentedTitle(shows ? shape?.segments : nil, in: c)
             richTitle(shows ? shape : nil, in: c)
             #if os(iOS)
@@ -671,7 +691,7 @@ extension NavigationHost {
             }
         }
         c.hidesBack = shape?.authoredBack == true || (c.pushed && !canGoBack) // Keep UIKit's Back on split roots
-        item.hidesBackButton = c.hidesBack || searchHidesBack(c)
+        item.hidesBackButton = c.hidesBack
         item.leftItemsSupplementBackButton = true
         #endif
         c.barPresses = []
@@ -761,41 +781,43 @@ extension NavigationHost {
     /// Where it sits and whether it hides as the content scrolls are
     /// UIKit's own answers for the device and the bar (LLP 1115.000 D11.2):
     /// Exact once pinned it under the title (`.stacked`, never hiding).
-    private func searchField(_ field: NodeView?, in c: RouteController, covered: Bool) {
-        // tvOS navigation items carry no search controller.
-        #if !os(tvOS)
-        guard let field else {
-            // A route another now covers keeps its search until it is shown
-            // again, as UIKit's stays on the screen under a push: dismissed
-            // during the push, it took the push with it when a header wrote
-            // its field only while its route was on top (bake-off r31's
-            // contacts: a tap on a result while typing closed the search).
-            if let search = c.search, !covered {
-                search.controller.searchBar.resignFirstResponder()
-                search.field = nil
-                search.close()
-                c.navigationItem.searchController = nil
-                c.search = nil
-                // UIKit restores its bar at the end of search dismissal.
-                // Reapply the route's choice after that transition too.
-                let transition = search.controller.transitionCoordinator ?? c.navigationController?.transitionCoordinator
-                transition?.animate(alongsideTransition: nil) { [weak self, weak c] _ in
-                    guard let self, let c, let nav = c.navigationController else { return }
-                    self.showBar(nav, animated: false)
-                    self.coversChanged()
-                }
+    #if os(iOS)
+    private func searchField(_ field: NodeView?, in c: RouteController, covered: Bool, resultsOwner: RouteController?) {
+        // A covered ordinary route keeps its search until its bar returns.
+        if let search = c.search,
+           search.results?.owner !== resultsOwner || (search.field !== field && (field != nil || !covered || search.paired)) {
+            c.detachSearch()
+            let transition = search.controller.transitionCoordinator ?? c.navigationController?.transitionCoordinator
+            transition?.animate(alongsideTransition: nil) { [weak self, weak c] _ in
+                guard let self, let c, let nav = c.navigationController else { return }
+                self.showBar(nav, animated: false)
+                self.coversChanged()
             }
-            return
         }
-        let search = c.search ?? HeaderSearch(host: self)
+        guard let field else { return }
+        let search = c.search ?? HeaderSearch(host: self, resultsOwner: resultsOwner)
         if c.search !== search {
             c.search = search
+            if #available(iOS 26.0, *) {
+                c.navigationItem.searchBarPlacementAllowsExternalIntegration = !search.paired
+                if search.paired {
+                    c.navigationItem.searchBarPlacementAllowsToolbarIntegration = true
+                }
+            }
             c.navigationItem.searchController = search.controller
             c.definesPresentationContext = true
-            // A split may place the field beyond its column, as SwiftUI's `searchable` lets it.
-            if #available(iOS 26.0, *) { c.navigationItem.searchBarPlacementAllowsExternalIntegration = true }
+            #if EXACT_AGENT
+            if #available(iOS 26.0, *), search.paired {
+                c.navigationItem.searchBarPlacementBarButtonItem.accessibilityIdentifier = "exact-search-button-\(field.id)"
+            }
+            #endif
         }
         search.field = field
+        if #available(iOS 26.0, *) {
+            let placement: UINavigationItem.SearchBarPlacement = field.props["searchStyle"] == "minimized" ? .integratedButton : .automatic
+            if c.navigationItem.preferredSearchBarPlacement != placement { c.navigationItem.preferredSearchBarPlacement = placement }
+        }
+        search.bindResults(in: c, field: field)
         // The search tab's root field says how the tab presents (TabsIOS.swift)
         if !builtTabs.isEmpty { followSearchTab() }
         search.scope(c.scoped)
@@ -817,25 +839,11 @@ extension NavigationHost {
         // value the app wrote since the last sync is shown even while the
         // reader types (a Clear Search button empties the field it is typing
         // in); between such writes, and while text is marked, the typing stands.
-        let value = field.props["value"] ?? "", composing = bar.searchTextField.markedTextRange != nil
-        if bar.text != value, !search.dismissing, !bar.isFirstResponder || (search.value != value && !composing) { bar.text = value }
-        if !composing { search.value = value }
-        // UIKit hides the field as the content scrolls and keeps an active
-        // search's in view. A search in effect that UIKit did not start (a
-        // value the app or the agent wrote) keeps its field in view too.
-        // Changed while UIKit presents or dismisses the search, the item
-        // leaves the active field and its Close button drawn over the bar
-        // (round 17's contacts: Close clears the text, so the app's empty
-        // value lands mid-dismissal), so it waits for the dismissal's end.
+        search.setValue(field.props["value"] ?? "")
         search.item = c.navigationItem
         if !searching(c) { search.applyHiding() }
-        // The field itself, which XCUITest finds as a search field and a
-        // person types in, carries the test id (LLP 1116 D2).
-        if bar.searchTextField.accessibilityIdentifier != field.props["testId"] { bar.searchTextField.accessibilityIdentifier = field.props["testId"] }
-        // Its name is the field's `aria-label`, as an `input`'s is; with none, UIKit's (the placeholder).
-        if bar.searchTextField.accessibilityLabel != field.props["accessibilityLabel"] { bar.searchTextField.accessibilityLabel = field.props["accessibilityLabel"] }
-        #endif
     }
+    #endif
 
     /// UIKit's back button stands for each route's authored Back control,
     /// shaped as it is (LLP 1075.003, James's review): a symbol alone is the

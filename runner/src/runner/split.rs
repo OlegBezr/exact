@@ -83,6 +83,16 @@ impl<D: DataSource> Runner<D> {
     /// list while it has no actionable rows (static placeholders are allowed);
     /// its current eligibility is still this rule's.
     pub fn stack_split(&self, route: ViewId, retained: Option<ViewId>) -> Option<StackSplit> {
+        self.stack_split_excluding(route, retained, None)
+    }
+
+    /// On iOS a header's results list does not qualify its sidebar as a split.
+    pub fn stack_split_excluding(
+        &self,
+        route: ViewId,
+        retained: Option<ViewId>,
+        results: Option<ViewId>,
+    ) -> Option<StackSplit> {
         let node = self.kernel.node(route)?;
         node.props.str(PropId::NavigationKey)?;
         if matches!(
@@ -98,7 +108,7 @@ impl<D: DataSource> Runner<D> {
         let width = said
             .and_then(|s| s.trim().parse::<f32>().ok())
             .filter(|w| w.is_finite() && *w > 0.0);
-        let found = self.pushing_list(route, retained);
+        let found = self.pushing_list(route, retained, results);
         if found.is_none() && width.is_none() {
             return None;
         }
@@ -206,6 +216,7 @@ impl<D: DataSource> Runner<D> {
         &self,
         route: ViewId,
         retained: Option<ViewId>,
+        results: Option<ViewId>,
     ) -> Option<(ViewId, Vec<(ViewId, String)>)> {
         let mut empty = None;
         let mut stack: Vec<ViewId> = self.kernel.node(route)?.children();
@@ -216,7 +227,8 @@ impl<D: DataSource> Runner<D> {
             };
             // Another route's, a popover's, a hidden box's and the split's own
             // placeholder's (shown or not) are not this route's rows.
-            if node.props.str(PropId::NavigationKey).is_some()
+            if results == Some(id)
+                || node.props.str(PropId::NavigationKey).is_some()
                 || node.props.str(PropId::Popover).is_some()
                 || node.props.str(PropId::NavigationSplit) == Some("placeholder")
                 || node.style.display == Display::None

@@ -42,7 +42,8 @@ extension NavigationHost {
     }
 
     private func inFlight(_ route: RouteController) -> Bool {
-        route.held && !route.inStack && route.lastStack.map { stacks[ObjectIdentifier($0)] != nil } == true
+        if let split, split.paired, let last = route.lastStack, split.holds(last) { return false }
+        return route.held && !route.inStack && route.lastStack.map { stacks[ObjectIdentifier($0)] != nil } == true
     }
 
     /// Whether `route` is in flight from a pop UIKit committed: any but a
@@ -111,7 +112,9 @@ extension NavigationHost {
                   (holder as? UINavigationController)?.transitionCoordinator == nil, split?.detail.transitionCoordinator == nil,
                   !routesInFlight(wanted) else { continue }
             // A split holds the stack in its two columns (`SplitIOS.shown`).
-            let held = (tabPanels.isEmpty ? split?.shown : nil) ?? holder.stackRoutes
+            let held = (tabPanels.isEmpty ? split.map { split in
+                split.paired ? Array(split.list.stackRoutes.prefix(1)) + split.detail.stackRoutes : split.shown
+            } : nil) ?? holder.stackRoutes
             if !held.elementsEqual(wanted, by: ===) {
                 return (tabPanels.isEmpty ? "the stack" : "tab \(index)") + " holds \(keys(held)) in UIKit and \(keys(wanted)) in the router"
             }
@@ -163,6 +166,9 @@ extension NavigationHost {
     }
 
     func prepare(_ batch: Batch) {
+        #if os(iOS)
+        split?.pairedSearch?.results?.prepare(batch)
+        #endif
         checkOwned()
         presenter.elements.checkOwned()
         // Fold every batch's child lists, whether or not a sync projects it: a sync asked for during a sync returns
@@ -225,8 +231,11 @@ extension NavigationHost {
 
     /// The child lists `batch` sets on the root and the tab panels.
     func foldChildren(_ batch: Batch) {
-        for op in batch.ops where op.op == .children && logicalChildren[op.id] != nil {
-            logicalChildren[op.id] = op.ids
+        for op in batch.ops where op.op == .children {
+            if logicalChildren[op.id] != nil { logicalChildren[op.id] = op.ids }
+            #if os(iOS)
+            if let split, split.searchOwner?.node.id == op.id { split.searchState.children = op.ids }
+            #endif
         }
     }
 
@@ -246,10 +255,10 @@ extension RouteController {
     /// routes still in it: they are in no stack the person sees then, unless
     /// UIKit is moving the detail's controller to expand (LLP 1127).
     var inStack: Bool {
-        if let split = host?.split, navigationController === split.detail, split.controller.isCollapsed, !split.nested, !split.expanding {
+        if let split = host?.split, !split.paired, navigationController === split.detail, split.controller.isCollapsed, !split.nested, !split.expanding {
             return false
         }
-        return stack?.shownStackRoutes.contains { $0 === self } == true
+        return stack?.stackRoutes.contains { $0 === self } == true
     }
 
     /// The stack it is in: its plain tab, checked first because under More

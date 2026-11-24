@@ -171,7 +171,7 @@ extension NavigationHost {
             // a pop has taken it from its controller (`navigationController`
             // is nil), and a swipe back still shows it beside the one beneath.
             let nav = c.navigationController ?? leavingNavigation(of: c)
-            let stacked = c.stack?.shownStackRoutes.contains(c) == true || nav?.transitionCoordinator?.viewController(forKey: .from) === c
+            let stacked = c.stack?.stackRoutes.contains(c) == true || nav?.transitionCoordinator?.viewController(forKey: .from) === c
             guard stacked else { continue }
             // A presented route's controller takes its sheet's whole view, and
             // the document's insets (`env()`) are not the sheet's: its route is
@@ -224,6 +224,9 @@ extension NavigationHost {
             }
             if settled {
                 var safe = c.surface.safeAreaInsets
+                #if os(iOS)
+                safe.bottom += c.searchBottomClearance
+                #endif
                 // PROTO (rule 4, `EdgeFramesIOS.swift`): whether UIKit moves the top edge: a large title collapsing, the
                 // bar minimizing as configured, or UIKit having moved it where the system decides
                 #if os(iOS)

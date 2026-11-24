@@ -10,9 +10,10 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
     var pageScrollAxes: (x: Bool, y: Bool)?
     private(set) var contentViewport: Viewport?
     private let keyboardInset = KeyboardInset()
-    /// The bar of the search field UIKit floats on the keys, in the edge scroller's bottom inset (`fitContentViewport`).
-    private let fieldBar = KeyboardInset()
-    private weak var fieldBarScroll: UIScrollView?
+    #if os(iOS)
+    private let searchClearance = SearchClearance()
+    private(set) var searchBottomClearance: CGFloat = 0
+    #endif
     weak var bootSurface: UIView?
     var surface: UIView { bootSurface ?? view }
     var contentMount: UIView { contentViewport ?? surface }
@@ -29,8 +30,7 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
     /// as the stack's routes are prepared, before UIKit shows any of them
     /// (`NavigationRules.bar`).
     var pushed = false
-    /// Whether the route's own bar hides the system's Back (an authored Back, nothing to go back to); an open search
-    /// beside it can hide it too (`NavigationHost.searchHidesBack`).
+    /// Whether the route's own bar hides the system's Back.
     var hidesBack = false
     weak var lifted: NodeView?
     var barNodes: [NodeView] = []
@@ -169,6 +169,7 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
         host?.presenter.owners.publish()
         if scrollEdgesOwed { host?.settleScrollEdges() }
         #if os(iOS)
+        search?.bindEditor()
         search?.labelScopes()
         #endif
     }
@@ -289,29 +290,28 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
     /// The route's room for the keys, and its page viewport's frame, extent and inset.
     func fitContentViewport(in block: CGRect? = nil, editor: UIView?? = nil) {
         let view = surface
+        var fitsPairedSearch = false
         #if os(iOS)
-        // @ref LLP 1127.000 D9 — the docked keys are a region of the window, as SwiftUI's keyboard region is: a route
-        // they cover takes the part they cover as bottom safe area, whichever column's field took them, so UIKit insets
-        // its edge scroller and its content height leaves them out. The route whose own editor (`editor`, when the caller
-        // found it) takes them is shortened instead (`block(in:)`), a visual viewport that resizes takes them as its
-        // inset (`resizes-visual`),
-        // `overlays-content` lets them cover, and a route under a presentation keeps its own. The bar UIKit floats the
-        // editing search field in, which it places above that safe area, is its edge scroller's bottom inset
-        // (`fieldBarInset`).
-        if let presenter = host?.presenter {
+        if let host, let split = host.split, let nav = navigationController, split.holds(nav), let occupancy = host.searchOccupancy(in: view) {
+            fitsPairedSearch = true
+            if additionalSafeAreaInsets.bottom != 0 { additionalSafeAreaInsets.bottom = 0 }
+            let allocation = (block ?? host.presenter.owners.block(in: view)).intersection(view.bounds.inset(by: view.safeAreaInsets))
+            let live = nav === split.list
+                ? host.splitPrimaryExposed && split.pairedSearch?.results?.visible != true
+                : !host.isInactiveRoute(containing: node)
+            searchBottomClearance = searchClearance.fit(node, in: view, allocation: allocation, occupancy: occupancy,
+                                                         policy: host.presenter.keyboardPolicy, enabled: live, fallback: contentViewport)
+        } else if let presenter = host?.presenter {
+            searchClearance.clear()
+            searchBottomClearance = 0
             var keys: CGFloat = 0
             if contentViewport == nil || presenter.keyboardPolicy != "resizes-visual", presenter.keyboardPolicy != "overlays-content",
                !presentedOver, let top = presenter.keyboardTop, let window = view.window,
                (editor ?? presenter.keyboardEditor)?.isDescendant(of: view) != true {
                 let edge = view.convert(CGPoint(x: 0, y: top), from: window).y
-                // Extend the inherited safe area (including a row beside the tabs) to the keys;
-                // the keyboard and that row obstruct the same edge.
                 keys = max(0, view.bounds.maxY - edge - (view.safeAreaInsets.bottom - additionalSafeAreaInsets.bottom))
             }
             if additionalSafeAreaInsets.bottom != keys { additionalSafeAreaInsets.bottom = keys }
-            let scroll = edgeScroll?.scrollView
-            if fieldBarScroll !== scroll { fieldBarScroll.map { fieldBar.apply(0, to: $0) }; fieldBar.reset(); fieldBarScroll = scroll }
-            if let scroll { fieldBar.apply(keys > 0 ? presenter.fieldBarInset(over: self) : 0, to: scroll) }
         }
         #endif
         guard let scroll = contentViewport, let presenter = host?.presenter else { return }
@@ -331,7 +331,7 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
         if scroll.contentSize != size { scroll.contentSize = size }
         // Keep drawing under the keyboard while the content clears its occupied area
         var overlap = max(0, frame.maxY - allocation.maxY)
-        if presenter.keyboardPolicy == "resizes-visual", presenter.ownsKeyboard(in: view),
+        if !fitsPairedSearch, presenter.keyboardPolicy == "resizes-visual", presenter.ownsKeyboard(in: view),
            let top = presenter.keyboardTop, let window = view.window {
             let keys = view.convert(CGPoint(x: 0, y: top), from: window).y
             overlap = min(allocation.height, max(0, allocation.maxY - keys))

@@ -745,6 +745,8 @@ pub fn attr(name: &str) -> Option<AttrTarget> {
         "scrollFollowEnd" => AttrTarget::Prop(p("scrollFollowEnd")),
         "refreshing" => AttrTarget::Prop(p("refreshing")),
         "keyboardDismissMode" => AttrTarget::Prop(p("keyboardDismissMode")),
+        "keyboardAvoidance" => AttrTarget::Prop(p("keyboardAvoidance")),
+        "searchStyle" => AttrTarget::Prop(p("searchStyle")),
         // @ref LLP 1077 D12 — what a discrete symbol effect plays on.
         "symbolEffectValue" => AttrTarget::Prop(p("symbolEffectValue")),
         "href" | "target" => AttrTarget::Prop(p(name)),

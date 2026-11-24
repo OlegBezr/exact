@@ -231,7 +231,8 @@ package final class Presenter {
     package weak var keyboardPrompt: UITextField?
     package var keyboardEditor: UIView? {
         guard let responder = FirstResponder.current as? UIView, responder is UIKeyInput,
-              mounts(responder) || responder === keyboardPrompt else { return nil }
+              mounts(responder) || responder === keyboardPrompt
+                || navigation.primaryRouteSurfaces.contains(where: { $0.headerSearchEditor === responder }) else { return nil }
         return responder
     }
     var hasKeyboardEditor: Bool { keyboardEditor != nil }
@@ -240,12 +241,11 @@ package final class Presenter {
     package func ownsKeyboard(in container: UIView) -> Bool { edits(in: container) || editsInBar(of: container) }
     /// Whether the keyboard's editor is in `container`'s content.
     func edits(in container: UIView) -> Bool { keyboardEditor?.isDescendant(of: container) == true }
-    /// Whether the keyboard's editor is the search field of the bar over `container`'s route, or the field whose
-    /// results that route is (`aria-controls`).
+    /// Whether the keyboard's editor is the search field of the bar over `container`'s route.
     package func editsInBar(of container: UIView) -> Bool {
         guard let route = ViewPresentation.controller(for: container) as? any RouteSurface else { return false }
-        if let editor = keyboardEditor, route.headerSearchEditor === editor { return true }
-        return navigation.searchEdits(over: route)
+        guard let editor = keyboardEditor else { return false }
+        return route.headerSearchEditor === editor
     }
     /// The docked keyboard's occupied geometry in its owning container.
     package func keyboardGuideTop(in container: UIView) -> CGFloat? {
@@ -696,6 +696,8 @@ package final class Presenter {
     /// `at`: the touch's point in the window.
     package func press(_ id: UInt32, held: String = "", at: CGPoint? = nil, bubbled: Bool = false) {
         navigation.finishBootOwner()
+        let finishActivation = views[id].flatMap(navigation.beginSearchActivation)
+        defer { finishActivation?() }
         pressHeld = held; pressPoint = at.map(client); defer { pressHeld = ""; pressPoint = nil }
         if let node = views[id], let url = node.defaultLink, node.activateLink(url, bubbled: bubbled) { return }
         let original = views[id]

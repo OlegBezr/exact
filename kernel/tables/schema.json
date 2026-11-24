@@ -2020,6 +2020,18 @@
       "name": "tipDone",
       "kind": "bool",
       "_comment": "@ref LLP 1035.006.000 D2: the person has done what the tip teaches. The platform retires the tip for good (TipKit's `invalidate(reason: .actionPerformed)`); it stays retired when this is false again or the app relaunches."
+    },
+    {
+      "id": 315,
+      "name": "keyboardAvoidance",
+      "kind": "str",
+      "_comment": "@ref LLP 1123 D7: 'none' leaves the paired search viewport's platform and root keyboard policy in effect."
+    },
+    {
+      "id": 316,
+      "name": "searchStyle",
+      "kind": "str",
+      "_comment": "@ref LLP 1141.002 D4: 'minimized' opens a projected iOS header search from its native bar button."
     }
   ],
   "_enums": "Wire discriminant is the 0-based index. An unknown discriminant is a typed decode rejection, never a fallback. refused: keywords the wire carries and the compiler refuses an author, because no presenter builds them (LLP 1043.000 §3 D1); `contract vocab` lists the others. No wire reads it, so it is outside the digest.",
