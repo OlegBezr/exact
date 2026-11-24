@@ -36,7 +36,7 @@ enum Part {
 }
 
 fn part(node: Visit<'_>) -> Part {
-    let Some((tag, _, attrs)) = node.element() else {
+    let Some((tag, positional, attrs)) = node.element() else {
         return Part::Doubt;
     };
     // A popover or dialog shows over the page when opened, not in the bar.
@@ -70,6 +70,8 @@ fn part(node: Visit<'_>) -> Part {
         return Part::Status;
     }
     match tag {
+        // A text with no words shows nothing: a spacer, as the kernel reads one.
+        "text" if matches!(positional, [Expr::Str(s, _)] if s.trim().is_empty()) => Part::Box,
         "text" => Part::Text,
         "input" if computed(attrs, "type") => Part::Doubt,
         "input" if literal(attrs, "type") == Some("search") => Part::Search,

@@ -160,8 +160,8 @@ fn a_symbol_beside_the_heading_in_its_row_is_the_titles() {
 }
 
 /// Issue #364: a route's first `header` that holds buttons and no heading is
-/// the bar with no title, so the compiler says nothing of it; one that also
-/// holds a text is not, and `lower-header-no-bar` names the text and both
+/// the bar with no title, so the compiler says nothing of it, a text with no
+/// words among them included; one that also holds a text is not, and `lower-header-no-bar` names the text and both
 /// repairs.
 #[test]
 fn a_header_of_buttons_alone_is_the_bar_and_one_with_a_text_is_named() {
@@ -172,6 +172,8 @@ fn a_header_of_buttons_alone_is_the_bar_and_one_with_a_text_is_named() {
     for header in [
         "  button press=go aria-label=\"Add\"\n    image \"symbol:add\"",
         "  row\n    button press=go aria-label=\"Add\"\n      image \"symbol:add\"\n  view flex=1\n  text \"Live\" role=\"status\"",
+        // A text with no words is a spacer, as an empty box is.
+        "  text \"\" flex=1\n  button press=go aria-label=\"Add\"\n    image \"symbol:add\"",
     ] {
         assert_eq!(crate::warnings::warned(&route(header)), [], "{header}");
     }
