@@ -6341,6 +6341,23 @@ for a temporary `app:/tmp/` PNG path. The host sanitizes each image within
 the 64 MiB and 64-million-pixel bounds. File access uses the app's ordinary
 file grants.
 
+On macOS, iOS and the web, a clipboard item can carry formatted text.
+Supply the plain-text alternative explicitly when writing for both rich and
+plain-text fields.
+
+```ts
+await write([new ClipboardItem({ "text/html": "<b>Note</b>", "text/plain": "Note" })]);
+```
+
+Exact keeps text formatting, lists, tables and absolute HTTP, HTTPS and
+mailto links. It strips scripts, event handlers, styles and embedded resources
+before writing. Both the input and sanitized HTML must fit in 1 MiB of UTF-8.
+Windows and a development bake with no target report
+`ClipboardItem.supports("text/html")` as false. A web page whose Trusted
+Types policy blocks HTML parsing needs a browser with `Document.parseHTML`
+to write HTML. Rust struct literals can omit unused clipboard item fields
+with `..Default::default()`.
+
 Data code writes images with [`@exact/clipboard`](contract-grammar.md#clipboard).
 Windows accepts an `app:/` PNG file, up to 64 MiB and 64,000,000 pixels;
 in-memory PNG bytes and raw pixels are not accepted. It offers sanitized

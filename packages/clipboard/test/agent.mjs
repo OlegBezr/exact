@@ -33,7 +33,7 @@ for (const host of hosts.length ? hosts : ['web']) {
   try {
     await s.clock('data');
     const supports = (await texts(s)).supports;
-    check(host, 'ClipboardItem.supports answers from the declaration', supports === 'image/png=true text/plain=true text/html=false image/svg+xml=false', supports);
+    check(host, 'ClipboardItem.supports answers from the declaration', supports === 'image/png=true text/plain=true text/html=true image/svg+xml=false', supports);
     const denied = (await texts(s)).mount;
     check(host, 'mount cannot read', denied === 'NotAllowedError: clipboard.readText: NotAllowedError: person-required', denied);
     let writes = 0, sha = {};
@@ -45,6 +45,14 @@ for (const host of hosts.length ? hosts : ['web']) {
       const own = (await s.state()).extensions?.clipboard?.implementation ?? {};
       if (landed) writes++;
       check(host, `${kind}: ${landed ? 'lands' : 'leaves the clipboard as it was'}`, own.writes === writes && (!landed || holds(own.lastWrite, landed)), JSON.stringify(own));
+      if (kind === 'html' || kind === 'html-only') {
+        for (const id of ['paste', 'open-url']) {
+          await s.tap(id);
+          await s.clock('data');
+          const result = (await texts(s)).wrote;
+          check(host, `${kind}: ${id} reads only plain text`, result === (kind === 'html' ? 'Plain fallback' : ''), result);
+        }
+      }
       if (kind === 'both') {
         for (const [id, expected] of [['paste', 'https://example.com/red.png | png 137 80'], ['open-url', 'https://example.com/red.png'], ['read-pair', 'https://example.com/red.png | https://example.com/red.png']]) {
           await s.tap(id);

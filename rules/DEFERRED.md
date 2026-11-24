@@ -1872,8 +1872,9 @@ reading. Nothing that isn't HTML is added by it.
   moves to Later.
   **Clipboard reads (Charlie, 2026-11-24, "recs ok").** Float and Pocket Lab
   need reads from a person's action. Exact provides them on macOS, the web and iOS (LLP 1133.006 D6).
-  HTML writes and the iOS write options await implementation under the same
-  ruling. Still out: Windows reads, `text/uri-list` until a
+  **Formatted clipboard writes (Charlie, 2026-11-24, "recs ok").** Pocket Lab
+  can write sanitized `text/html` on macOS, iOS and the web (LLP 1133.006 D1).
+  The iOS write options await implementation. Still out: Windows clipboard reads, Windows HTML writes, `text/uri-list` until a
   second consumer asks, RTF, custom formats, file
   promises, several items in one write, a Contract `write`, a
   clipboard-change event, and the Linux and Android cells.

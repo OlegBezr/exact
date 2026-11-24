@@ -47,6 +47,11 @@ const sources: Sources = {
         case 'png': await write([new ClipboardItem({ 'image/png': await file('red.png', RED) })]); break;
         case 'png-bytes': await write([new ClipboardItem({ 'image/png': bytes(RED) })]); break;
         case 'apng': await write([new ClipboardItem({ 'image/png': await file('anim.png', APNG) })]); break;
+        case 'html-only': await write([new ClipboardItem({ 'text/html': '<html><body hidden><b>private draft</b></body></html>' })]); break;
+        case 'html': await write([new ClipboardItem({
+          'text/html': '<p><b onclick="void 0">Résumé</b> <a href="javascript:void(0)">note</a><script type="application/json">discard</script></p>',
+          'text/plain': 'Plain fallback',
+        })]); break;
         case 'text': await writeText('Copied from the fixture'); break;
         case 'both': await write([new ClipboardItem({ 'image/png': await file('red.png', RED), 'text/plain': 'https://example.com/red.png' })]); break;
         case 'bad': await write([new ClipboardItem({ 'image/png': new TextEncoder().encode('not a png') })]); break;
