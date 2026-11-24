@@ -370,7 +370,7 @@ A production bake collects nothing.
 | `perf` | the runner's table by plan site. `perf frames health`, `report`, `capture` and `live` read the reader's own frames in the Apple host's formats (above, "Frame timing"); `perf frames track` answers unavailable |
 | `fail fetch`, `pass fetch`, a test's `reload` | work (Shelf's tests use them) |
 | `check` | refused by `agent.mjs` for every Android carrier ("the web and iOS hosts carry it") |
-| Launch options | `--plan` selects a local plan and `--url share:?…` claims a share at launch. The reader refuses `--world` and local route URLs. It runs at the phone's size, so it refuses `--size` and skips tests that name a size (`--headless` takes one). `resize`, a drag and a wheel were not tried |
+| Launch options | `--plan` selects a local plan and `--url share:?…` claims a share at launch. A test's `at` and a local route URL are the launching intent's data (`am start -d`), which the reader boots at as a link's location (`ExactActivity.launchUrl`). The reader refuses `--world`. It runs at the phone's size, so it refuses `--size` and skips tests that name a size (`--headless` takes one). `resize`, a drag and a wheel were not tried |
 | `tree --ax` | the reader's own answer ("Accessibility", below): what Android has for the window in front, joined to the views |
 
 Shelf's own tests (`apps/shelf/app.test.contract`, eleven) pass on the reader. They found three things on the way,
