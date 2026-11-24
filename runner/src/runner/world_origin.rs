@@ -9,41 +9,47 @@
 //! cannot start a device through the world's later emissions. The hosts
 //! carry the text unchanged.
 
-use super::provenance::Cause;
+use super::provenance::{Cause, Causes, ORIGINS};
 use super::{CallOrigin, Command};
 use exact_plan::Value;
 
 /// What precedes a marked message's text.
 const ORIGIN_MARK: &str = "\u{1}origin:";
 
-/// `text`'s origin and the text after its mark; `None` for an unmarked one.
-/// A mark can only lower a commit's origin, never raise it: `app`, or a
-/// word the runner does not know, reads as the device's.
-pub(super) fn unmark(text: &str) -> Option<(CallOrigin, &str)> {
-    let (word, text) = text.strip_prefix(ORIGIN_MARK)?.split_once('\u{1}')?;
-    let origin = match word {
-        "tool" => CallOrigin::Tool,
-        "wake" => CallOrigin::Wake,
-        "action" => CallOrigin::Action,
-        _ => CallOrigin::Device,
-    };
-    Some((origin, text))
+/// `text`'s set of origins and the text after its mark; `None` for an
+/// unmarked one. A mark can only lower a commit's origin, never raise it:
+/// one the runner cannot read (`app`, an unknown or empty word) names every
+/// restricted origin.
+pub(super) fn unmark(text: &str) -> Option<(Causes, &str)> {
+    let (words, text) = text.strip_prefix(ORIGIN_MARK)?.split_once('\u{1}')?;
+    let restricted = || ORIGINS.into_iter().filter(|o| *o != CallOrigin::App);
+    let named = words.split(',').try_fold(Causes::default(), |set, word| {
+        let origin = restricted().find(|o| o.word() == word)?;
+        Some(set.union(Causes::of(origin)))
+    });
+    let every = || restricted().fold(Causes::default(), |set, o| set.union(Causes::of(o)));
+    Some((named.unwrap_or_else(every), text))
 }
 
 /// Each `postMessage` to a canvas (two arguments: an iframe's carries a
-/// third) a commit of `origin` stated: its text carries the origin, unless
-/// the commit is the app's.
+/// third) a commit of `cause` stated: its text carries the cause's
+/// restricted origins, unless the cause is the app's alone.
 pub(super) fn mark_world_posts(cause: Cause, commands: &mut [Command]) {
-    let origin = cause.origin();
-    if origin == CallOrigin::App {
+    if cause.origin() == CallOrigin::App {
         return;
     }
+    let causes = cause.causes();
+    let words: Vec<&str> = (ORIGINS.into_iter())
+        .filter(|o| *o != CallOrigin::App && causes.has(*o))
+        .map(CallOrigin::word)
+        .collect();
+    let words = words.join(",");
     for command in commands
         .iter_mut()
         .filter(|c| c.name == "postMessage" && c.args.len() == 2)
     {
         if let Some(text) = command.args[0].as_str() {
-            let marked = format!("{ORIGIN_MARK}{}\u{1}{text}", origin.word());
+            let marked = format!("{ORIGIN_MARK}{words}\u{1}{text}");
             command.args[0] = Value::str(&marked);
         }
     }
@@ -53,24 +59,26 @@ pub(super) fn mark_world_posts(cause: Cause, commands: &mut [Command]) {
 mod tests {
     use super::*;
 
+    fn set(origins: &[CallOrigin]) -> Causes {
+        (origins.iter()).fold(Causes::default(), |s, o| s.union(Causes::of(*o)))
+    }
+
     #[test]
-    fn a_mark_reads_as_its_origin_and_never_as_the_apps() {
+    fn a_mark_reads_as_its_set_and_never_as_the_apps() {
+        use CallOrigin::*;
         assert_eq!(
             unmark("\u{1}origin:tool\u{1}buzz"),
-            Some((CallOrigin::Tool, "buzz"))
+            Some((set(&[Tool]), "buzz"))
         );
         assert_eq!(
-            unmark("\u{1}origin:wake\u{1}"),
-            Some((CallOrigin::Wake, ""))
+            unmark("\u{1}origin:device,action\u{1}"),
+            Some((set(&[Device, Action]), ""))
         );
-        assert_eq!(
-            unmark("\u{1}origin:app\u{1}x"),
-            Some((CallOrigin::Device, "x"))
-        );
-        assert_eq!(
-            unmark("\u{1}origin:root\u{1}x"),
-            Some((CallOrigin::Device, "x"))
-        );
+        let every = set(&[Device, Wake, Tool, Action]);
+        for unread in ["app", "root", "", "tool,", "tool,app"] {
+            let text = format!("\u{1}origin:{unread}\u{1}x");
+            assert_eq!(unmark(&text), Some((every, "x")), "{unread:?}");
+        }
         assert_eq!(unmark("buzz"), None);
         assert_eq!(unmark("\u{1}origin:tool"), None);
     }

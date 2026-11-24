@@ -1013,11 +1013,10 @@ impl<D: DataSource> Runner<D> {
     pub fn dispatch(&mut self, view: ViewId, event: Event) -> Result<CommitReceipt, RunnerError> {
         // A world's message runs as the origin its mark carries (`world_origin.rs`).
         if let Event::Message(text) = &event {
-            if let Some((origin, text)) = super::world_origin::unmark(text) {
+            if let Some((causes, text)) = super::world_origin::unmark(text) {
                 let event = Event::Message(text.to_owned());
                 // A tool's or a press's work keeps D4a's command rules (LLP
                 // 1133.023 D7a); the mark cannot tell a press from another action.
-                let causes = super::provenance::Causes::of(origin);
                 let cause = super::provenance::Cause::marked(causes);
                 return self.as_cause(cause, |r| r.arrived(|r| r.dispatch_event(view, event)));
             }
