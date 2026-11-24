@@ -883,9 +883,9 @@ internal object Exact {
     /** What an accessibility service asks of node [id] of the tree exact2 last told ([Access], [Native.accessAct],
      * LLP 1115.001 D13): on exact2's thread, and waited for, since the service is answered with whether it was
      * done. exact2 then publishes what it changed. */
-    fun accessAct(id: Int, action: Int, value: Float): Boolean {
+    fun accessAct(id: Int, action: Int, value: Float, target: Int = 0): Boolean {
         val o = owner
-        return if (o != null) { o.input(); o.sync { Native.accessAct(id, action, value) } } else Native.accessAct(id, action, value).also { mainThreadTurned() }
+        return if (o != null) { o.input(); o.sync { Native.accessAct(id, action, value, target) } } else Native.accessAct(id, action, value, target).also { mainThreadTurned() }
     }
 
     /** What a hatch's handle asks of node [node] ([ExactElement]): on exact2's thread, waited for, as an

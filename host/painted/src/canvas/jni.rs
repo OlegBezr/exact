@@ -821,8 +821,12 @@ macro_rules! canvas_jni {
                 id: jint,
                 action: jint,
                 value: jfloat,
+                target: jint,
             ) -> jboolean {
-                flag(with(|h| h.access_act(id, action, value)).unwrap_or(false))
+                flag(with(|h| {
+                    if target == 0 { h.access_act(id, action, value) }
+                    else { h.access_custom_action(id, target as u32) }
+                }).unwrap_or(false))
             }
 
             /// What the reader's hatches ask for node `node`, 0 for their

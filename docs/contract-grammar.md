@@ -1661,6 +1661,11 @@ element's own props, pass to the module as one object. A package view accepts on
 its declared props and events beyond standard box attributes and common module
 events; an undeclared attribute is `lower-native-attr`.
 A literal `role` must name a concrete ARIA role, or it is refused.
+
+| ARIA attribute | Value | Meaning |
+| --- | --- | --- |
+| `aria-actions` | Space-separated element ids | Offers each target's press under its accessible name. A literal reference must name another element with a literal id in the expanded view and a press handler or link destination. Computed references resolve against mounted elements. |
+
 A known attribute binds to the module's box, and the box takes only layout,
 box and paint rows, handlers, `testId`, `id`, `class`, `data-*`, `role`, ARIA,
 `disabled` and `inert`; any other known name (`color`, `value`, `command`, `href`)

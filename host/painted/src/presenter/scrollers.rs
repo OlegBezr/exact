@@ -331,7 +331,10 @@ impl<D: DataSource> Presenter<D> {
         let mut claims = self.touch_kept(key);
         for candidate in self.candidates(key) {
             let (x, y) = match candidate {
-                Candidate::Arrange(_) | Candidate::Height { .. } => (false, true),
+                // An ordinary grip takes a finger on the platform's long press.
+                // Before then only touch-action keeps the list from scrolling.
+                Candidate::Arrange(_) => (false, false),
+                Candidate::Height { .. } => (false, true),
                 Candidate::Swipe(_) => (true, false),
                 Candidate::Transform(_) | Candidate::Group(_) => (true, true),
                 // A `pan` hears what its `touch-action` does not give to
@@ -653,6 +656,14 @@ impl<D: DataSource> Presenter<D> {
             under.chain.len() as i32,
             under.field.unwrap_or(0) as i32,
         ];
+        if self
+            .contact
+            .as_ref()
+            .and_then(|c| c.hold.as_ref())
+            .is_some_and(|h| matches!(h.kind, super::contact::HeldKind::Arrange(_)))
+        {
+            out[0] |= 64;
+        }
         let tapped =
             (self.hit(x / scale, y / scale)).and_then(|hit| self.double_tap_container(hit));
         for s in &under.chain {
@@ -822,6 +833,10 @@ impl<D: DataSource> Presenter<D> {
             origin(content.1),
             (self.context_menu_at(x / scale, y / scale).map(|v| v.0))
                 .or_else(|| self.lift_source_at(x / scale, y / scale))
+                .or_else(|| {
+                    self.arrange_hold_at(x / scale, y / scale)
+                        .and_then(|b| self.host.kernel().node_by_key(b.handle).map(|n| n.id))
+                })
                 .map_or(0, |id| id as i32),
         ]
     }

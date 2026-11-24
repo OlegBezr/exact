@@ -33,7 +33,7 @@ extension NodeView {
     /// popover written inside it; a section's less what titles it (a child
     /// its `aria-labelledby` names, which the web draws as written).
     var menuRows: [NodeView] {
-        let titles = isMenuSection ? Set(props["accessibilityLabelledBy"]?.split(separator: " ").map(String.init) ?? []) : []
+        let titles = isMenuSection ? Set(Self.idRefs(props["accessibilityLabelledBy"] ?? "")) : []
         return childNodes
             .filter { $0.props["contextPreview"] != "true" && $0.props["popover"] == nil && !titles.contains($0.props["id"] ?? "") }
     }

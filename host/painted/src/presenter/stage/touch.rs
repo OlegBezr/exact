@@ -331,6 +331,12 @@ impl<D: DataSource> Presenter<D> {
         }
     }
 
+    pub(in crate::presenter) fn clear_pending_sheet_drag(&mut self) {
+        self.stage
+            .gesture
+            .take_if(|g| matches!(g, Gesture::Drag { moving: false, .. }));
+    }
+
     /// Whether a contact down may yet drag a sheet.
     pub(in crate::presenter) fn stage_drag_pending(&self) -> bool {
         matches!(self.stage.gesture, Some(Gesture::Drag { .. }))

@@ -642,7 +642,7 @@ fn lower_body(
             });
         }
     }
-    // Each component's parts and the rows its classes bring them (LLP 1139 D2).
+    lint::action_targets(checked, &mut l.errors);
     l.check_anatomy(file);
     l.errors.extend(provenance::check(checked));
     let refused = l.declare_keyframes(file);

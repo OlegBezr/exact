@@ -57,6 +57,8 @@ internal class FieldText(context: Context) : EditText(unadjusted(context)) {
      * what its author named it; null while that tree does not have it. The field reports itself, as any `EditText`
      * does: this only says where, and by what name. */
     var stand: Access.Stand? = null
+    override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean =
+        stand?.node?.performCustom(action) == true || super.performAccessibilityAction(action, arguments)
 
     override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)

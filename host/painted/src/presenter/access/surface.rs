@@ -31,6 +31,8 @@ impl Build {
             name,
             value: String::new(),
             hint: info.hint,
+            action_owner: view,
+            actions: info.actions,
         });
         id
     }
@@ -293,7 +295,8 @@ fn build_surface(
         );
     }
     let parent = if let Some((offset, max)) = scroll {
-        let id = b.unique(info(shown.node).id);
+        let metadata = info(shown.node);
+        let id = b.unique(metadata.id);
         let flags = if offset > 0. { flag::BACKWARD } else { 0 }
             | if offset < max { flag::FORWARD } else { 0 };
         b.out.push(Node {
@@ -316,6 +319,8 @@ fn build_surface(
             name,
             value: String::new(),
             hint: String::new(),
+            action_owner: shown.node,
+            actions: if alert { Vec::new() } else { metadata.actions },
         });
         id
     } else {
@@ -366,6 +371,8 @@ fn build_surface(
                 name: text.clone(),
                 value: String::new(),
                 hint: String::new(),
+                action_owner: 0,
+                actions: Vec::new(),
             });
         }
     }

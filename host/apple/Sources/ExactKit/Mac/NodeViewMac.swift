@@ -65,7 +65,8 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
     /// Its runs' elements, kept until the runs change, and what else made
     /// them (`textAccessibilityChildren`).
     var inlineKeyViews: [UInt32: InlineKeyView] = [:]
-    var inlineAccessibility: (key: String?, elements: [NSAccessibilityElement])?
+    var hasAssignedCustomActions = false
+    var inlineAccessibility: (key: String?, actionRuns: [UInt32], elements: [NSAccessibilityElement])?
     var inlinePressed: (id: UInt32, down: NSPoint)?
     /// An SVG element a click in this `svg` went down on (LLP 1055.000 D17).
     var svgPressed: UInt32?
@@ -164,7 +165,8 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
     /// raster, symbol, surface).
     var layerPaintCache: Bool?
     /// What the host last wrote to AppKit accessibility (props and form state).
-    struct AccessibilityWrite: Equatable { var enabled = true; var identifier: String?; var label: String?; var help: String?; var required = false; var formInitialized = false; var text: TextAccessibilityWrite? }
+    struct AccessibilityWrite: Equatable { var actionGroup = false; var enabled = true; var identifier: String?; var label: String?; var help: String?; var required = false; var formInitialized = false; var text: TextAccessibilityWrite? }
+    var hadFormActionRefs = false
     var lastAccessibilityWrite = AccessibilityWrite()
     var boxGradient: CAGradientLayer?
     var boxPattern: (any GradientPatterning)?

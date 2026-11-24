@@ -142,6 +142,11 @@ impl<D: DataSource> Presenter<D> {
             {
                 if let Some(own) = b.out.last_mut() {
                     own.view = target.id;
+                    for action in self.access_actions(&target) {
+                        if !own.actions.iter().any(|a| a.0 == action.0) {
+                            own.actions.push(action);
+                        }
+                    }
                 }
             }
             return;
@@ -366,10 +371,18 @@ impl<D: DataSource> Presenter<D> {
                 {
                     scope.parent = own;
                 }
-            } else if (dialog.is_none() && Self::access_live(&node) != 0)
+            } else if (dialog.is_none()
+                && (Self::access_live(&node) != 0 || self.action_group(&node)))
                 || (label.is_some() && matches!(aria, Some("group" | "radiogroup" | "region")))
             {
-                let words = (label.unwrap_or_default(), String::new());
+                let name = label.unwrap_or_else(|| {
+                    if node.props.str(PropId::AccessibilityActions).is_some() {
+                        self.access_name(&node)
+                    } else {
+                        String::new()
+                    }
+                });
+                let words = (name, String::new());
                 if let Some(own) =
                     self.access_emit(b, &scope, &node, role::GROUP, 0, [0.0; 3], || Some(words))
                 {
