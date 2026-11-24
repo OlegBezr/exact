@@ -137,17 +137,19 @@ extension Presenter {
     /// reaches the route's edge, the covers included, when either edge has
     /// bars or the open top is under the bar (`controlBands`); an edge the
     /// bar's collapse or the bottom edge already took is there already, so
-    /// the collapse scroller is judged as its title's riders are. Under a
-    /// large title no top is reached unless the eligible top bars ride its
-    /// safe area, and an open foot still is (`openFoot`).
+    /// the collapse scroller is judged as its title's riders are. No top is
+    /// reached under a large title unless the eligible top bars ride its safe
+    /// area, nor while riders leave the route a top cover; an open foot is
+    /// reached either way (`openFoot`), as it takes no part in the title.
     private func routeBands(of v: NodeView, _ sv: UIScrollView, in c: any RouteSurface, _ judge: ControlBars) -> Bands {
+        let apart = c.collapseScroll !== v
+        var topStays = false
         #if os(iOS)
-        if let nav = c.navigationController, navigation.routeShowsBar(c, in: nav), c.navigationItem.largeTitleDisplayMode == .always, c.ridingBars.isEmpty {
-            return openFoot(of: v, sv, in: c.node, judge, apart: c.collapseScroll !== v) ?? Bands()
-        }
+        if let nav = c.navigationController, navigation.routeShowsBar(c, in: nav), c.navigationItem.largeTitleDisplayMode == .always, c.ridingBars.isEmpty { topStays = true }
         #endif
-        if !c.ridingBars.isEmpty, case .edges(let edges)? = navigation.covers[c.node.id], edges.top > 0.5 { return Bands() }
-        return controlBands(of: v, in: c.node, judge, apart: c.collapseScroll !== v)
+        if !c.ridingBars.isEmpty, case .edges(let edges)? = navigation.covers[c.node.id], edges.top > 0.5 { topStays = true }
+        if topStays { return openFoot(of: v, sv, in: c.node, judge, apart: apart) ?? Bands() }
+        return controlBands(of: v, in: c.node, judge, apart: apart)
     }
 
     /// Collapse adoption and banding must agree about both edges and paint
