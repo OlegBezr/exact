@@ -394,6 +394,11 @@ package enum PageFacts {
     }
 }
 
+/// What a session last told of its page's visibility, and whether the app
+/// asked to show it since (`personShows`).
+private final class Showing { var hidden: Bool?; var asked = false }
+nonisolated(unsafe) private let showings = NSMapTable<ExactSession, Showing>.weakToStrongObjects()
+
 extension ExactSession {
     /// @ref LLP 1069.000 D2 — told after every boot and on each change; a
     /// change while iOS suspends the process lands with the foreground
@@ -410,10 +415,33 @@ extension ExactSession {
         if clock == nil { followOffset() }
         let reads = runtime.readsOnLine()
         readsOnLineKnown = (generation, reads)
-        apply(runtime.setPage(PageFacts.bits(pageWindow, page: view?.window, readsOnLine: reads)))
+        let bits = PageFacts.bits(pageWindow, page: view?.window, readsOnLine: reads)
+        apply(runtime.setPage(bits, person: personShows(bits)))
         if let presentedHeld { apply(runtime.preferPresented(presentedHeld)) }
         apply(runtime.setRootFontSize(PageFacts.rootFontSize))
         tellDisplayScale()
+    }
+    /// Whether the person's act shows the page `bits` tell (LLP 1133.023
+    /// D7a): a hidden page that shows, not at the app's own request. Nothing
+    /// else can show an app's window: on iOS only the person brings an app
+    /// to the foreground, and on macOS another app cannot order this app's
+    /// windows, so a Dock click, an app switch, a reopen, a document or URL
+    /// opened, a deminiaturize or an uncovered window is the person's. A
+    /// showing the app asked for keeps the cause the runner gave the page
+    /// with that request.
+    func personShows(_ bits: UInt32) -> Bool {
+        let told = showings.object(forKey: self) ?? Showing()
+        showings.setObject(told, forKey: self)
+        let hidden = bits & 1 != 0, shown = told.hidden == true && !hidden
+        defer { told.hidden = hidden; if shown { told.asked = false } }
+        return shown && !told.asked
+    }
+    /// The app's bare `focus()` is about to show its windows: each session
+    /// whose page is hidden shows at that request, not by the person's act.
+    public static func appAsksToShow() {
+        for session in ExactApp.shared.sessions where showings.object(forKey: session)?.hidden == true {
+            showings.object(forKey: session)?.asked = true
+        }
     }
     /// LLP 1115.000 D10.3: the display's scale, told with the page's facts
     /// after every boot and again when the view's display changes

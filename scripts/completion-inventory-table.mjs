@@ -541,7 +541,7 @@ export const classifications = [
     ["runner:runner/src/runner/module_seam/forward.rs", "Runner::polls_asking"],
     ["runner:runner/src/runner/module_seam/forward.rs", "Runner::report_views"],
     ["runner:runner/src/runner/processes.rs", "Runner::set_work_clock"],
-    ["runner:runner/src/runner/provenance.rs", "Runner::act_from Runner::as_person Runner::view_origin"],
+    ["runner:runner/src/runner/provenance.rs", "Runner::act_from Runner::as_person Runner::person_shows_page Runner::view_origin"],
     ["runner:runner/src/runner/seams.rs", "Runner::call_agent Runner::call_tool Runner::intents_state Runner::place_controls Runner::press_control"],
     ["painted:host/painted/src/canvas/jni_extensions.rs", "Java_dev_exact_canvas_Native_press Java_dev_exact_canvas_Native_cancelPress Java_dev_exact_canvas_Native_pressLive"],
     ["painted:host/painted/src/canvas/requests.rs", "CanvasHost::press_control CanvasHost::cancel_press CanvasHost::press_live"],

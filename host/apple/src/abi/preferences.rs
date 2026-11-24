@@ -287,6 +287,9 @@ impl<D: DataSource> Bridge<D> {
     pub(super) fn launch(&self) -> exact_runner::time::Launch {
         exact_runner::time::Launch {
             clock: self.live_clock.map(|wall| wall()),
+            // `tellPage` says who shows the page (`PageFacts.swift`); iOS
+            // keeps the earlier rule until it has been run (LLP 1133.023 D7a).
+            tells_showing: cfg!(target_os = "macos"),
             ..self.launch_facts.clone()
         }
     }

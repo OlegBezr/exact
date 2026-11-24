@@ -1240,14 +1240,15 @@ impl<D: DataSource> Bridge<D> {
         self.emit(out)
     }
 
-    /// The page's facts changed or became known (LLP 1069.000 D2): bit 0
-    /// hidden, bit 1 offline, bit 2 a share sheet.
-    pub fn set_page(&mut self, bits: u32) -> u32 {
+    /// The page's facts (LLP 1069.000 D2); `person`: the person's act shows it (LLP 1133.023 D7a).
+    pub fn set_page(&mut self, bits: u32, person: bool) -> u32 {
         let page = exact_runner::Page::from_bits(bits);
-        let out = self
-            .host
-            .as_mut()
-            .map_or_else(not_booted, |h| h.set_page(page));
+        let out = self.host.as_mut().map_or_else(not_booted, |h| {
+            if person {
+                h.runner_mut().person_shows_page();
+            }
+            h.set_page(page)
+        });
         self.emit(out)
     }
 

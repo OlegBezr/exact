@@ -1,6 +1,6 @@
-//! LLP 1133.023 D7a: what the host observes of the page and a drag handle's
-//! release are the app's, and a world's message under a tool's mark and a
-//! remote Play keep D4a's command rules.
+//! LLP 1133.023 D7a: what the host observes of a page takes the cause of
+//! whoever showed it, a drag handle's release is the app's, and a world's
+//! message under a tool's mark and a remote Play keep D4a's command rules.
 
 use crate::request::Request;
 use crate::{Answer, CallOrigin, DataError, DataSource, Event, Outcome, Runner, Store, Value};
@@ -33,6 +33,15 @@ const FRAME: &str = "component App\n  mutation m as shape number\n  tool ping wr
 
 fn boot() -> (Runner<Later>, exact_kernel::ViewId) {
     boot_with(FRAME, "deck")
+}
+
+/// Booted by a host that tells who shows the page (LLP 1133.023 D7a).
+fn boot_told(source: &str, test_id: &str) -> (Runner<Later>, exact_kernel::ViewId) {
+    let launch = crate::time::Launch {
+        tells_showing: true,
+        ..crate::time::Launch::NONE
+    };
+    crate::time::launching_with(launch, || boot_with(source, test_id))
 }
 
 fn boot_with(source: &str, test_id: &str) -> (Runner<Later>, exact_kernel::ViewId) {
@@ -122,7 +131,7 @@ fn a_worlds_message_under_a_tools_mark_keeps_the_calls_command_rules() {
 #[test]
 fn a_page_shown_again_starts_work_as_the_apps() {
     const SHOWN: &str = "shape Page\n  visibilityState: string\n  persisted: bool\n\ncomponent App\n  resource page = exactPage() as shape Page\n  mutation frozen as shape number\n  task arrive when page.visibilityState == \"visible\" and not page.persisted\n    after(1, begin)\n  action begin\n    send frozen = save(1)\n  view\n    text \"x\" testId=\"x\"\n";
-    let (mut r, _) = boot_with(SHOWN, "x");
+    let (mut r, _) = boot_told(SHOWN, "x");
     r.advance(1.0).unwrap();
     assert_eq!(r.take_requests().len(), 1, "the cold launch's capture");
     let away = crate::Page {
@@ -137,6 +146,8 @@ fn a_page_shown_again_starts_work_as_the_apps() {
         restores: 1,
         ..r.page()
     };
+    // The host says the person's later launch is what shows it.
+    r.person_shows_page();
     r.set_page(shown).unwrap();
     r.advance(10.0).unwrap();
     let sent = r.take_requests();
@@ -337,4 +348,139 @@ fn a_calls_work_sets_no_locale_or_mode() {
     r.dispatch(audio, play("")).unwrap();
     assert_eq!(r.resolved_locale(), "fr");
     assert_ne!(r.modes(), modes);
+}
+
+const SHOWN: &str = "shape Page\n  visibilityState: string\n  persisted: bool\n\ncomponent App\n  resource page = exactPage() as shape Page\n  mutation m as shape number\n  task arrive when page.visibilityState == \"visible\" and not page.persisted\n    after(1, begin)\n  action begin\n    send m = save(1)\n  action bring\n    focus()\n  action loaded\n    send m = save(2)\n  view\n    iframe \"/deck/index.html\" load=loaded testId=\"deck\"\n";
+
+/// Hide the page, let `show` say who shows it again, show it, and return
+/// the origins of what the showing and a frame's load asked, on a host that
+/// tells who shows the page.
+fn shown_again(show: impl FnOnce(&mut Runner<Later>)) -> Vec<CallOrigin> {
+    shown_again_on(true, show)
+}
+
+fn shown_again_on(told: bool, show: impl FnOnce(&mut Runner<Later>)) -> Vec<CallOrigin> {
+    let (mut r, deck) = match told {
+        true => boot_told(SHOWN, "deck"),
+        false => boot_with(SHOWN, "deck"),
+    };
+    r.advance(1.0).unwrap();
+    r.take_requests();
+    let page = r.page();
+    let away = crate::Page {
+        hidden: true,
+        persisted: true,
+        ..page
+    };
+    r.set_page(away).unwrap();
+    show(&mut r);
+    let back = crate::Page {
+        restores: 1,
+        ..page
+    };
+    r.set_page(back).unwrap();
+    r.advance(10.0).unwrap();
+    r.dispatch(deck, Event::Load).unwrap();
+    let sent = r.take_requests();
+    sent.iter().map(|s| s.request.reach.origin).collect()
+}
+
+/// The page's cause is set only by the host's word: a showing it cannot
+/// explain is no one's, a window a device's `focus()` brought forward is the
+/// device's, and a background action, which may not bring it forward, does
+/// not make it the app's.
+#[test]
+fn a_page_shown_without_the_persons_act_is_not_the_apps() {
+    use CallOrigin::{App, Device};
+    assert_eq!(shown_again(|_| {}), [Device, Device], "unexplained");
+    let device = shown_again(|r| {
+        r.act_from(Device, "bring", vec![]).unwrap();
+    });
+    assert_eq!(device, [Device, Device], "a device's focus()");
+    let action = shown_again(|r| {
+        r.act_from(CallOrigin::Action, "bring", vec![]).unwrap();
+        let refused = r.journal().any(|l| l.contains("focus: refused"));
+        assert!(refused, "{:?}", r.journal().collect::<Vec<_>>());
+    });
+    assert_eq!(action, [Device, Device], "a background action's focus()");
+    let app = shown_again(|r| {
+        r.act_from(App, "bring", vec![]).unwrap();
+    });
+    assert_eq!(app, [App, App], "the app's own focus()");
+    assert_eq!(shown_again(Runner::person_shows_page), [App, App]);
+    // A host that does not tell keeps the stopgap: a page that shows is the app's.
+    assert_eq!(shown_again_on(false, |_| {}), [App, App], "untold");
+}
+
+/// The person's input in a window something else showed makes the page
+/// theirs; the device's `focus()` while it shows makes it the device's.
+#[test]
+fn the_persons_input_and_a_later_request_retake_the_page() {
+    let (mut r, deck) = boot_told(SHOWN, "deck");
+    r.take_requests();
+    let origin = |r: &mut Runner<Later>| {
+        r.dispatch(deck, Event::Load).unwrap();
+        r.take_requests()[0].request.reach.origin
+    };
+    assert_eq!(origin(&mut r), CallOrigin::App, "the launch's");
+    r.act_from(CallOrigin::Device, "bring", vec![]).unwrap();
+    r.take_requests();
+    assert_eq!(origin(&mut r), CallOrigin::Device);
+    // A press the frame has no handler for still says the person is there.
+    let _ = r.dispatch(deck, Event::Press);
+    assert_eq!(origin(&mut r), CallOrigin::App);
+}
+
+/// A launch made to run a call boots under the call's cause, as does the
+/// page it shows: what the boot asks and observes is not the app's.
+#[test]
+fn a_calls_cold_launch_boots_as_the_call() {
+    for (by, expected) in [
+        (crate::LaunchedBy::Call { press: false }, CallOrigin::Tool),
+        (crate::LaunchedBy::Call { press: true }, CallOrigin::Action),
+        (crate::LaunchedBy::Person, CallOrigin::App),
+    ] {
+        let launch = crate::time::Launch {
+            by,
+            tells_showing: true,
+            ..crate::time::Launch::NONE
+        };
+        let (mut r, deck) = crate::time::launching_with(launch, || boot_with(SHOWN, "deck"));
+        r.advance(1.0).unwrap();
+        r.dispatch(deck, Event::Load).unwrap();
+        let sent = r.take_requests();
+        assert_eq!(sent.len(), 2, "{by:?}");
+        for s in sent {
+            assert_eq!(s.request.reach.origin, expected, "{by:?}");
+        }
+    }
+}
+
+/// A call that booted the session whose page shows (an App Intent's cold
+/// launch on macOS, which the host cannot tell from the person's) takes the
+/// page until the person acts in it; a call to a running app does not.
+#[test]
+fn a_cold_calls_page_is_the_calls_until_the_person_acts() {
+    let load = |r: &mut Runner<Later>, deck| {
+        r.dispatch(deck, Event::Load).unwrap();
+        r.take_requests().last().unwrap().request.reach.origin
+    };
+    for (cold, expected) in [(true, CallOrigin::Tool), (false, CallOrigin::App)] {
+        let (mut r, deck) = boot_told(FRAME, "deck");
+        let how = crate::runner::calls::CallHow {
+            door: "agent".into(),
+            cold,
+            ..Default::default()
+        };
+        r.call_tool("ping", "{}", how).unwrap();
+        r.advance(1.0).unwrap();
+        r.take_requests();
+        assert_eq!(load(&mut r, deck), expected, "cold {cold}");
+        let _ = r.dispatch(deck, Event::Press);
+        assert_eq!(
+            load(&mut r, deck),
+            CallOrigin::App,
+            "cold {cold}, then a press"
+        );
+    }
 }

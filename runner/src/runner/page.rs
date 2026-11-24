@@ -18,9 +18,15 @@ impl<D: DataSource> Runner<D> {
     /// windows, and asks nothing of a reader of `onLine` alone (#114). Size
     /// readers are not asked.
     ///
-    /// A page that shows is the person's ([`Runner::as_shown`]): a launch
-    /// or a switch back reaches a desktop app only so (expo/exact#1424).
+    /// A page that shows reports under the page's cause
+    /// ([`Runner::as_shown`]): the person's after a launch or
+    /// [`Runner::person_shows_page`], so a later launch or a switch back
+    /// reaches a desktop app as a launch does (expo/exact#1424). A hidden
+    /// page is no one's until the host says who shows it.
     pub fn set_page(&mut self, page: Page) -> Result<Option<CommitReceipt>, RunnerError> {
+        if page.hidden {
+            self.page_hidden();
+        }
         self.as_shown(!page.hidden, |r| r.set_page_as(page))
     }
 
@@ -81,22 +87,7 @@ impl<D: DataSource> Runner<D> {
             seen: true,
             ..self.presented
         };
-        self.as_person(|r| r.set_presented(presented))
-    }
-
-    /// Run `f`, a host's report of what the person sees, as the app's while
-    /// the page shows (LLP 1133.023 D7a), until each report takes the cause
-    /// of the commit that made what it observes; else under the cause
-    /// installed, so a wake's hidden boot is not the person's.
-    pub(in crate::runner) fn as_shown<T>(
-        &mut self,
-        shown: bool,
-        f: impl FnOnce(&mut Self) -> T,
-    ) -> T {
-        match shown {
-            true => self.as_person(f),
-            false => f(self),
-        }
+        self.as_shown(!self.page.hidden, |r| r.set_presented(presented))
     }
 
     /// `prefer presented` (LLP 1069.000 D6): `Some` holds the fact at that

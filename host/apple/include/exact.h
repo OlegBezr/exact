@@ -926,8 +926,9 @@ uint32_t exact_plan_digest(ExactRuntime rt);
  * 4 window-controls-overlay, 5 picture-in-picture, 6 tabbed. */
 uint32_t exact_set_preferences(ExactRuntime rt, uint32_t bits);
 /* @ref LLP 1069.000 D2: the page's facts, told after boot and on each change —
- * bit 0 hidden, bit 1 offline, bit 2 a share sheet. */
-uint32_t exact_set_page(ExactRuntime rt, uint32_t bits);
+ * bit 0 hidden, bit 1 offline, bit 2 a share sheet. `person` is 1 when the
+ * person's act shows a hidden page (LLP 1133.023 D7a). */
+uint32_t exact_set_page(ExactRuntime rt, uint32_t bits, uint32_t person);
 /* @ref LLP 1069.000 D6: `prefer presented` — 0 holds exactPage().presented
  * false, 1 true, any other value gives it back to the host. */
 uint32_t exact_prefer_presented(ExactRuntime rt, uint32_t value);
