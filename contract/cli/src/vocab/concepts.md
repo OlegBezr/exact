@@ -1,11 +1,48 @@
 <!--
 `contract vocab <name>` answers each concept below with its whole idiom (LLP 1116.004 D5.1):
 what a builder looked up a recipe or the grammar for, answered in one lookup. A section is
-`## <name>: <what it does>`, then `names: …`, the other names it answers to, then the answer:
+`## <name>: <what it does>`, then `names: …` lines for its aliases, then the answer:
 a sentence or two, the minimal complete code, and the recipe for depth. A name that is also a
 tag, attribute or function prints its entry first, then the concept. Every `contract` block
 compiles (`contract/cli/tests/it/vocab.rs`).
 -->
+
+## viewport-and-container-units: viewport and container lengths
+names: viewport-units, vw, vh, vmin, vmax, svw, svh, lvw, lvh, dvw, dvh
+names: cqw, cqh, cqi, cqb, cqmin, cqmax
+
+Write viewport lengths as quoted CSS strings: `width="100vw"` is the viewport's
+width. `vw` and `vh` are 1% of its width and height; `vmin` and `vmax` are 1% of
+its smaller and larger side. `svw`/`svh`, `lvw`/`lvh` and `dvw`/`dvh` use the
+small, large and dynamic viewports. Browsers resolve `vw`/`vh` against the large
+viewport; native windows have no retractable browser chrome, so those three
+sizes coincide. Lengths update on resize. On iOS, every viewport unit is the
+window's in every sheet, never the sheet's.
+
+Dimension rows (width/height, their min/max, padding/margins, offsets and border
+radii) and scalar rows (`font-size`, `line-height`, `letter-spacing`,
+`text-indent`, gaps, border widths, border spacing and `shape-margin`) take
+them, including in `calc()`, `min()`, `max()` and `clamp()` where the row admits
+those forms. `padding-left="calc(100vw - 100%)"` is the viewport width minus the
+containing block's width. Property-specific subsets still apply: `translate`,
+grid tracks and pixel-only rows such as `perspective` refuse viewport units.
+Unsupported units include `vi`, `vb` and the `s`/`l`/`d` forms of `vmin`/`vmax`.
+
+```contract
+component App
+  view
+    column width="100%" min-height="100dvh" padding-left="calc(100vw - 100%)"
+      text "Viewport lengths"
+```
+
+Dimension rows also accept container units (`cqw`, `cqh`, `cqi`, `cqb`, `cqmin`,
+`cqmax`), alone or in a math function: a share of the nearest content owner's
+content root on each axis its host fixes, else of the small viewport
+(LLP 1123 D16). Scalar rows, custom properties and inset overrides refuse them.
+The web keeps CSS's units, which use the small viewport until a content root
+declares a container there; an SVG attribute using one is left unwritten.
+
+docs/contract-for-agents.md#viewport-and-container-units; CSS Values 4: https://www.w3.org/TR/css-values-4/#viewport-relative-lengths
 
 ## bluetooth: Bluetooth grants for an app's native module
 names: device.bluetooth, device.bluetooth-background

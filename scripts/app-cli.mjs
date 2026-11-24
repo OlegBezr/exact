@@ -414,9 +414,13 @@ async function verbRun({ dir, name, game = false, exact2, args }, reply) {
     for (const line of feedback.nudge(dir, { verb, host, exit, ms: Date.now() - started, args: rest, interrupted })) console.error(line);
   } catch {}
   return exit; };
+  // EXACT2 as well, for an app's scripts that read that name (LLP 1036.001 D3).
+  const childEnv = (env = {}) => ({ ...process.env, HERMES_LEAN_SYS_OFFLINE: '1', EXACT_APP_DIR: dir, EXACT: exact2, EXACT2: exact2, EXACT_LAUNCHER_PID: String(process.pid), ...env });
   // `agent --attach` reads an app already running (LLP 1012.000 D1): the driver takes it as given, before anything here
   // builds, prepares or adds a launch default.
-  if (verb === 'agent' && rest.includes('--attach')) return log(spawnSync(process.execPath, [resolve(exact2, verbs.agent[0]), ...verbs.agent.slice(1), ...rest], { stdio: 'inherit' }).status ?? 1);
+  if (verb === 'agent' && rest.includes('--attach')) return log(spawnSync(process.execPath, [resolve(exact2, verbs.agent[0]), ...verbs.agent.slice(1), ...rest], {
+    stdio: 'inherit', env: childEnv(),
+  }).status ?? 1);
   // A verb that builds the app bundles app.ts with rolldown from this checkout's node_modules (the web's build and
   // every native bake); without it Bun's auto-install spins silently instead of failing. A web drive of a site
   // already built (`--web-dist`, or a `--url` that is not a path: a path is the app's own, built first, as
@@ -498,8 +502,7 @@ async function verbRun({ dir, name, game = false, exact2, args }, reply) {
     const child = spawn(command, args, {
       stdio,
       cwd,
-      // EXACT2 as well, for an app's scripts that read that name (LLP 1036.001 D3)
-      env: { ...process.env, HERMES_LEAN_SYS_OFFLINE: '1', EXACT_APP_DIR: dir, EXACT: exact2, EXACT2: exact2, EXACT_LAUNCHER_PID: String(process.pid), ...env },
+      env: childEnv(env),
     });
     piped(child);
     const pass = (signal) => { interrupted = true; stopped ??= signal; child.kill(signal); }, signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];

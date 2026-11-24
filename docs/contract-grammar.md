@@ -221,6 +221,16 @@ other absolute length, a percentage, a viewport length, `auto`,
 or `clamp()` of these (`clamp(15px, env(safe-area-inset-bottom), 60px)`; LLP
 1001 §2). Anything else is `lower-attr-value`, with the kernel's reason.
 
+Viewport lengths are quoted CSS strings (`width="100vw"`), not Contract numbers.
+The ten supported spellings are `vw`, `vh`, `vmin`, `vmax`, `svw`, `svh`,
+`lvw`, `lvh`, `dvw` and `dvh`. Logical-axis units (`vi`, `vb`, `svi`, `svb`,
+`lvi`, `lvb`, `dvi`, `dvb`) and the `s`/`l`/`d` forms of `vmin`/`vmax` are
+unsupported. See the guide's [viewport and container
+units](contract-for-agents.md#viewport-and-container-units) for which rows
+take them, web/native behaviour and sheets;
+`contract vocab viewport-and-container-units` (or `viewport-units`, `vw`, `cqw`, …)
+answers at the command line.
+
 The layout regions (LLP 1123 D10) are the platform's own spacing, measured from
 the layout viewport, inside the safe area by default: `layout-margins` (UIKit's
 16 or 20 points), `readable-content` (a comfortable reading width), and

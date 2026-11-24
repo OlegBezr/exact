@@ -3089,7 +3089,10 @@ cancellation policy.
 
 A mutation's answer hands over one request at a time, in order.
 To [wait for a click in a frame](recipes/wait-for-a-frame-click.md), arm
-the listener first and send the wait and the click to separate mutation targets.
+the listener, issue the click, then await its saved promise. Putting the wait
+first in the same answer's `Promise.all` holds the click behind it on native
+hosts and on the Wasm web host. For an external click, give the waiting
+evaluation and the click separate mutation targets.
 Sends of the same `parallel` mutation overlap, up to three at a time on the
 six shared workers. They wait for everything before them except the other sends of
 their mutation; later work waits for them. Replies retain the order asked.
