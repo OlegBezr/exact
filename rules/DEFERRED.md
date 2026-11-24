@@ -973,6 +973,9 @@ names no take; `:focus-within` remains out.
   patched in place, and no private heap migrated. It replaces four unnamed matchers
   (`lifted`'s counter names, `CarriedPanels`, `FocusPlace`, the JS checkpoint's index
   path). Charlie's waiver; no take is named.
+- **Plan comparisons between equivalent source spellings (LLP 1116.017).**
+  **Decided (Charlie, 2026-11-24, "recs ok")** The compiler exposes one
+  place-free plan for byte comparisons. Release plans keep their source places.
 - Islands and inline islands.
 - Cross-runtime shared data in production. **Measured exception (Charlie,
   2026-09-18, LLP 1027.003 §9):** all four isolated transfer/storage directions
