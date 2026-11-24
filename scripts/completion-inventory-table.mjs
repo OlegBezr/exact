@@ -414,7 +414,7 @@ export const classifications = [
     ["painted:host/painted/src/holds.rs", "Host::retained_input_eligible"],
     ["painted:host/painted/src/host.rs",
       "Host::agent Host::app_roots Host::carry Host::content_region Host::document_value Host::engine Host::executor Host::executor_with Host::grants Host::kernel Host::log " +
-      "Host::has_scale Host::now Host::preorder Host::presented Host::project_navigation Host::roots Host::router_op Host::runner Host::size_new_symbols " +
+      "Host::now Host::preorder Host::presented Host::project_navigation Host::roots Host::router_op Host::runner Host::size_new_symbols " +
       "Host::take_commands Host::take_surface_updates Host::viewport Host::wants_frames"],
     ["painted:host/painted/src/lower.rs", "Host::layer_tracks Host::lower_eligibility Host::spinner_tracks"],
     ["painted:host/painted/src/media_session.rs", "handled"],
@@ -858,7 +858,7 @@ export const classifications = [
     ["painted:host/painted/src/canvas/jni_frames.rs", "Java_dev_exact_canvas_Native_frameEvent Java_dev_exact_canvas_Native_frameFocused Java_dev_exact_canvas_Native_frameLoaded"],
     ["painted:host/painted/src/canvas/requests.rs", "CanvasHost::frame_event CanvasHost::frame_focused CanvasHost::frame_loaded"],
     ["painted:host/painted/src/presenter/events.rs", "Presenter::reader_frame_event Presenter::reader_frame_loaded"],
-    ["painted:host/painted/src/presenter/window.rs", "Presenter::live_frame Presenter::reader_frame_focused"],
+    ["painted:host/painted/src/presenter/window.rs", "Presenter::live_frame"],
   ]),
   group("storage", ["durable operation"], "committed app store/secret values and write queue", "durable",
     "host/painted/src/store_writer.rs drains already committed writes and reports write warnings; runner/src/store.rs and store/presence.rs revisions version durable store contents, not UI continuations. host/apple/webarm/WebArm.swift exactWebClearSiteData clears the named browser partition and calls its completion context.", [
@@ -921,7 +921,6 @@ export const classifications = [
       "Images::assets Images::diagnostics Images::fit Images::has_refusals Images::new Images::paint_with Images::pending Images::poll Images::renew Images::reset " +
       "Images::resolve Images::retry_due_in Images::stats Images::sync Images::wait"],
     ["painted:host/painted/src/image/assets.rs", "Assets::embedded Assets::path Assets::read Assets::read_asset Assets::root Assets::selected Assets::take_refusal"],
-    ["painted:host/painted/src/host_canvas.rs", "Host::load_canvas_picture"],
     ["painted:host/painted/src/package.rs", "Context::publish_image Notifier::picture_changed Notifier::publish_image"],
     ["painted:host/painted/src/image/published.rs", "PublishedImage::new"],
     ["painted:host/painted/src/image/bitmap.rs", "Bitmap::animation_file Bitmap::bytes Bitmap::crop Bitmap::hardware Bitmap::height Bitmap::natural Bitmap::pixels Bitmap::placed Bitmap::shared Bitmap::width"],
@@ -1137,7 +1136,7 @@ export const classifications = [
     ["runner:runner/src/vm/column.rs", "Iter::next#at:1"],
   ]),
   group("native callbacks", ["one-shot"], "module invocation or numbered native send and its session-bound caller", "UI-owned",
-    "runner/src/runner/provenance.rs next_invocation allocates invocation ids; bound.rs forward_body and letgo.rs number_data_call number native sends so cancellation and held replies identify the call.", [
+    "runner/src/runner/provenance.rs next_invocation allocates invocation ids; bound.rs forward_body and letgo.rs number_data_call_linked number native sends so cancellation and held replies identify the call.", [
     ["runner:runner/src/runner/modules/bound.rs", "Runner::forward_body#requests:1"],
     ["runner:runner/src/runner/provenance.rs", "Runner::next_invocation#last_id:1"],
     ["runner:runner/src/runner/modules/letgo.rs", "Runner::number_data_call_linked#requests:1"],
