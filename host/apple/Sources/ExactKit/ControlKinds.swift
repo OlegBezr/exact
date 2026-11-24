@@ -317,9 +317,7 @@ package struct ButtonFace: Equatable {
 /// no glass. Read once; callers also check the OS (`#available(… 26.0, *)`).
 package enum LinkedDesign {
     package static let liquidGlass: Bool = {
-        // A simulator or test host can load a dylib before the main executable.
-        let headers = (0..<_dyld_image_count()).lazy.compactMap { _dyld_get_image_header($0) }
-        guard let header = headers.first(where: { $0.pointee.filetype == UInt32(MH_EXECUTE) }) else { return false }
+        guard let header = _dyld_get_image_header(0) else { return false }
         var at = UnsafeRawPointer(header).advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<header.pointee.ncmds {
             let command = at.loadUnaligned(as: load_command.self)

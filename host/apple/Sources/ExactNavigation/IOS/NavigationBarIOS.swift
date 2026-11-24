@@ -33,6 +33,13 @@ struct HatchSource: Equatable {
 /// At a transparent route's clear edge, the empty band also leaves touches
 /// to the page; the title, items and scrolled material keep theirs.
 final class RouteNavigationBar: UINavigationBar {
+    #if os(iOS)
+    var appearanceChanged: (() -> Void)?
+    override var standardAppearance: UINavigationBarAppearance { didSet { appearanceChanged?() } }
+    override var compactAppearance: UINavigationBarAppearance? { didSet { appearanceChanged?() } }
+    override var scrollEdgeAppearance: UINavigationBarAppearance? { didSet { appearanceChanged?() } }
+    override var compactScrollEdgeAppearance: UINavigationBarAppearance? { didSet { appearanceChanged?() } }
+    #endif
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard let hit = super.hitTest(point, with: event) else { return nil }
         let onControl = sequence(first: hit, next: { $0 === self ? nil : $0.superview }).contains { $0 is UIControl || $0 is UISearchBar }
@@ -387,7 +394,7 @@ final class BarPress: NSObject {
     weak var host: NavigationHost?
     struct SavedForeground { let value: Any? }
     var activeForeground: SavedForeground?
-    var assignedFont: UIFont?
+    var assignedFonts: [UInt: UIFont] = [:]
     init(_ id: UInt32, _ host: NavigationHost) { self.id = id; self.host = host }
     @objc func press() {
         guard let host, let node = host.presenter.views[id] else { return }
@@ -427,6 +434,7 @@ final class NavigationStack {
     let label: String
     var hatched = false
     var barTint: UIColor?, hatchTintsBar = false
+    var observesHeaderFonts = false
     init(showsBar: Bool, order: Int) { (self.showsBar, self.order, label) = (showsBar, order, "#\(order)") }
 }
 
@@ -596,15 +604,6 @@ extension NavigationHost {
         stack.faceTint.changed = { [weak self, weak nav] in
             if let nav { self?.retintBarFaces(in: nav) }
         }
-        #if os(iOS)
-        nav.navigationBar.registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self]) { [weak self, weak nav, weak stack] (_: UINavigationBar, _: UITraitCollection) in
-            guard let self, let nav, let stack, stacks[ObjectIdentifier(nav)] === stack else { return }
-            let routes = nav.stackRoutes.compactMap { $0 as? RouteController }
-            if routes.contains(where: { $0.titleInk.hasHeaderFamily }), routes.allSatisfy({ self.controllers[$0.node.id] === $0 }) {
-                prepareRoutes(routes, in: nav)
-            }
-        }
-        #endif
         nav.navigationBar.addSubview(stack.faceTint)
         return stack
     }
@@ -703,14 +702,7 @@ extension NavigationHost {
             searchField(shows ? shape?.search : nil, in: c, covered: index < routes.count - 1)
             segmentedTitle(shows ? shape?.segments : nil, in: c)
             richTitle(shows ? shape : nil, in: c)
-            #if os(iOS)
-            let family = shows ? shape.flatMap(HeaderFamily.init) : nil
-            let fonts = shows ? NavigationTitleInk.fonts(of: shape?.heading, level: shape?.level ?? 0, traits: c.traitCollection) : nil
-            #else
-            let family: HeaderFamily? = nil, fonts: NavigationTitleInk.Fonts? = nil
-            #endif
-            c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, fonts: fonts, item: c.navigationItem,
-                              bar: nav?.navigationBar, transparent: transparent, family: family)
+            c.titleInk.update(shows ? shape : nil, route: c, bar: nav?.navigationBar, transparent: transparent)
             guard c.projected != signature || !c.hatched else { continue }
             c.projected = signature
             guard presenter.session?.natives.hatchesConnected == true else { continue }
@@ -1431,24 +1423,8 @@ extension NavigationHost {
             : i.tint.map { tint in UIColor { TextEngine.color(tint[$0.userInterfaceStyle == .dark ? 1 : 0]) } }
         item.tintColor = i.hasPaintedFace ? nil : color ?? i.accent
         // UIKit's font where none is written, also once a kept item's author removes theirs.
-        let base = image == nil ? i.font : nil
-        var font = base
-        #if os(iOS)
-        if let family = i.family, let base, let engine = presenter.views[i.id]?.text {
-            font = engine.headerFont(base, family: family)
-        }
-        #endif
-        if item.titleTextAttributes(for: .normal)?[.font] as? UIFont != font || (previousFamily != nil && press.assignedFont != font) {
-            for state: UIControl.State in [.normal, .highlighted, .disabled, .selected, .focused] {
-                var attributes = item.titleTextAttributes(for: state) ?? [:]
-                if i.family != nil || previousFamily != nil {
-                    guard attributes[.font] as? UIFont == press.assignedFont else { continue }
-                }
-                attributes[.font] = font
-                item.setTitleTextAttributes(attributes.isEmpty ? nil : attributes, for: state)
-            }
-            press.assignedFont = font
-        }
+        press.applyFont(image == nil ? i.font : nil, family: i.family, previousFamily: previousFamily,
+                        to: item, engine: presenter.views[i.id]?.text)
         var highlighted = item.titleTextAttributes(for: .highlighted) ?? [:]
         if let value = i.activeTitleColor, let button = presenter.views[i.id] {
             if press.activeForeground == nil { press.activeForeground = .init(value: highlighted[.foregroundColor]) }

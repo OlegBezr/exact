@@ -332,4 +332,27 @@ struct HeaderShape: Equatable {
     }
 }
 
+
+extension BarPress {
+    func applyFont(_ base: UIFont?, family: Int?, previousFamily: Int?, to item: UIBarButtonItem, engine: TextEngine?) {
+        var font = base
+        #if os(iOS)
+        if let family, let base, let engine { font = engine.headerFont(base, family: family) }
+        #endif
+        let branded = family != nil || previousFamily != nil
+        guard branded || item.titleTextAttributes(for: .normal)?[.font] as? UIFont != font else { return }
+        for state: UIControl.State in [.normal, .highlighted, .disabled, .selected, .focused] {
+            var attributes = item.titleTextAttributes(for: state) ?? [:]
+            let current = attributes[.font] as? UIFont
+            if branded {
+                // UIKit aliases selected to highlighted on iOS. Compare with the last
+                // write to this state before deciding whether its native font is ours.
+                guard current == assignedFonts[state.rawValue], current != font else { continue }
+            }
+            attributes[.font] = font
+            item.setTitleTextAttributes(attributes.isEmpty ? nil : attributes, for: state)
+            assignedFonts[state.rawValue] = font
+        }
+    }
+}
 #endif

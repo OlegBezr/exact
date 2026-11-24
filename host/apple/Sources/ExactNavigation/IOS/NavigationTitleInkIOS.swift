@@ -41,7 +41,20 @@ final class NavigationTitleInk {
     }
     #endif
 
-    private(set) var hasHeaderFamily = false
+    fileprivate private(set) var hasHeaderFamily = false
+
+    func update(_ shape: HeaderShape?, route: RouteController, bar: UINavigationBar?, transparent: Bool) {
+        #if os(iOS)
+        let family = shape?.family == nil ? nil : shape.flatMap(HeaderFamily.init)
+        if family != nil, let nav = bar?.delegate as? UINavigationController { route.host?.observeHeaderTypography(in: nav) }
+        let fonts = Self.fonts(of: shape?.heading, level: shape?.level ?? 0, traits: route.traitCollection)
+        #else
+        let family: HeaderFamily? = nil, fonts: Fonts? = nil
+        #endif
+        update(shape?.heading?.ownUIColor("text_color"), fonts: fonts, item: route.navigationItem,
+               bar: bar, transparent: transparent, family: family)
+    }
+
 
     func update(_ color: UIColor?, fonts: Fonts? = nil, item: UINavigationItem, bar: UINavigationBar?, transparent: Bool,
                 family: HeaderFamily? = nil) {
@@ -87,18 +100,25 @@ final class NavigationTitleInk {
         if let family, let bar {
             for i in next.indices {
                 guard let base = next[i] ?? defaults[i] else { continue }
-                next[i] = family.appearance(over: base, native: saved[i], traits: bar.traitCollection)
+                next[i] = family.appearance(over: base, native: saved[i], heading: fonts, traits: bar.traitCollection)
             }
         }
         #endif
-        if family != nil || wasBranded, next == current { projected = next }
-        else {
+        if family == nil && !wasBranded || next != current {
             item.standardAppearance = next[0]
             item.compactAppearance = next[1]
             item.scrollEdgeAppearance = next[2]
             item.compactScrollEdgeAppearance = next[3]
-            projected = next
+            #if os(iOS)
+            if #available(iOS 26, *), (family != nil || wasBranded), let bar, bar.topItem === item,
+               zip(current, next).contains(where: { old, new in
+                   old?.buttonAppearance != new?.buttonAppearance || old?.doneButtonAppearance != new?.doneButtonAppearance
+               }) {
+                HeaderFamily.refreshItems(in: item)
+            }
+            #endif
         }
+        projected = next
         if !styled, !transparent, family == nil { self.saved = nil }
     }
 }
@@ -128,7 +148,7 @@ struct HeaderFamily {
     private static let stock = Appearance()
 
 
-    func appearance(over base: Appearance, native: Appearance?, traits: UITraitCollection) -> Appearance {
+    func appearance(over base: Appearance, native: Appearance?, heading: NavigationTitleInk.Fonts?, traits: UITraitCollection) -> Appearance {
         let copy = base.copy() as! Appearance
         let inline = UIFont.preferredFont(forTextStyle: .headline, compatibleWith: traits.inlineBarTraits).pointSize
         let large = UIFont.preferredFont(forTextStyle: .largeTitle, compatibleWith: traits).pointSize
@@ -142,22 +162,36 @@ struct HeaderFamily {
             let isLarge = path == \Appearance.largeTitleTextAttributes
             let size = isLarge ? large : inline
             guard var source = base[keyPath: path][.font] as? UIFont ?? stock else { continue }
-            if title, let heading = shape.heading, heading.authoredFontFamily != nil { continue }
-            if title, let heading = shape.heading, !heading.wrote("font_size"), heading.wrote("font_weight") || heading.wrote("font_style") {
-                source = source.withSize(size)
+            if title && shape.heading?.authoredFontFamily != nil { continue }
+            let authored = title ? (isLarge ? heading?.large : heading?.title) : nil
+            if let authored {
+                source = authored
             } else if source == stock {
                 source = source.withSize(size)
                 if traits.legibilityWeight == .bold {
-                    let weight: UIFont.Weight
-                    if title { weight = isLarge ? .black : .heavy }
-                    else if path == \Appearance.doneButtonAppearance.normal.titleTextAttributes { weight = .heavy }
-                    else { weight = LinkedDesign.liquidGlass ? .bold : .semibold }
-                    source = .systemFont(ofSize: size, weight: weight)
+                    let weight = TextEngine.controlWeight(stock ?? source)
+                    let heavier: UIFont.Weight = weight >= 700 ? .black : weight >= 600 ? .heavy : weight >= 500 ? .bold : .semibold
+                    source = .systemFont(ofSize: size, weight: heavier)
                 }
+            } else if let stock, source.familyName != stock.familyName {
+                continue
             }
             copy[keyPath: path][.font] = engine.headerFont(source, family: id)
         }
         return copy
+    }
+
+    /// Liquid Glass retains the old font on an attached item even after its
+    /// navigation item's appearance changes. Reattach the same items to make
+    /// UIKit resolve their inherited titles without writing a font on them.
+    static func refreshItems(in item: UINavigationItem) {
+        for path: ReferenceWritableKeyPath<UINavigationItem, [UIBarButtonItem]?> in [\.leftBarButtonItems, \.rightBarButtonItems] {
+            guard let items = item[keyPath: path], items.contains(where: {
+                $0.customView == nil && $0.image == nil && $0.title?.isEmpty == false && $0.titleTextAttributes(for: .normal)?[.font] == nil
+            }) else { continue }
+            item[keyPath: path] = nil
+            item[keyPath: path] = items
+        }
     }
 
     /// An app can change one field on a copy of the item appearance. Import just
@@ -208,6 +242,24 @@ struct HeaderFamily {
 }
 
 #if os(iOS)
+extension NavigationHost {
+    func observeHeaderTypography(in nav: UINavigationController) {
+        guard let stack = stacks[ObjectIdentifier(nav)], !stack.observesHeaderFonts else { return }
+        stack.observesHeaderFonts = true
+        let refresh = { [weak self, weak nav, weak stack] in
+            guard let self, let nav, let stack, stacks[ObjectIdentifier(nav)] === stack else { return }
+            for case let route as RouteController in nav.stackRoutes where route.titleInk.hasHeaderFamily && controllers[route.node.id] === route {
+                let shape = HeaderShape.bar(of: route.node)
+                route.titleInk.update(shape, route: route, bar: nav.navigationBar, transparent: RouteGeometry.transparentBar(route.node))
+            }
+        }
+        (nav.navigationBar as? RouteNavigationBar)?.appearanceChanged = refresh
+        nav.navigationBar.registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self]) {
+            (_: UINavigationBar, _: UITraitCollection) in refresh()
+        }
+    }
+}
+
 extension TextEngine {
     /// UIKit resolves a text-style descriptor back to its system face even after withFamily.
     /// Carry the resolved weight, width and slant into the requested family instead.
