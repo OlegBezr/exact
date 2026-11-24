@@ -28,7 +28,7 @@
 // is raised by the host (an activation the implementation binds, `isTrusted`
 // only) or emitted (the device's origin), and heard in order, once, each as
 // its own commit (D6).
-import { data, Resources, commit, R, Failed, nextTicket, say, clock, Clocked, After, time, Store, Hosts, navigateRoot, locationOf, inflight, Origin } from "./rt.js";
+import { data, Resources, commit, R, Failed, nextTicket, say, clock, order, drive, Clocked, After, time, Store, Hosts, navigateRoot, locationOf, inflight, Origin } from "./rt.js";
 import { reportTime } from "./navigation.js";
 import { packageViews } from "./views.js";
 import { packagePictures } from "./pictures.js";
@@ -673,6 +673,24 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
   });
   // ---- a send that answers nothing, and its declared substitute (LLP 1133.004 D5, §7)
   const lists = declaredLists({ rows: () => byKey.values() }), setValues = new Map(), effects = [];
+  // One clock entry for the next presentation. Equal deadlines keep posting order.
+  const presentations = [];
+  const presentationTimer = { presentation: true, once: true, i: order(),
+    get due() { return unheard.length ? clock.now : (presentations.at(-1)?.at ?? Infinity) - reportTime(clock.now)[0]; },
+    action() {
+      if (!unheard.length) presentations.pop().present();
+      hearOne();
+      armPresentations();
+      return true;
+    }
+  };
+  function armPresentations() {
+    const registered = clock.timers.indexOf(presentationTimer);
+    if (presentations.length || unheard.length) {
+      if (registered < 0) clock.timers.push(presentationTimer);
+    } else if (registered >= 0) clock.timers.splice(registered, 1);
+    if (!clock.agent) drive();
+  }
   const up = updates({ lists, rows: () => byKey.values(), say, now, changed: state => listedChanged(state),
     raise: (row, event, tap, fields) => raise(`${extensionOf(row)}.${event}`, entryArgs(tap, fields), "app") });
   const rc = reach({ say, announce: keys => reask(keys), preferred: key => preferred.get(key) });
@@ -691,16 +709,43 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
       const entries = lists.get(state) ?? [], value = args[sub.list.key] ?? null, ref = nextTicket(), kind = sub.list.kind;
       const same = e => e.fields[sub.list.key] === value && e.fields.kind === kind, replaced = value == null ? null : entries.find(same)?.ref;
       const kept = value == null ? entries : entries.filter(e => !same(e));
-      kept.push({ ref, row, fields });
+      const entry = { ref, row, fields };
+      if (replaced != null) entries.find(e => e.ref === replaced)?.cancelShow?.();
+      kept.push(entry);
       lists.set(state, kept);
       say(`${name}: listed${typeof value === "string" ? ` (${value})` : ""} @${ref}`);
+      const show = sub.list.show;
+      if (show && onWeb(show)) {
+        const instant = now(), future = fields[sub.list.at] > instant;
+        fields.delivered = !future;
+        const emit = () => raise(`${extensionOf(row)}.${show.event}`, keyedArgs(row, show, fields), "device", true);
+        if (!future) { if (shown()) emit(); }
+        else {
+          const pending = { at: fields[sub.list.at], present() {
+            delete entry.cancelShow;
+            fields.delivered = true;
+            if (shown()) emit();
+          } };
+          const index = presentations.findIndex(other => other.at <= pending.at);
+          presentations.splice(index < 0 ? presentations.length : index, 0, pending);
+          entry.cancelShow = () => { presentations.splice(presentations.indexOf(pending), 1); armPresentations(); };
+          armPresentations();
+        }
+      }
       if (kind) wk.registered(ref, replaced);
       listedChanged(state);
     }
     // `"unlist": key`, or `{key, kind}` for the entries of one kind.
     const unlist = typeof sub.unlist === "object" ? sub.unlist?.key : sub.unlist, unkind = sub.unlist?.kind;
     if (unlist) {
-      for (const state of listOf(row)) { lists.set(state, (lists.get(state) ?? []).filter(e => e.fields[unlist] !== args[unlist] || (unkind != null && e.fields.kind !== unkind))); listedChanged(state); }
+      for (const state of listOf(row)) {
+        lists.set(state, (lists.get(state) ?? []).filter(e => {
+          const keep = e.fields[unlist] !== args[unlist] || (unkind != null && e.fields.kind !== unkind);
+          if (!keep) e.cancelShow?.();
+          return keep;
+        }));
+        listedChanged(state);
+      }
       say(`${name}: unlisted`);
     }
     if (sub.update) return up.update(name, sub.update, args, row);
@@ -780,7 +825,7 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
   };
   for (const row of byKey.values()) if (row.send && row.sub.effect) Hosts[row.source] = Object.assign((from, record) => { effect(row, object(record, row.options) ?? {}, from); }, { origin: true });
   if ([...byKey.values()].some(r => r.sub.list?.due?.into)) clock.listedDue = ms => up.due(reportTime(ms)[0] + ms);
-  const delivered = e => { if (e.row.sub.list.due?.into) return e.fields.delivered !== false; const at = e.row.sub.list.at, t = at ? e.fields[at] : null; return t == null || t <= now(); };
+  const delivered = e => { if (e.row.sub.list.show && typeof e.fields.delivered === "boolean") return e.fields.delivered; if (e.row.sub.list.due?.into) return e.fields.delivered !== false; const at = e.row.sub.list.at, t = at ? e.fields[at] : null; return t == null || t <= now(); };
   // A source declared `"listed"` answers from a list: asked again when it changes.
   const watchers = new Map();
   const listedChanged = state => {
@@ -795,22 +840,27 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
   const unheard = [];
   const ar = arrivals({ rows: () => [...byKey.values()], held, preferred, release: (h, json) => { say(`device ${capability(h)} ${h.ticket} retired`); release(h, json); },
     raise: (key, args) => raise(key, args, "device"), say, valueOf });
-  const raise = (key, args, from) => {
+  const raise = (key, args, from, clocked = false) => {
     const declared = events[key];
     if (!declared) return say(`${key}: no handler hears it`);
     const [, raised, bound] = declared;
     if (raised === "wake") return say(`${key}: a wake raises it, at the platform's call`);
-    unheard.push({ key, args: Array.isArray(args) ? args : [], origin: raised === "activation" ? from : "device" });
+    unheard.push({ key, clocked, args: Array.isArray(args) ? args : [], origin: raised === "activation" ? from : "device" });
     // Each event's own bound: past it, its own oldest is dropped.
     while (unheard.filter(q => q.key === key).length > bound) { const old = unheard.splice(unheard.findIndex(q => q.key === key), 1)[0]; say(`${key}: dropped (${typeof old.args[0] === "string" ? old.args[0] : JSON.stringify(old.args[0] ?? null)})`); }
     say(`${key}: raised`);
-    queueMicrotask(hear);
+    if (clocked) armPresentations();
+    else queueMicrotask(hear);
   };
   const hear = () => {
-    while (unheard.length) {
+    while (unheard.length && !unheard[0].clocked) hearOne();
+    if (unheard[0]?.clocked) armPresentations();
+  };
+  const hearOne = () => {
+    if (unheard.length) {
       const { key, args, origin: from } = unheard.shift(), [action, , , types, name] = events[key];
       let values;
-      try { values = types.map((t, i) => value(args[i] ?? null, t, key)); } catch (e) { say(`${key}: refused: ${e.message}`); continue; }
+      try { values = types.map((t, i) => value(args[i] ?? null, t, key)); } catch (e) { say(`${key}: refused: ${e.message}`); return; }
       say(`${key}: heard by ${name}`);
       const before = origin;
       origin = from;
@@ -824,13 +874,16 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
   // is no field's name), or a literal.
   const entryArgs = (tap, entry) => (tap.args ?? []).map(a => typeof a === "string" ? entry[a] ?? null
     : a && typeof a === "object" ? Object.fromEntries(Object.entries(a).map(([k, f]) => [k, typeof f === "string" ? entry[f] ?? null : f])) : a);
+  const keyedArgs = (row, event, entry) => {
+    const key = row.sub.list.key;
+    return entryArgs(event, key && entry[key] == null ? { ...entry, [key]: "" } : entry);
+  };
   const activate = (row, entry, ref) => {
     const tap = row.sub.list.tap ?? {}, location = tap.navigate ? entry[tap.navigate] : null;
     if (typeof location === "string") { navigateRoot(locationOf(location)); return { ref, navigate: location, delivery: "substituted" }; }
     if (!tap.event) return { ref, delivery: "substituted" };
     // In every keyed list, an entry posted without its key is tapped with "" for it (the Notifications API's untagged `tag`).
-    const key = row.sub.list.key;
-    raise(`${extensionOf(row)}.${tap.event}`, entryArgs(tap, key && entry[key] == null ? { ...entry, [key]: "" } : entry), "app");
+    raise(`${extensionOf(row)}.${tap.event}`, keyedArgs(row, tap, entry), "app");
     return { ref, event: tap.event, delivery: "substituted" };
   };
   // The handlers a handle's work may call back (LLP 1133.016 D15 item 1): those its call's `handlers` path lists

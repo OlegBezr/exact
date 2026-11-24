@@ -32,6 +32,7 @@ android {
             "../../../packages/motion/android", "../../../packages/motion/test",
             "../../../packages/local-auth/android", "../../../packages/local-auth/test",
             "../../../packages/passkeys/android", "../../../packages/passkeys/test",
+            "../../../packages/notifications/android", "../../../packages/notifications/test",
             "../../../packages/payments/android", "../../../packages/payments/test",
             "../../../packages/photos/android", "../../../packages/photos/test",
             "../../../packages/push/android", "../../../packages/push/test/android",

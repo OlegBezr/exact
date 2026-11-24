@@ -24,7 +24,7 @@ class FieldsTest {
         private val family = File("../../painted/tests/fonts/Inter-Regular.ttf").canonicalPath + "#0"
 
         /** A statement of one field, id 1, with these font features; with a size, placed in that box. */
-        fun statement(features: String = "", x: Float = 0f, y: Float = 0f, w: Float = 0f, h: Float = 0f, flags: Int = 0, align: Int = 0): IntArray {
+        fun statement(features: String = "", x: Float = 0f, y: Float = 0f, w: Float = 0f, h: Float = 0f, flags: Int = 0, align: Int = 0, revision: Int = 0, caret: Int = 0): IntArray {
             val placed = if (w > 0f) 1 else 0
             val words = mutableListOf(1, 1, 0, placed, 0, x.toBits(), y.toBits(), w.toBits(), h.toBits(), 0, 0, (-1f).toBits(), (-1f).toBits(), 0)
             fun string(s: String) {
@@ -35,10 +35,22 @@ class FieldsTest {
                 }
             }
             string("1111")
-            words.addAll(listOf(flags, 0, 0, 0, -1, align, -16777216, 0, 0, 0, 0, 40f.toBits(), 400, 0, 0, 0, 0, 0))
+            words.addAll(listOf(flags, 0, 0, 0, -1, align, -16777216, 0, 0, 0, 0, 40f.toBits(), 400, 0, 0, revision, caret, caret))
             for (s in listOf("", "", family, "", features)) string(s)
             return words.toIntArray()
         }
+    }
+
+    @Test fun anOlderStatementCannotMoveTheCaretInANewerEdit() {
+        val fields = Fields(RuntimeEnvironment.getApplication())
+        fields.told(statement())
+        val text = (fields.getChildAt(0) as FrameLayout).getChildAt(0) as EditText
+        text.append("x")
+        text.setSelection(5)
+        fields.told(statement(revision = 1, caret = 2))
+        assertEquals("1111x", text.text.toString())
+        assertEquals(5, text.selectionStart)
+        assertEquals(5, text.selectionEnd)
     }
 
     @Test fun fieldsApplyDirectionWithoutReversingPhysicalAlignment() {

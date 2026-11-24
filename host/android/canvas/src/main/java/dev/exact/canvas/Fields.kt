@@ -305,9 +305,13 @@ internal class Fields(context: Context) : FrameLayout(context) {
             if (sized) size(f) else if (shown) f.dirty = true
             position(f)
             // The value answers the field's newest edit, or it is older than what the person has typed since.
-            if (w[i + 12] == f.edits && value != f.text.text.toString()) replace(f, value)
+            val current = w[i + 12] == f.edits
+            if (current && value != f.text.text.toString()) replace(f, value)
             val rev = w[look + 15]
-            if (rev != f.select) { f.select = rev; select(f, w[look + 16], w[look + 17]) }
+            if (rev != f.select) {
+                f.select = rev
+                if (current) select(f, w[look + 16], w[look + 17])
+            }
             if (f.dirty) record(f)
             i = end
         }

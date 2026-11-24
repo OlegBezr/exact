@@ -759,3 +759,34 @@ test('an input-gated read requires the calling source’s grant in a mixed app',
     expect(refused).toEqual({ error: 'NotAllowedError' });
   } finally { await browser.close(); server.stop(true); }
 });
+
+test('the agent clock delivers a show posted by a click at the same instant', async () => {
+  const server = moduleServer();
+  let browser;
+  try {
+    browser = await suiteBrowser();
+    const page = await browser.newPage();
+    await page.goto(server.url.href);
+    const result = await page.evaluate(async () => {
+      const rt = await import('/host/web-js/rt.js');
+      const { modules } = await import('/host/web-js/modules.js');
+      rt.clock.agent = true;
+      const heard = [];
+      const list = { state: 'notifications', key: 'tag', launch: 'notification', tap: { event: 'click' }, show: { event: 'show' } };
+      modules({ post: ['lab.post', true, { list, effect: true }] }, {}, {}, {
+        'lab.click': [() => () => { heard.push('click'); rt.Hosts.post('app', { tag: 'lab' }); }, 'activation', 16, [], 'clicked'],
+        'lab.show': [() => () => heard.push(rt.clock.now), 'emit', 16, [], 'shown'],
+      });
+      exact.extensions.launch({ launch: 'notification', entry: { tag: 'initial' } });
+      await Promise.resolve();
+      // Cross a browser task boundary with the agent clock frozen.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const before = heard.slice();
+      exact.extensions.launch({ launch: 'notification', entry: { tag: 'second' } });
+      await Promise.resolve();
+      rt.advance(0);
+      return { before, after: heard };
+    });
+    expect(result).toEqual({ before: ['click'], after: ['click', 0, 'click', 0] });
+  } finally { await browser?.close(); server.stop(true); }
+});

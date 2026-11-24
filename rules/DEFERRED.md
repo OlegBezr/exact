@@ -1054,6 +1054,8 @@ names no take; `:focus-within` remains out.
   refused: push delivery (a visible push on iOS and iPadOS admitted
   2026-11-11, below), repeating schedules, and actions and replies until
   stage 2's ruling.
+  **Expanded (Charlie, 2026-11-24, "recs ok").** LLP 1133.004 D1 unblocks Pocket Lab’s
+  foreground reminder status with `notificationshow` on the root for a locally presented post.
   **Expanded (Charlie, 2026-11-11, expo/exact#127, after a three-seat panel
   unanimous on direction; LLP 1133.004 §9):** a visible push on iOS and iPadOS.
   Admitted: a package of its own, `@exact/push`, whose `subscribePush()` asks

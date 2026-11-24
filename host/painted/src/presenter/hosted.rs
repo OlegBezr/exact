@@ -593,7 +593,13 @@ impl<D: DataSource> Presenter<D> {
             value,
             self.hosted.composing.contains_key(&id),
         );
-        if let Some(e) = self.edit_field(id, value.to_owned(), selection, now_ms, edit) {
+        if let Some(e) = self.edit_field(
+            id,
+            value.to_owned(),
+            field::EditSelection::Native(selection),
+            now_ms,
+            edit,
+        ) {
             eprintln!("exact: {e}");
         }
     }
@@ -696,9 +702,6 @@ impl<D: DataSource> Presenter<D> {
             .is_some_and(|n| n.props.str(PropId::SemanticTag) == Some("textarea"));
         self.field_key(id, "Enter", now_ms);
         if textarea {
-            // The reader's field takes the new text, and the caret from here:
-            // its own mapping would leave a replaced range's line break selected.
-            self.hosted_commanded(id, self.field_selection(id));
             return;
         }
         if self.focus != Some(id) {
@@ -732,8 +735,7 @@ impl<D: DataSource> Presenter<D> {
         }
     }
 
-    /// A command set field `id`'s selection (`setSelectionRange`,
-    /// `select()`): the reader's field takes it.
+    /// Tell the hosted field where a presenter edit or selection command placed the caret.
     pub(super) fn hosted_commanded(&mut self, id: ViewId, selection: FieldSelection) {
         if let Some(known) = self.hosted.known.get_mut(&id) {
             known.select += 1;
