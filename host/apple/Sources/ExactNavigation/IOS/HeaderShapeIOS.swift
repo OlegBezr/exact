@@ -74,25 +74,11 @@ struct HeaderShape: Equatable {
         /// `testTheUnsaidTitleFontIsUIKits`); regular before it, semibold
         /// under Bold Text. A row its author left unsaid keeps this one's
         /// size or weight; the kernel has stepped the weights it sends.
-        static func titleFont(bold: Bool, size: CGFloat = 17) -> UIFont {
-            if #available(iOS 26.0, *), LinkedDesign.liquidGlass { return .systemFont(ofSize: size, weight: bold ? .bold : .medium) }
-            return .systemFont(ofSize: size, weight: bold ? .semibold : .regular)
+        static func titleFont(bold: Bool) -> UIFont {
+            if #available(iOS 26.0, *), LinkedDesign.liquidGlass { return .systemFont(ofSize: 17, weight: bold ? .bold : .medium) }
+            return .systemFont(ofSize: 17, weight: bold ? .semibold : .regular)
         }
-        #if os(iOS)
-        static func familyFont(_ family: Int, engine: TextEngine, traits: UITraitCollection, prominent: Bool = false, rows: NodeStyle = [:]) -> UIFont {
-            let headline = UIFont.preferredFont(forTextStyle: .headline, compatibleWith: traits.inlineBarTraits)
-            let base: UIFont
-            if #available(iOS 26.0, *), prominent { base = headline }
-            else { base = titleFont(bold: traits.legibilityWeight == .bold, size: headline.pointSize) }
-            return familyFont(family, engine: engine, base: base, rows: rows)
-        }
-        static func familyFont(_ family: Int, engine: TextEngine, base: UIFont, rows: NodeStyle = [:]) -> UIFont {
-            return engine.font(size: rows["font_size"]?.number.map { CGFloat($0) } ?? base.pointSize,
-                               weight: rows["font_weight"]?.number.map(Int.init) ?? TextEngine.controlWeight(base),
-                               family: family, italic: base.fontDescriptor.symbolicTraits.contains(.traitItalic))
-        }
-        #endif
-        init(_ button: NodeView, hosted: Bool = false, family: Int? = nil, barTraits: UITraitCollection? = nil) {
+        init(_ button: NodeView, hosted: Bool = false, family: Int? = nil) {
             self.family = family
             var symbol: String?, text = "", ink: (NodeView, String)?
             func walk(_ node: NodeView) {
@@ -152,12 +138,8 @@ struct HeaderShape: Equatable {
             font = nil
             #else
             let rows = face?.rows.title ?? [:]
-            if let family, let engine = button.text, !hosted, symbol == nil, !hasPaintedFace {
-                font = Self.familyFont(family, engine: engine, traits: barTraits ?? button.traitCollection, prominent: prominent, rows: rows)
-            } else {
-                font = rows["font_size"] != nil || rows["font_weight"] != nil
-                    ? ButtonConfigurationIOS.font(Self.titleFont(bold: button.traitCollection.legibilityWeight == .bold), rows: rows) : nil
-            }
+            font = rows["font_size"] != nil || rows["font_weight"] != nil
+                ? ButtonConfigurationIOS.font(Self.titleFont(bold: button.traitCollection.legibilityWeight == .bold), rows: rows) : nil
             #endif
             // The platform's tint unless the author said otherwise (LLP
             // 1115.000 D2): a `color` written on the symbol, else on the title's
@@ -257,7 +239,7 @@ struct HeaderShape: Equatable {
     /// `back` names the stack's Back control, left to UIKit's back button
     /// when there is one (`backIsUIKits`): the root of a presented stack
     /// has none, so there it is an item like the others.
-    init?(route: NodeView, back: String?, backIsUIKits: Bool = true, projected: Bool = false, barTraits: UITraitCollection? = nil) {
+    init?(route: NodeView, back: String?, backIsUIKits: Bool = true, projected: Bool = false, routeFamily: Bool = false) {
         // What is header-shaped is the kernel's rule, read over this route's views (`HeaderRule`, LLP 1115.001 D11).
         guard let rule = HeaderRule(route: route, back: back, backIsPlatforms: backIsUIKits, projected: projected) else { return nil }
         // Every role the header rule assigns can remain authored. In
@@ -288,7 +270,7 @@ struct HeaderShape: Equatable {
         header = rule.header
         #if os(iOS)
         // Only a route projects its header family onto a navigation bar.
-        let family = barTraits == nil ? nil : rule.header.authoredFontFamily
+        let family = routeFamily ? rule.header.authoredFontFamily : nil
         #else
         let family: Int? = nil
         #endif
@@ -315,7 +297,7 @@ struct HeaderShape: Equatable {
         self.hosted = hosted
         let item = { (node: NodeView) -> Item? in
             if hosted.contains(where: { $0 === node }) { return Item(node, hosted: true) }
-            return rule.hosted.contains(where: { $0 === node }) ? nil : Item(node, family: family, barTraits: barTraits)
+            return rule.hosted.contains(where: { $0 === node }) ? nil : Item(node, family: family)
         }
         leading = rule.leading.filter(projects).compactMap(item)
         trailing = rule.trailing.filter(projects).compactMap(item)
@@ -348,31 +330,52 @@ struct HeaderShape: Equatable {
     }
 }
 
-
 extension BarPress {
-    /// Keep a hatch's state-specific font metrics while branding the item, and restore its fonts on opt-out.
-    func apply(font: UIFont?, to item: UIBarButtonItem, family: Int?, source: NodeView?) {
-        guard font != nil || !installedFonts.isEmpty else { return }
-        for state: UIControl.State in [.normal, .highlighted, .disabled, .focused] {
-            let key = state.rawValue
-            var attributes = item.titleTextAttributes(for: state) ?? [:]
-            let current = attributes[.font] as? UIFont
-            if current != installedFonts[key] { savedFonts[key] = current }
-            var target = font
-            #if os(iOS)
-            if font != nil, let base = savedFonts[key], let family, let engine = source?.text {
-                let rows = source?.face?.rows.title ?? [:]
-                target = HeaderShape.Item.familyFont(family, engine: engine, base: base, rows: rows)
-            }
-            #endif
-            installedFonts[key] = target
-            target = target ?? savedFonts[key]
-            if current != target {
-                attributes[.font] = target
+    func applyItemFont(_ font: UIFont?, to item: UIBarButtonItem) {
+        if item.titleTextAttributes(for: .normal)?[.font] as? UIFont != font {
+            for state: UIControl.State in [.normal, .highlighted, .disabled, .selected, .focused] {
+                var attributes = item.titleTextAttributes(for: state) ?? [:]
+                attributes[.font] = font
                 item.setTitleTextAttributes(attributes.isEmpty ? nil : attributes, for: state)
             }
         }
-        if font == nil { savedFonts.removeAll() }
     }
+
+    #if os(iOS)
+    func applyFamily(_ family: Int?, to item: UIBarButtonItem, font: UIFont?, engine: TextEngine?) {
+        for state: UIControl.State in [.normal, .highlighted, .disabled, .focused] {
+            let key = state.rawValue
+            var attrs = item.titleTextAttributes(for: state) ?? [:]
+            let current = attrs[.font] as? UIFont
+            if let last = installedFonts[key], current != last {
+                // A font the app set after projection owns this state.
+                continue
+            }
+            let original = installedFonts[key] == nil ? current : savedFonts[key]
+            let base = font ?? original
+            let next: UIFont?
+            if let original, original.familyName != UIFont.systemFont(ofSize: original.pointSize).familyName {
+                next = original
+            } else if let family, let base, let engine {
+                next = engine.headerFont(base, family: family)
+            } else { next = base }
+            if next != current {
+                attrs[.font] = next
+                item.setTitleTextAttributes(attrs.isEmpty ? nil : attrs, for: state)
+            }
+            if family != nil, next != original {
+                savedFonts[key] = original
+                installedFonts[key] = next
+            } else {
+                savedFonts[key] = nil
+                installedFonts[key] = nil
+            }
+        }
+        if family == nil {
+            savedFonts.removeAll()
+            installedFonts.removeAll()
+        }
+    }
+    #endif
 }
 #endif

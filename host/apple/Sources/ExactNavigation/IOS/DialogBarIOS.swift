@@ -157,7 +157,7 @@ extension NavigationHost {
             bar.tint = dialog.ownAccent
             nav.navigationBar.tintColor = bar.tint
         }
-        bar.titleInk.update(shape.heading?.ownUIColor("text_color"), fonts: NavigationTitleInk.fonts(of: shape, traits: controller.traitCollection),
+        bar.titleInk.update(shape.heading?.ownUIColor("text_color"), fonts: NavigationTitleInk.fonts(of: shape.heading, level: shape.level, traits: controller.traitCollection),
                             item: item, bar: nav.navigationBar, transparent: false)
         if bar.lifted !== shape.header {
             if let old = bar.lifted { old.isHidden = false; coverDialogHeader(old.id, nil) }

@@ -160,6 +160,7 @@ final class FieldChromeCache: @unchecked Sendable {
 }
 
 extension TextEngine {
+
     // Register the platform descriptor alongside declared families. Its id is
     // picked after the plan catalog, so no Contract stack can collide with it.
     func registerControlFont(_ font: UIFont) -> UInt16 {

@@ -170,7 +170,7 @@ struct HeaderTitle: Equatable {
         testId = group.props["testId"]
         self.heading = heading
         self.family = family
-        font = heading.authoredTitleFont(over: .preferredFont(forTextStyle: .headline, compatibleWith: heading.traitCollection), fallbackFamily: family)
+        font = heading.authoredTitleFont(over: .preferredFont(forTextStyle: .headline, compatibleWith: heading.traitCollection))
         self.avatar = avatar
         self.subtitle = subtitle
         self.placed = placed
@@ -213,8 +213,8 @@ extension HeaderShape {
     /// its header is hidden as authored (`display: none`): a header the web
     /// does not show is no bar's (§9.10), and its route is one with no
     /// header. Both are the shared rule's (`HeaderRule`, `projected`).
-    static func bar(of route: NodeView, back: String? = nil, backIsUIKits: Bool = true, traits: UITraitCollection? = nil) -> HeaderShape? {
-        HeaderShape(route: route, back: back, backIsUIKits: backIsUIKits, projected: true, barTraits: traits ?? route.traitCollection)
+    static func bar(of route: NodeView, back: String? = nil, backIsUIKits: Bool = true) -> HeaderShape? {
+        HeaderShape(route: route, back: back, backIsUIKits: backIsUIKits, projected: true, routeFamily: true)
     }
 
     /// The heading's group as the bar shows it (§9.10). A tablist's
@@ -407,7 +407,12 @@ final class HeaderTitleView: UIControl {
         avatarWidth.constant = group.avatar?.size ?? 0
         avatarHeight.constant = group.avatar?.size ?? 0
         let base = UIFont.preferredFont(forTextStyle: .headline, compatibleWith: traitCollection)
-        title.font = group.heading.authoredTitleFont(over: base, fallbackFamily: group.family) ?? base
+        title.font = group.heading.authoredTitleFont(over: base) ?? base
+        #if os(iOS)
+        if group.heading.authoredFontFamily == nil, let family = group.family, let engine = group.heading.text {
+            title.font = engine.headerFont(title.font, family: family)
+        }
+        #endif
         title.attributedText = group.titleGlyphs.isEmpty ? nil : Self.titleLine(group, text: text, font: title.font, colour: title.textColor)
         if group.titleGlyphs.isEmpty { title.text = text }
         subtitle.attributedText = Self.line(group, font: subtitle.font, colour: subtitle.textColor)

@@ -5,6 +5,38 @@ import UIKit
 @testable import ExactNavigation
 
 extension NavigationBarIOSTests {
+    func testAHeaderWithoutAFamilyLeavesTheAppearancesInPlace() throws {
+        let session = try fixture("stock-header-appearances", module: false, plan: "HEADER_FAMILY")
+        let host = session.presenter.navigationHost
+        let nav = try XCTUnwrap(host.primaryNavigation)
+        let route = try XCTUnwrap(nav.topViewController as? RouteController)
+        let item = route.navigationItem
+        let slots: [ReferenceWritableKeyPath<UINavigationItem, UINavigationBarAppearance?>] = [
+            \.standardAppearance, \.compactAppearance, \.scrollEdgeAppearance, \.compactScrollEdgeAppearance
+        ]
+        XCTAssertTrue(slots.allSatisfy { item[keyPath: $0] == nil })
+        let bar = nav.navigationBar.standardAppearance
+        let before = try XCTUnwrap(bar.copy() as? UINavigationBarAppearance)
+        let appearance = UINavigationBarAppearance()
+        appearance.titleTextAttributes = [.font: UIFont.italicSystemFont(ofSize: 23), .foregroundColor: UIColor.orange]
+        appearance.buttonAppearance.highlighted.titleTextAttributes = [.kern: 2]
+        let action = try XCTUnwrap(item.rightBarButtonItems?.first)
+        for slot in slots { item[keyPath: slot] = appearance }
+        let originals = slots.map { item[keyPath: $0] }
+        host.prepareRoutes([route], in: nav)
+        for (slot, original) in zip(slots, originals) {
+            let current = try XCTUnwrap(item[keyPath: slot])
+            XCTAssertTrue(current === original)
+            XCTAssertEqual(current, appearance)
+            XCTAssertEqual(current.titleTextAttributes as NSDictionary, appearance.titleTextAttributes as NSDictionary)
+            XCTAssertEqual(current.buttonAppearance.highlighted.titleTextAttributes as NSDictionary,
+                           appearance.buttonAppearance.highlighted.titleTextAttributes as NSDictionary)
+        }
+        XCTAssertTrue(nav.navigationBar.standardAppearance === bar)
+        XCTAssertEqual(bar, before)
+        XCTAssertNil(action.titleTextAttributes(for: .normal)?[.font])
+    }
+
     func testHeaderFamilyPreservesTitleAndItemMetricsAcrossRouteUpdates() throws {
         let session = try fixture("header-family-route-updates", module: false, plan: "HEADER_FAMILY")
         let host = session.presenter.navigationHost
@@ -69,6 +101,8 @@ extension NavigationBarIOSTests {
         let barItem = try drawn("Save")
         setFamily(true)
         let changed = try drawn("Save")
+        XCTAssertEqual(changed.familyName, "Georgia")
+        XCTAssertTrue(changed.fontDescriptor.symbolicTraits.contains(.traitBold))
         XCTAssertEqual(changed.pointSize, barItem.pointSize, "the item keeps its appearance's point size")
         let blue = try XCTUnwrap(red.copy() as? UINavigationBarAppearance)
         blue.backgroundColor = .blue

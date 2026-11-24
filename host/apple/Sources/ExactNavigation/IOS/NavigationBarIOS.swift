@@ -705,11 +705,16 @@ extension NavigationHost {
             segmentedTitle(shows ? shape?.segments : nil, in: c)
             richTitle(shows ? shape : nil, in: c)
             #if os(iOS)
-            let fonts = shows ? NavigationTitleInk.fonts(of: shape, traits: nav?.navigationBar.traitCollection ?? c.traitCollection) : nil
+            if shows, let shape, let family = shape.family, let bar = nav?.navigationBar {
+                c.titleInk.updateFamily(family, shape: shape, item: c.navigationItem, bar: bar, transparent: transparent)
+            } else {
+                c.titleInk.removeFamily(from: c.navigationItem, in: nav?.navigationBar)
+                let fonts = shows ? NavigationTitleInk.fonts(of: shape?.heading, level: shape?.level ?? 0, traits: c.traitCollection) : nil
+                c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, fonts: fonts, item: c.navigationItem, bar: nav?.navigationBar, transparent: transparent)
+            }
             #else
-            let fonts: NavigationTitleInk.Fonts? = nil // tvOS's bar title font is not measured: its own stays.
+            c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, item: c.navigationItem, bar: nav?.navigationBar, transparent: transparent)
             #endif
-            c.titleInk.update(shows ? shape?.heading?.ownUIColor("text_color") : nil, fonts: fonts, shape: shape, item: c.navigationItem, bar: nav?.navigationBar, transparent: transparent)
             guard c.projected != signature || !c.hatched else { continue }
             c.projected = signature
             guard presenter.session?.natives.hatchesConnected == true else { continue }
@@ -733,7 +738,7 @@ extension NavigationHost {
     /// The header shape and the bar a route shows in its stack
     private func barShape(of c: RouteController, in nav: UINavigationController?) -> (HeaderShape?, NavigationRules.Bar) {
         guard nav.map(barShows) ?? false else { return (nil, .hidden) }
-        return (HeaderShape.bar(of: c.node, back: container?.props["navigationBack"], backIsUIKits: c.pushed, traits: nav?.navigationBar.traitCollection), bar(of: c.node, pushed: c.pushed))
+        return (HeaderShape.bar(of: c.node, back: container?.props["navigationBack"], backIsUIKits: c.pushed), bar(of: c.node, pushed: c.pushed))
     }
 
     /// An app changed `c`'s top or bottom selection, from a hatch, a menu action or anywhere else,
@@ -1431,7 +1436,16 @@ extension NavigationHost {
         item.tintColor = i.hasPaintedFace ? nil : color ?? i.accent
         // UIKit's font where none is written, also once a kept item's author removes theirs.
         let font = image == nil ? i.font : nil
-        press.apply(font: font, to: item, family: i.family, source: presenter.views[i.id])
+        #if os(iOS)
+        let family = image == nil && !i.hasPaintedFace ? i.family : nil
+        if family != nil || !press.installedFonts.isEmpty {
+            press.applyFamily(family, to: item, font: font, engine: presenter.views[i.id]?.text)
+        } else {
+            press.applyItemFont(font, to: item)
+        }
+        #else
+        press.applyItemFont(font, to: item)
+        #endif
         var highlighted = item.titleTextAttributes(for: .highlighted) ?? [:]
         if let value = i.activeTitleColor, let button = presenter.views[i.id] {
             if press.activeForeground == nil { press.activeForeground = .init(value: highlighted[.foregroundColor]) }
