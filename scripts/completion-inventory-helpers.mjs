@@ -209,7 +209,6 @@ export function helperClassifications(group) {
     ["runner:runner/src/runner/router.rs", "Runner::host_root"],
     ["painted:host/painted/src/flights.rs", "Host::flying Host::start_flights"],
     ["painted:host/painted/src/presenter/arrive.rs", "Presenter::focus_landed"],
-    ["painted:host/painted/src/presenter/reveal.rs", "Presenter::reveal_flights"],
     ["painted:host/painted/src/presenter/stage/authored.rs", "Presenter::entrance Presenter::hold_arriving Presenter::top_of"],
     ["painted:host/painted/src/presenter/stage/zoom.rs", "Presenter::navigation_container Presenter::source_node Presenter::source_rect Presenter::sync_sources"],
   ]),
