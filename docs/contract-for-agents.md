@@ -7452,6 +7452,11 @@ small viewport until a content root declares a container there, and leaves an
 SVG attribute in one unwritten.
 Inherited font sizes and lengths in `em` follow the resolved font on resize.
 
+A route beside a native tab sidebar can be narrower than `100vw`. In a padding
+calculation, `calc(100vw - 100%)` is the window width less the containing block's
+width, not a leading-bar inset: a sheet or a trailing rail can also narrow it.
+Do not infer the side of a bar from the width difference.
+
 ### Length calculations and safe areas
 
 Dimension rows also take `env(safe-area-inset-top|right|bottom|left)` and CSS's
@@ -7509,6 +7514,11 @@ picture under the bar:
   starts under the bar, at its start the hero's background reaches the screen's top
   and its text rests below the bar. `navigationBar="transparent"` does the same and
   also hides the bar's background until the content scrolls under it.
+
+To know the area a box drawn across the whole route covers, measure that box
+with `resize=<action>` (as `resize=fit` below), not the route or
+`exactViewport()`: a route's outer box can span the window while its content
+clears a bar.
 
 A box outside every route clears the status bar with
 `top="var(--exact-safe-area-inset-top)"`.

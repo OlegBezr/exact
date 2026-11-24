@@ -1280,7 +1280,6 @@ impl Em<'_> {
             self.lower(&e, &class, &parts, scope, seen)?;
         }
         self.motion_node(i, &e, scope)?;
-        self.height_owner(i, &e, scope)?;
         if self.reorder_handle(i) {
             self.motion = true;
             let on = self.uses.rt("onReorder");

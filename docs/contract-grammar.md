@@ -1085,6 +1085,28 @@ optional tolerance is in points and defaults to zero. On graphical hosts, `basel
 reads the first rendered text baseline in viewport points. A box without a reported
 text baseline fails the assertion.
 
+`display="none"` keeps a node in the test tree. Assert a hidden pane with
+`expect layout "list-pane" width == 0` and a shown one with a positive width;
+`expect tree missing "list-pane"` asserts that the node was removed.
+
+`size` leads a test's steps, as the launch lines below do. A file that does not
+parse runs no tests; read file-level errors as well as pass/fail totals. Give each initial
+width its own test. To check that a draft survives a width change in one session,
+use `resize` and scope the test to hosts that can perform it:
+
+```contract-test
+test "a draft survives a window resize" on web, macos, linux
+  size 1000x700
+  type "draft" "Eggs"
+  resize 390x844
+  expect text "draft" == "Eggs"
+```
+
+The drivers that perform `resize` are web, macOS and Linux; iOS refuses a
+mid-test `resize`. Changing a session's initial size
+does not test rotation or live iPad window resizing. The Android APK runs at
+the device's size and skips tests with `size`; `--headless` accepts it.
+
 Each test is a session of its own, opened with its
 launch lines: `size 1200x800`, `epoch "2026-09-21T12:00:00Z"`, `time-zone
 "America/New_York"`, `locale "fr-FR"` and `seed 7` are the driver's `--size`,
