@@ -500,6 +500,9 @@ impl<D: DataSource> Host<D> {
                 ) => self.runner.log(format!(
                     "{name} refused: the terminal has no application window"
                 )),
+                ("panel", _) => self
+                    .runner
+                    .log("panel unsupported: the terminal has no application window"),
                 ("preventDefault", _) => self.prevented = true,
                 ("openURL", Some(url)) => {
                     let opened = self.open_url(&url);

@@ -621,7 +621,7 @@ package final class Presenter {
     /// The page's canvas: the first root's background, else the theme's, else
     /// the platform's (LLP 1115 D2).
     func canvasColor() -> NSColor {
-        let ground = ThemeRoles.color("background", in: root) ?? ThemeRoles.color("Canvas", in: root, or: .windowBackgroundColor)
+        let ground = ThemeRoles.color("background", in: root) ?? ThemeRoles.color("Canvas", in: root, or: root.window is RoutePanel ? .clear : .windowBackgroundColor)
         return (root.subviews.first as? NodeView)?.color("background_color", ground) ?? ground
     }
 

@@ -211,6 +211,8 @@ extension NodeView {
         }
         return nil
     }
+    var linkDestination: String? { props["href"] ?? props["panelHref"] }
+
     package var defaultLink: String? {
         guard kind == "button", !handlers.contains("press"), let url = props["href"], !url.isEmpty else { return nil }
         return url

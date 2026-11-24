@@ -505,6 +505,12 @@ impl Lowerer<'_> {
         let expanded = states.as_ref().map_or(expanded, |s| s.attrs.as_slice());
         let mut bindings: Vec<BindingsRow> = Vec::new();
         let mut handlers: Vec<(EventKind, exact_plan::ActionsId, Vec<Code>)> = Vec::new();
+        let panel = expanded.iter().find(|a| a.name == "windowKind");
+        if let Some(kind) = panel {
+            let (action, args) = self.panel_link(tag, kind, expanded, scope, locals)?;
+            bindings.push(prop_row(exact_kernel::PropId::PanelHref, args[0], IMPLIED));
+            handlers.push((EventKind::Press, action, args));
+        }
         let mut surface: Option<exact_plan::SurfacesId> = None;
         for (style, value) in t.fixed_styles {
             bindings.push(style_row(*style, self.fixed(true, value), IMPLIED));
@@ -652,6 +658,9 @@ impl Lowerer<'_> {
         let (custom, refused_custom) = custom_props::merged(expanded, scope, &self.types.shapes);
         self.errors.extend(refused_custom);
         for (index, a) in expanded.iter().enumerate() {
+            if panel.is_some() && matches!(a.name.as_str(), "href" | "target" | "windowKind") {
+                continue;
+            }
             // Its custom properties are bound as one row, after the others
             if exact_kernel::style::safe_area_properties::is_author_name(&a.name) {
                 continue;
