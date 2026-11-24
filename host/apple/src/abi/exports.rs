@@ -929,10 +929,11 @@ macro_rules! host {
             $crate::abi::with_runtime(&EXACT_RUNTIMES, rt, false, |b, _| b.set_display_scale(scale), |n| n)
         }
 
-        /// The page's facts: bit 0 hidden, bit 1 offline, bit 2 a share sheet.
+        /// The page's facts: bit 0 hidden, bit 1 offline, bit 2 a share
+        /// sheet; `person` 1 when the person's act shows it.
         #[no_mangle]
-        pub extern "C" fn exact_set_page(rt: u32, bits: u32) -> u32 {
-            $crate::abi::with_runtime(&EXACT_RUNTIMES, rt, false, |b, _| b.set_page(bits), |n| n)
+        pub extern "C" fn exact_set_page(rt: u32, bits: u32, person: u32) -> u32 {
+            $crate::abi::with_runtime(&EXACT_RUNTIMES, rt, false, |b, _| b.set_page(bits, person != 0), |n| n)
         }
 
         /// `prefer presented` (LLP 1069.000 D6): 0 holds `exactPage().presented`

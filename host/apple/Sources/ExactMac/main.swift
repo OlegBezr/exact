@@ -138,6 +138,7 @@ final class Adapter: ExactSessionDelegate {
         // to be activated, which macOS 14's cooperative activation decides.
         case "focus":
             if agentMode { session.log("focus window") }
+            ExactSession.appAsksToShow()
             windows.first { $0.session === session }?.front()
         // `hideWindow()` (LLP 1133.025 D4): what the person's close does to a
         // window the app keeps, the app still running; refused where it ends.

@@ -147,6 +147,14 @@ pub struct Launch {
     /// `hidden`, `frozen` and `background` are the default's here and told
     /// with `set_page`, which applies them. `None`: the default.
     pub page: Option<PageFacts>,
+    /// Who launched the app, whose cause the boot runs under and the page
+    /// first takes (LLP 1133.023 D7a).
+    pub by: crate::LaunchedBy,
+    /// The host says who shows the page each time it shows
+    /// ([`crate::Runner::person_shows_page`]), so what it reports of a page
+    /// that shows runs under the page's cause. A host that does not keeps
+    /// the stopgap: a page that shows is the app's (LLP 1133.023 D7a).
+    pub tells_showing: bool,
 }
 
 /// [`Launch::page`]: the page facts for the plan a boot runs.
@@ -185,6 +193,8 @@ impl Launch {
         direction: None,
         natural_text: false,
         page: None,
+        by: crate::LaunchedBy::Person,
+        tells_showing: false,
     };
 }
 
@@ -229,6 +239,8 @@ pub fn launching_with<T>(launch: Launch, boot: impl FnOnce() -> T) -> T {
         direction: launch.direction,
         natural_text: launch.natural_text,
         page: launch.page,
+        by: launch.by,
+        tells_showing: launch.tells_showing,
     };
     let _restore = Restore(Some(LAUNCH.with(|l| l.replace(launch))));
     boot()
@@ -290,6 +302,12 @@ pub(crate) fn launch_window_name() -> String {
     LAUNCH
         .with(|l| l.borrow().window_name.clone())
         .unwrap_or_else(|| "main".into())
+}
+
+/// Who launched a boot under [`launching_with`], the person unless told,
+/// and whether its host tells who shows the page.
+pub(crate) fn launched_by() -> (crate::LaunchedBy, bool) {
+    LAUNCH.with(|l| (l.borrow().by, l.borrow().tells_showing))
 }
 
 /// Whether a boot under [`launching_with`] launches its router rooted.

@@ -163,7 +163,7 @@ mod seams;
 pub use audio_seam::{Audio, LinkedAudio, NoAudio};
 pub use list_seam::Lists;
 pub(crate) use processes::held as process_held;
-pub use provenance::CallOrigin;
+pub use provenance::{CallOrigin, LaunchedBy};
 pub use seams::{ModuleLinks, PresenceSecrets, TextAxes, Tools};
 mod wakes;
 pub use wakes::WakeHow;
@@ -980,8 +980,8 @@ impl<D: DataSource> Runner<D> {
             churn: Default::default(),
             activities: activities::Activities::default(),
             extensions: module_seam::ModuleState(seams.modules.state()),
-            // Boot is the app's (LLP 1133.023 D7a), until `booted` below.
-            origins: provenance::Origins::booting(),
+            // Boot is its launch's (LLP 1133.023 D7a), until `booted` below.
+            origins: provenance::Origins::booting(crate::time::launched_by()),
             processes: Default::default(),
             wakes: Default::default(),
             calls: Default::default(),
