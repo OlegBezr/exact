@@ -7363,6 +7363,8 @@ syntax and vocabulary, use the [grammar reference](contract-grammar.md). For a
 new feature, start from the corresponding compiler fixture rather than memory
 of JavaScript, React Native, or the predecessor's Contract language.
 
+## CSS layout and painting
+
 CSS overflow accepts `visible`, `hidden`, `clip`, `scroll`, and `auto`.
 `clip` clips without a scroll container or the zero automatic minimum size of `hidden`. `auto` clips and
 permits scrolling, with indicators shown only when content overflows. A visible
@@ -7423,19 +7425,26 @@ Calculated `fit-content()` limits, other length units (`em` among them), `var()`
 remain unsupported here; `grid-auto-columns` and `grid-auto-rows` are not yet
 Contract attributes. See [CSS Grid's track sizing](https://www.w3.org/TR/css-grid-2/#track-sizes).
 
+### Viewport and container units
+
 Dimension rows (width/height, their min/max, padding/margins, offsets and
 border radii) accept `vw`, `vh`, `vmin`, `vmax`, and `svw/svh/lvw/lvh/dvw/dvh`.
-On native, all viewport variants follow the window; on web, CSS resolves
+On native, all viewport variants follow the window: small, large and dynamic
+viewport sizes coincide and update on resize. On iOS, every viewport unit is the
+window's in every sheet, never the sheet's. On the web, browsers resolve
+`vw`/`vh` against the large viewport and the other variants against CSS's
 small/large/dynamic viewports. Font size, line height, letter spacing, text indent,
 gaps, border widths, border spacing and shape margin accept these units too.
 Dimension rows also accept the container units `cqw`, `cqh`, `cqi`, `cqb`,
 `cqmin` and `cqmax`, alone or in a math function: a share of the nearest
-content owner's content root on each axis its host fixes, else of the small
-viewport (LLP 1123 D16). The scalar rows above, custom properties and inset
-overrides refuse them. The web writes them as CSS's, which resolve against the
+content owner's content root on each axis its host fixes,
+else of the small viewport (LLP 1123 D16). The scalar rows above, custom
+properties and inset overrides refuse them. The web writes them as CSS's, which resolve against the
 small viewport until a content root declares a container there, and leaves an
 SVG attribute in one unwritten.
 Inherited font sizes and lengths in `em` follow the resolved font on resize.
+
+### Length calculations and safe areas
 
 Dimension rows also take `env(safe-area-inset-top|right|bottom|left)` and CSS's
 `calc()`, `min()`, `max()` and `clamp()` over px (and in/cm/mm/q/pt/pc/ch/lh),
@@ -7585,6 +7594,8 @@ refuses `setRangeText`. Field
 Call `preventDefault()` to reject a cancelable edit; composition events
 are noncancelable. See the [form controls](contract-grammar.md#form-controls-radio-inputevent-setselectionrange)
 section for host limits.
+
+### Text layout and typography
 
 Book typography is CSS's on every host. `text-align="justify"` fills all but
 a paragraph's last line. `text-indent` is a length (`text-indent="1.5em"`,
@@ -7788,6 +7799,8 @@ unsupported scope and a supported route where one exists. It is information,
 as `forma-unreachable` is. tvOS reads iOS's entries; a host that draws a style
 differently (`differs`) is said by `vocab` alone.
 
+### SVG blending
+
 For overprint with `mix-blend-mode="multiply"`, put the background and all
 crossing shapes inside one `svg`. iOS and tvOS composite that SVG in Core
 Graphics; Android rasterizes it with tiny-skia before sending the picture to
@@ -7797,6 +7810,8 @@ boxes or a different surface outside that SVG remains unsupported on iOS and
 Android. Canvas 2D's `globalCompositeOperation = "multiply"` also draws on both:
 draw the backdrop and foreground into the same canvas. It does not blend the
 canvas with the page beneath it.
+
+### Field appearance, focus and sizing
 
 A background, border or radius makes it your own box, as in a browser;
 `appearance="none"` says so explicitly. This is decided once after classes
@@ -7889,6 +7904,8 @@ Ctrl+C copies the visible text when the host supplies a clipboard.
 On tvOS, `text` and `all` leave their content unselected. `contain` is refused by
 name: no native host has it. These rows take literals
 or choices of literals, so unsupported runtime values cannot bypass the check.
+
+### Colours and type
 
 **Colours: say a role, not a value.** Leave a colour unsaid where you can (text,
 tint, page and sheet backgrounds, separators and controls are the platform's).
@@ -8338,6 +8355,8 @@ On the Mac, Up/Down and accessibility increment/decrement step the number even w
 `appearance="textfield"`. Apple number fields filter typing and paste while keeping signs,
 fractions, exponents and input-method composition; `inputmode` alone does not filter text.
 
+### Autocomplete and passwords
+
 `autocomplete` on an `input` or `textarea` is HTML's attribute, written as
 HTML writes it (`autocomplete="username"`, `"section-login current-password"`,
 `"shipping postal-code"`). The web sets it as written. iOS and macOS read its
@@ -8370,6 +8389,8 @@ state` compare against the text and print it masked. What the app stores (its da
 module, its store) is the app's own; an `app.test.contract` `type … append` into a
 filled password field is refused.
 
+### Loading regions
+
 `aria-busy=(not ready)` marks a region as loading for assistive technology.
 The launch ledger used by `modules/observe` waits for busy elements before
 recording time to interactive. On Apple and the JavaScript web target, a
@@ -8378,6 +8399,8 @@ An indeterminate `progress` implies `aria-busy`. The settle reply names each
 busy element by test ID or view ID. Use `layout <id>` to find its source line in
 a development build. Use `clock +1` to run a task due a commit later while
 settle is blocked.
+
+### Border and flex shorthands
 
 `border`, `border-top/right/bottom/left` take CSS width/style/color in any order,
 resetting omitted components to medium/none/currentcolor. Widths are px/pt,
