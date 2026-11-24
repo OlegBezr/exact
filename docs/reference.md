@@ -6322,6 +6322,16 @@ A Mac build signed ad hoc leaves out the share extension
 
 ### Clipboard images
 
+A press can start a data-code clipboard read on macOS and the web. With
+the `clipboard.read` grant, `await readText()` returns plain text (up to
+1 MiB of UTF-8), or an empty string when there is none. On a Mac it takes
+the first item with plain text. `await read()`
+returns clipboard items. Inspect `item.types` and call
+`await item.getType("text/plain")` for text or `await item.getType("image/png")`
+for a temporary `app:/tmp/` PNG path. The host sanitizes each image within
+the 64 MiB and 64-million-pixel bounds. File access uses the app's ordinary
+file grants.
+
 Data code writes images with [`@exact/clipboard`](contract-grammar.md#clipboard).
 Windows accepts an `app:/` PNG file, up to 64 MiB and 64,000,000 pixels;
 in-memory PNG bytes and raw pixels are not accepted. It offers sanitized

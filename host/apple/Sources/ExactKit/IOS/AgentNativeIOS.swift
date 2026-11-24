@@ -66,8 +66,104 @@ extension Agent {
     }
 }
 
+#if os(iOS)
+extension UINavigationBar {
+    /// UIKit's default Back has no UIBarButtonItem. In a horizontal bar it is
+    /// the leading control, ahead of every item that supplements it (LLP 1080.000 §13).
+    package func drawnBackControl() -> UIControl? {
+        guard !traitCollection.placesVerticalBar, backItem != nil, let item = topItem, !item.hidesBackButton,
+              item.leftBarButtonItems?.isEmpty != false || item.leftItemsSupplementBackButton else { return nil }
+        let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        let items = (item.leftBarButtonItems ?? []) + (item.rightBarButtonItems ?? [])
+        let custom = items.compactMap(\.customView)
+        let otherFrames = items.filter { !$0.isHidden }.compactMap { $0.frame(in: self) }
+        var back: UIControl?, pending = subviews
+        while let view = pending.popLast() {
+            guard !view.isHidden, view.alpha > 0.01, view.isUserInteractionEnabled, view !== item.titleView,
+                  !custom.contains(view), !(view is UISearchBar || view is UITextField || view is UISegmentedControl) else { continue }
+            guard let control = view as? UIControl else { pending += view.subviews; continue }
+            let box = control.convert(control.bounds, to: self), mid = CGPoint(x: box.midX, y: box.midY)
+            guard bounds.contains(mid), (rtl ? mid.x > bounds.midX : mid.x < bounds.midX),
+                  !otherFrames.contains(where: { $0.contains(mid) }),
+                  hitTest(mid, with: nil)?.isDescendant(of: control) == true else { continue }
+            if back != nil { return nil }
+            back = control
+        }
+        return back
+    }
+}
+#endif
+
 extension Agent {
-    func layout() -> [String: Any] {
+    func drawnBarBoxes() -> [UInt32: BarLayoutBox] {
+        let nav = presenter.navigation
+        var boxes = nav.headerLayout { node in
+            guard case .success(let place)? = barItem(node) else { return nil }
+            let view = place.control ?? place.bar
+            return BarLayoutBox(view, place.bar.convert(place.item, to: view), "UIBarButtonItem")
+        }
+        #if os(iOS)
+        for list in presenter.carrying("role:tablist") {
+            let controller = !ExactEnv.authoredChrome && nav.adopts(tablist: list) ? nav.tabController : nil
+            let rootTabs = controller.flatMap { _ in nav.container.flatMap { NavigationTabs.of($0, presenter) } }
+            let tabs = rootTabs?.tabs ?? list.childNodes.filter { $0.props["accessibilityRole"] == "tab" }
+            let shown = controller?.shownTabBar ?? RouteGeometry.shownBar(presenter.segments.bar(of: list.id))
+            if let shown {
+                boxes[list.id] = BarLayoutBox(shown, nil, shown is UITabBar ? "UITabBar" : "UICollectionView")
+                for (index, tab) in tabs.enumerated() {
+                    if let bar = shown as? UITabBar {
+                        let item = controller != nil ? nav.barItem(ofTab: index) : presenter.segments.barItem(of: tab)?.item
+                        if let item, let control = drawnTabControl(item, in: bar) {
+                            boxes[tab.id] = BarLayoutBox(control, nil, "UITabBarItem")
+                        }
+                    } else if case .success(let control)? = tabItem(tab) {
+                        boxes[tab.id] = BarLayoutBox(control, nil, "UITabBarItem")
+                    }
+                }
+            }
+        }
+        #endif
+        return boxes
+    }
+
+    #if os(iOS)
+    /// Before accessibility loads, the visible title can still identify a tab.
+    /// Glass can draw the same title twice at one place.
+    func drawnTabControl(_ item: UITabBarItem, in bar: UITabBar) -> UIView? {
+        let items = bar.items ?? [], id = item.accessibilityIdentifier, title = item.title
+        if let id, !id.isEmpty, items.filter({ $0.accessibilityIdentifier == id }).count != 1 { return nil }
+        let uniqueTitle = title?.isEmpty == false && items.filter { $0.title == title }.count == 1
+        var named: [UIView] = [], titled: [UIView] = [], pending = bar.subviews
+        while let view = pending.popLast() {
+            guard !view.isHidden, view.alpha > 0.01 else { continue }
+            if let control = view as? UIControl {
+                if let identifier = control.accessibilityIdentifier, !identifier.isEmpty {
+                    if identifier == id { named.append(control) }
+                    continue
+                }
+                if uniqueTitle, control.accessibilityLabel == title { titled.append(control) }
+            }
+            if uniqueTitle, let label = view as? UILabel, label.text == title,
+               let control = sequence(first: view, next: \.superview).prefix(while: { $0 !== bar }).first(where: { $0 is UIControl }) {
+                titled.append(control)
+            }
+            pending += view.subviews
+        }
+        var found: UIView?, frame: CGRect?
+        for control in named.isEmpty ? titled : named {
+            let box = control.convert(control.bounds, to: bar)
+            guard !box.isEmpty, box.intersects(bar.bounds) else { continue }
+            if let frame, frame != box { return nil }
+            found = control
+            frame = box
+        }
+        return found
+    }
+    #endif
+
+    func layout() -> [String: Any] { layout(bars: drawnBarBoxes()) }
+
+    func layout(bars: [UInt32: BarLayoutBox]) -> [String: Any] {
         let vp = presenter.viewport, shown = PresentedScrolls(vp)
         var nodes: [[String: Any]] = []
         for (id, v) in presenter.views.sorted(by: { $0.key < $1.key }) where v.window != nil {
@@ -81,10 +177,12 @@ extension Agent {
             let scope = (v as? NodeView).flatMap { presenter.navigation.barSegment($0) }.map { s in
                 s.control.convert(s.segment, to: vp).offsetBy(dx: -vp.pageOrigin.x, dy: -vp.pageOrigin.y)
             }
-            let shift = nativeAction || scope != nil ? .zero : shown.shift(of: v)
-            let r = (nativeAction ? actionView.map { box($0) } ?? .zero : scope ?? box(v)).offsetBy(dx: shift.x, dy: shift.y)
+            let drawn = bars[id]
+            let shift = nativeAction || scope != nil ? .zero : shown.shift(of: drawn?.view ?? v)
+            let frame = nativeAction ? actionView.map { box($0) } ?? .zero : scope ?? drawn.map { box($0.view, region: $0.region) } ?? box(v)
+            let r = frame.offsetBy(dx: shift.x, dy: shift.y)
             var n: [String: Any] = ["id": Int(id), "x": Agent.r2(r.origin.x), "y": Agent.r2(r.origin.y), "w": Agent.r2(r.width), "h": Agent.r2(r.height)]
-            if !nativeAction, scope == nil {
+            if !nativeAction, scope == nil, drawn == nil {
                 n["radii"] = v.effectiveCornerSizes(in: v.bounds).map { [Double($0.width), Double($0.height)] }
             }
             if nativeAction { n["presentation"] = "native-swipe-action"; n["visible"] = actionView != nil }

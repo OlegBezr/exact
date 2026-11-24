@@ -1105,7 +1105,15 @@ impl<D: DataSource> Runner<D> {
         let mut args = v.get("args").cloned().unwrap_or(json!({}));
         self.clamp_bounds(&row, &mut args);
         self.resolve_of(&row, &mut args);
-        let cause = self.arriving_data_cause();
+        let cause = self.arriving_data_cause().with_input_from(
+            native
+                .mutation_ticket
+                .map(|t| self.ticket_cause(t))
+                .unwrap_or(Cause::none()),
+        );
+        if let Some(refused) = self.scoped_input_refusal(&row, cause, native.grants.as_deref()) {
+            return Some(now(refused));
+        }
         // A send that answers nothing (LLP 1133.004 D5) settles once done,
         // as does one that lists what it answers (`region_list.rs`).
         if self.is_effect(&row) || self.lists_answer(&row) {

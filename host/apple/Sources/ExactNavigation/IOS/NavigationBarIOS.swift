@@ -16,7 +16,7 @@ import ExactKit
 struct BarSource: Equatable {
     let bar: NavigationRules.Bar
     let authored: [UInt32], placed: [UInt32]
-    let header: UInt32?, title: String, level: Int, leading: [String], trailing: [String], group: String, canGoBack: Bool
+    let header: UInt32?, heading: UInt32?, title: String, level: Int, leading: [String], trailing: [String], group: String, canGoBack: Bool
 }
 
 /// The inputs the route hatch last ran with. A change runs it again.
@@ -661,7 +661,7 @@ extension NavigationHost {
             let scroller = contentScroller(of: c), scroll = contentScrollView(of: c)
             let dataset = c.node.props["dataset"]
             func barSource(_ key: (HeaderShape.Item) -> String) -> BarSource {
-                BarSource(bar: bar, authored: shape?.authored.map(\.id) ?? [], placed: shape?.placed.map(\.id) ?? [], header: shape?.header.id, title: shape?.title ?? "", level: shape?.level ?? 0, leading: shape?.leading.map(key) ?? [],
+                BarSource(bar: bar, authored: shape?.authored.map(\.id) ?? [], placed: shape?.placed.map(\.id) ?? [], header: shape?.header.id, heading: shape?.heading?.id, title: shape?.title ?? "", level: shape?.level ?? 0, leading: shape?.leading.map(key) ?? [],
                           trailing: shape?.trailing.map(key) ?? [], group: shape?.group?.source ?? "", canGoBack: canGoBack)
             }
             let source = barSource(\.source)

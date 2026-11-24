@@ -50,6 +50,10 @@ public final class ClipboardModule: ExactPackage {
 
     public func later(_ name: String, _ args: [String: Any], preferred: Any?, reply: @escaping ([String: Any]) -> Void) {
         switch name {
+        #if os(macOS)
+        case "read", "readText":
+            read(textOnly: name == "readText", reply: reply)
+        #endif
         case "write":
             guard let items = args["data"] as? [Any] else { return reply(refused("TypeError", "write takes a list of ClipboardItem")) }
             write(items, reply: reply)
@@ -164,8 +168,114 @@ public final class ClipboardModule: ExactPackage {
     var privateName: String { "exact.agent.clipboard.\(context.hostSession)" }
 
     #if os(macOS)
+    private var board: NSPasteboard {
+        substituting ? NSPasteboard(name: NSPasteboard.Name(privateName)) : .general
+    }
+
+    private static let imageTypes = Set(CGImageSourceCopyTypeIdentifiers() as! [String])
+
+    private func read(textOnly: Bool, reply: @escaping ([String: Any]) -> Void) {
+        let board = self.board
+        do {
+            guard let items = board.pasteboardItems else { throw readFailure(board) }
+            if textOnly {
+                for item in items {
+                    if let text = try plainText(item, board) { return reply(["exact:answer": text]) }
+                }
+                return reply(["exact:answer": ""])
+            }
+            var records: [[String: String]] = []
+            var files: [URL] = []
+            var textBytes = 0, imageBytes = 0
+            do {
+                for item in items {
+                    var record: [String: String] = [:]
+                    if let text = try plainText(item, board) {
+                        textBytes += text.utf8.count
+                        guard textBytes <= Self.mostText else { throw FileRefusal(code: "DataError", message: "text/plain is over 1 MiB") }
+                        record["text/plain"] = text
+                    }
+                    if let type = item.availableType(from: [.png, .tiff]) ?? item.types.first(where: {
+                        Self.imageTypes.contains($0.rawValue) && UTType($0.rawValue)?.conforms(to: .image) == true
+                    }), let format = UTType(type.rawValue) {
+                        guard let data = item.data(forType: type) else {
+                            throw readFailure(board)
+                        }
+                        let (path, url) = try keepPNG(data, type: format, total: &imageBytes)
+                        files.append(url)
+                        record["image/png"] = path
+                    }
+                    if !record.isEmpty { records.append(record) }
+                }
+            } catch {
+                for url in files { try? FileManager.default.removeItem(at: url) }
+                throw error
+            }
+            reply(["exact:answer": records])
+        } catch let why as FileRefusal {
+            reply(["error": why.code, "message": why.message])
+        } catch {
+            reply(["error": "NotReadableError", "message": error.localizedDescription])
+        }
+    }
+
+    private func readFailure(_ board: NSPasteboard) -> FileRefusal {
+        if #available(macOS 15.4, *), [.ask, .alwaysDeny].contains(board.accessBehavior) {
+            return FileRefusal(code: "NotAllowedError", message: "pasteboard access was refused")
+        }
+        return FileRefusal(code: "NotReadableError", message: "could not read clipboard contents")
+    }
+
+    private func plainText(_ item: NSPasteboardItem, _ board: NSPasteboard) throws -> String? {
+        let plain = item.types.filter { UTType($0.rawValue)?.conforms(to: .plainText) == true }
+        if plain.isEmpty { return nil }
+        for type in (plain.contains(.string) ? [.string] : []) + plain.filter({ $0 != .string }) {
+            let text: String?
+            if [UTType.utf16PlainText.identifier, UTType.utf16ExternalPlainText.identifier].contains(type.rawValue) {
+                guard let data = item.data(forType: type) else { continue }
+                guard data.count <= 2 * Self.mostText + 2 else { throw FileRefusal(code: "DataError", message: "text/plain is over 1 MiB") }
+                text = Self.utf16(data, type: type.rawValue)
+            } else {
+                text = item.string(forType: type)
+            }
+            if let text { return try boundedText(text) }
+        }
+        if #available(macOS 15.4, *), [.ask, .alwaysDeny].contains(board.accessBehavior) { throw readFailure(board) }
+        throw FileRefusal(code: "NotFoundError", message: "could not load plain text")
+    }
+
+    // The external UTI defaults to big endian. The native UTI uses the host's byte order without a BOM.
+    private static func utf16(_ data: Data, type: String) -> String? {
+        if type == UTType.utf16ExternalPlainText.identifier || data.starts(with: [0xff, 0xfe]) || data.starts(with: [0xfe, 0xff]) {
+            return String(data: data, encoding: .utf16)
+        }
+        return String(data: data, encoding: UInt16(littleEndian: 1) == 1 ? .utf16LittleEndian : .utf16BigEndian)
+    }
+
+    private func boundedText(_ text: String) throws -> String {
+        guard text.utf8.count <= Self.mostText else { throw FileRefusal(code: "DataError", message: "text/plain is over 1 MiB") }
+        return text
+    }
+
+    private func keepPNG(_ data: Data, type: UTType, total: inout Int) throws -> (String, URL) {
+        let size = FileRefusal(code: "DataError", message: "image/png is over 64 MiB")
+        guard data.count <= Self.mostFile else { throw size }
+        let image: Sanitized
+        switch type == .png ? Self.sanitized(data) : Self.sanitizedRaster(data, type: type) {
+        case .success(let clean): image = clean
+        case .failure(let why): throw FileRefusal(code: "DataError", message: why.description)
+        }
+        total += image.png.count
+        guard total <= Self.mostFile else { throw size }
+        let path = "app:/tmp/clipboard-\(UUID().uuidString).png"
+        guard let url = context.file(path) else { throw FileRefusal(code: "NotReadableError", message: "temporary storage unavailable") }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try image.png.write(to: url, options: .withoutOverwriting)
+        return (path, url)
+    }
+
     private func paste(text: String?, image: Sanitized?) -> (name: String, types: [String])? {
-        let board = substituting ? NSPasteboard(name: NSPasteboard.Name(privateName)) : NSPasteboard.general
+        let board = self.board
         board.clearContents()
         if let image {
             // As a hand-built AppKit app copies an image, then the PNG the web names (D5).
@@ -239,17 +349,30 @@ public final class ClipboardModule: ExactPackage {
         let (hw, hh) = (side(16), side(20)), (pixels, over) = hw.multipliedReportingOverflow(by: hh)
         guard hw <= Int(Int32.max), hh <= Int(Int32.max) else { return .failure(Refusal(description: "not a PNG")) }
         guard !over, pixels <= mostPixels else { return .failure(Refusal(description: "too large: \(hw)×\(hh) is over 64,000,000 pixels")) }
-        guard let source = CGImageSourceCreateWithData(still as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-              CGImageSourceGetType(source) as String? == UTType.png.identifier else {
-            return .failure(Refusal(description: "not a PNG"))
+        return sanitizedRaster(still, type: .png)
+    }
+
+    static func sanitizedRaster(_ data: Data, type: UTType) -> Result<Sanitized, Refusal> {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetType(source) as String? == type.identifier else {
+            return .failure(Refusal(description: type == .png ? "not a PNG" : "could not read clipboard image"))
         }
         let header = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         let w = header?[kCGImagePropertyPixelWidth] as? Int ?? 0, h = header?[kCGImagePropertyPixelHeight] as? Int ?? 0
-        guard w > 0, h > 0 else { return .failure(Refusal(description: "not a PNG")) }
+        guard w > 0, h > 0 else { return .failure(Refusal(description: type == .png ? "not a PNG" : "could not read clipboard image dimensions")) }
         let (decoded, wide) = w.multipliedReportingOverflow(by: h)
         guard !wide, decoded <= mostPixels else { return .failure(Refusal(description: "too large: \(w)×\(h) is over 64,000,000 pixels")) }
-        guard let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
-            return .failure(Refusal(description: "not a PNG: it does not decode"))
+        let image: CGImage?
+        if type != .png, (header?[kCGImagePropertyOrientation] as? Int ?? 1) != 1 {
+            image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(w, h),
+            ] as CFDictionary)
+        } else {
+            image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        }
+        guard let image else {
+            return .failure(Refusal(description: type == .png ? "not a PNG: it does not decode" : "could not decode clipboard image"))
         }
         let out = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else {

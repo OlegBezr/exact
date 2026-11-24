@@ -17,6 +17,8 @@ import UIKit
 final class IframeAutomationTests: XCTestCase {
     private typealias EventFn = @convention(c) (UnsafeMutableRawPointer?, UInt32, UInt32, UnsafePointer<UInt8>?, UInt32) -> Void
     private typealias ReplyFn = @convention(c) (UnsafeMutableRawPointer?, UInt32, UInt32, UInt32, UnsafePointer<UInt8>?, UInt32) -> Void
+    private typealias ConfiguringFn = @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void
+    private typealias SetConfiguringFn = @convention(c) (UnsafeMutableRawPointer?, ConfiguringFn?) -> Void
     private typealias CreateFn = @convention(c) (UInt32, UnsafeMutableRawPointer?, EventFn?, ReplyFn?) -> UnsafeMutableRawPointer?
     private typealias ViewFn = @convention(c) (UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?
     private typealias SetFn = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, UInt32, UInt32) -> Void
@@ -29,7 +31,7 @@ final class IframeAutomationTests: XCTestCase {
     private final class Answer { var value: [String: Any]? }
 
     private struct Arm {
-        let create: CreateFn, view: ViewFn, setSrc: SetFn, configure: PostFn, destroy: DestroyFn, automate: AutomateFn
+        let create: CreateFn, setConfiguring: SetConfiguringFn, view: ViewFn, setSrc: SetFn, configure: PostFn, destroy: DestroyFn, automate: AutomateFn
     }
 
     private func arm() throws -> Arm {
@@ -38,7 +40,7 @@ final class IframeAutomationTests: XCTestCase {
         }
         let library = try XCTUnwrap(dlopen(path, RTLD_NOW | RTLD_LOCAL), String(cString: dlerror()))
         func symbol<T>(_ name: String, _: T.Type) throws -> T { unsafeBitCast(try XCTUnwrap(dlsym(library, name), "missing \(name)"), to: T.self) }
-        return Arm(create: try symbol("exact_web_create", CreateFn.self), view: try symbol("exact_web_platform_view", ViewFn.self),
+        return Arm(create: try symbol("exact_web_create", CreateFn.self), setConfiguring: try symbol("exact_web_set_configuring", SetConfiguringFn.self), view: try symbol("exact_web_platform_view", ViewFn.self),
                    setSrc: try symbol("exact_web_set_src", SetFn.self), configure: try symbol("exact_web_configure", PostFn.self),
                    destroy: try symbol("exact_web_destroy", DestroyFn.self), automate: try symbol("exact_web_automation", AutomateFn.self))
     }
@@ -79,7 +81,8 @@ final class IframeAutomationTests: XCTestCase {
     private func call(_ arm: Arm, _ op: String, _ options: [String: Any] = [:], id: String = "tab", owner: String = owner) -> Answer {
         let answer = Answer()
         var request = options
-        request["op"] = op; request["id"] = id; request["owner"] = owner
+        request["op"] = op; request["owner"] = owner
+        if request["target"] == nil { request["id"] = id }
         let data = try! JSONSerialization.data(withJSONObject: request)
         let context = Unmanaged.passRetained(answer).toOpaque()
         data.withUnsafeBytes { arm.automate($0.bindMemory(to: UInt8.self).baseAddress, UInt32(data.count), context, Self.done) }
@@ -129,13 +132,15 @@ final class IframeAutomationTests: XCTestCase {
         #endif
     }
 
-    private func mount(_ arm: Arm, _ seen: Seen, partition: String? = "memory-automation", path: String = "/input", id: String = "tab") -> (UnsafeMutableRawPointer, WKWebView) {
+    private func mount(_ arm: Arm, _ seen: Seen, partition: String? = "memory-automation", path: String? = "/input", id: String = "tab", configuring: ConfiguringFn? = nil) -> (UnsafeMutableRawPointer, WKWebView) {
         let handle = arm.create(11, Unmanaged.passUnretained(seen).toOpaque(), Self.event, Self.reply)!
+        if let configuring { arm.setConfiguring(handle, configuring) }
         var configuration: [String: Any] = ["element": id, "owner": Self.owner]
         if let partition { configuration["partition"] = partition }
         json(configuration, arm.configure, handle)
         let web = Unmanaged<AnyObject>.fromOpaque(arm.view(handle)!).takeUnretainedValue() as! WKWebView
         show(web)
+        guard let path else { return (handle, web) }
         Array("\(baseURL)\(path)".utf8).withUnsafeBufferPointer { arm.setSrc(handle, $0.baseAddress, UInt32($0.count), 1) }
         if partition != nil { spin { seen.records.contains { $0.event == "navigatesuccess" } } } else { pause(1) }
         pause(0.2)
@@ -191,6 +196,167 @@ final class IframeAutomationTests: XCTestCase {
         XCTAssertEqual(controller(seen), "agent", "userActivation takes the frame")
         XCTAssertEqual(run(arm, "evaluate", ["expression": "1"], owner: "/tmp/another-app")["error"] as? String, "NotFoundError", "another app's frames are not found")
         XCTAssertEqual(run(arm, "evaluate", ["expression": "1"], id: "other")["error"] as? String, "NotFoundError")
+    }
+
+    func testApprovalCanOnlyReachTheDocumentAndWorldThatAsked() throws {
+        let arm = try arm(), seen = Seen()
+        let (handle, web) = mount(arm, seen)
+        defer { arm.destroy(handle) }
+        let request = ["context": "tab", "sandbox": "wallet"]
+        func ask() -> [String: Any] {
+            run(arm, "evaluate", ["target": request, "expression": "'approve?'"])
+        }
+        let first = ask()
+        let old = try XCTUnwrap(first["realm"] as? String)
+        XCTAssertEqual(first["origin"] as? String, baseURL)
+        let page = try XCTUnwrap(run(arm, "evaluate", ["expression": "true"])["realm"] as? String)
+        XCTAssertNotEqual(page, old)
+        XCTAssertEqual(ask()["realm"] as? String, old)
+        let answer = "value => window.decision = value"
+        func decide(_ realm: String, _ value: String) -> [String: Any] {
+            run(arm, "callFunction", ["target": ["realm": realm], "functionDeclaration": answer, "arguments": [value]])
+        }
+        XCTAssertEqual(decide(old, "live")["result"] as? String, "live")
+        XCTAssertEqual(value(arm, "typeof decision") as? String, "undefined")
+        let act = call(arm, "evaluate", ["target": ["realm": old], "userActivation": true, "expression": "prompt('Approve?')"])
+        spin { seen.records.contains { $0.event == "userpromptopened" } }
+        XCTAssertNil(run(arm, "handleUserPrompt", ["accept": true, "userText": "yes"])["error"])
+        XCTAssertEqual(answered(act)["result"] as? String, "yes")
+        XCTAssertEqual(controller(seen), "agent")
+        let held = call(arm, "evaluate", ["target": ["realm": old], "expression": "new Promise(r => { window.waiting = r })"])
+        spin { self.value(arm, "typeof window.waiting", sandbox: "wallet") as? String == "function" }
+        let before = seen.records.count
+        web.reload()
+        spin { seen.records.dropFirst(before).contains { $0.event == "navigatesuccess" } }
+        XCTAssertEqual(answered(held)["error"] as? String, "AbortError")
+        XCTAssertEqual(decide(old, "late")["error"] as? String, "no such frame")
+        XCTAssertEqual(decide(page, "late")["error"] as? String, "no such frame")
+        XCTAssertEqual(value(arm, "typeof decision", sandbox: "wallet") as? String, "undefined")
+        let fresh = ask()
+        XCTAssertNotEqual(fresh["realm"] as? String, old)
+        XCTAssertEqual(fresh["origin"] as? String, baseURL)
+        XCTAssertEqual(run(arm, "callFunction", ["target": request, "functionDeclaration": answer, "arguments": ["frame"]])["result"] as? String, "frame")
+    }
+
+    /// The document can change before the native commit reaches the arm. Keep its host lookup live
+    /// across the reload so only the check in the target world can stop the old call.
+    func testRealmCheckRunsInTheTargetDocument() throws {
+        let arm = try arm(), seen = Seen()
+        let (handle, web) = mount(arm, seen)
+        defer { arm.destroy(handle) }
+        let realm = try XCTUnwrap(run(arm, "evaluate", ["expression": "window.decision = 'old'"])["realm"] as? String)
+        let delegate = web.navigationDelegate
+        web.navigationDelegate = nil
+        defer { web.navigationDelegate = delegate }
+        _ = try XCTUnwrap(web.reload())
+        spin { !web.isLoading }
+        XCTAssertFalse(web.isLoading)
+        let late = run(arm, "evaluate", ["target": ["realm": realm], "userActivation": true, "expression": "window.decision = 'late'"])
+        XCTAssertEqual(late["error"] as? String, "no such frame")
+        XCTAssertNotEqual(controller(seen), "agent")
+        XCTAssertEqual(value(arm, "typeof window.decision") as? String, "undefined")
+        let current = run(arm, "evaluate", ["target": ["context": "tab"], "expression": "window.decision = 'frame'"])
+        XCTAssertEqual(current["result"] as? String, "frame")
+        XCTAssertNotEqual(current["realm"] as? String, realm)
+    }
+
+    nonisolated(unsafe) private static var sharedController: WKUserContentController?
+
+    func testTwoFramesCanShareAContentController() throws {
+        let arm = try arm(), first = Seen(), second = Seen()
+        let shared = WKUserContentController()
+        Self.sharedController = shared
+        defer { Self.sharedController = nil }
+        let hatch: ConfiguringFn = { _, config in
+            Unmanaged<WKWebViewConfiguration>.fromOpaque(config!).takeUnretainedValue().userContentController = IframeAutomationTests.sharedController!
+        }
+        let (a, _) = mount(arm, first, configuring: hatch)
+        defer { arm.destroy(a) }
+        let scripts = shared.userScripts.count
+        let (b, _) = mount(arm, second, id: "other", configuring: hatch)
+        defer { arm.destroy(b) }
+        XCTAssertEqual(shared.userScripts.count, scripts)
+        let expression = "(window.__exactToken = 'guest', __exactToken)"
+        let left = run(arm, "evaluate", ["expression": expression])
+        let right = run(arm, "evaluate", ["expression": expression], id: "other")
+        XCTAssertEqual(left["result"] as? String, "guest")
+        XCTAssertEqual(right["result"] as? String, "guest")
+        XCTAssertNotEqual(try XCTUnwrap(left["realm"] as? String), try XCTUnwrap(right["realm"] as? String))
+    }
+
+    func testTheInitialEmptyDocumentHasItsOwnOpaqueRealm() throws {
+        let arm = try arm(), seen = Seen()
+        let (handle, web) = mount(arm, seen, path: nil)
+        defer { arm.destroy(handle) }
+        let ready = expectation(description: "external view configuration finished")
+        web.evaluateJavaScript("window.origin = 'traced'") { _, _ in ready.fulfill() }
+        wait(for: [ready], timeout: 5)
+        let reply = run(arm, "evaluate", ["expression": "window.origin"])
+        XCTAssertEqual(reply["result"] as? String, "traced")
+        XCTAssertEqual(reply["origin"] as? String, "null")
+        let realm = try XCTUnwrap(reply["realm"] as? String)
+        XCTAssertEqual(run(arm, "evaluate", ["target": ["realm": realm], "expression": "42"])["result"] as? Int, 42)
+    }
+
+    func testAConfigurationHatchCannotChangeTheReportedOrigin() throws {
+        let arm = try arm(), seen = Seen()
+        let (handle, _) = mount(arm, seen, configuring: { _, config in
+            let c = Unmanaged<WKWebViewConfiguration>.fromOpaque(config!).takeUnretainedValue()
+            c.userContentController = WKUserContentController()
+            for world in [WKContentWorld.page, .world(name: "wallet")] {
+                c.userContentController.addUserScript(WKUserScript(source: "window.origin = 'traced'",
+                    injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world))
+            }
+        })
+        defer { arm.destroy(handle) }
+        for name in [nil, "wallet"] as [String?] {
+            var options: [String: Any] = ["expression": "window.origin"]
+            options["sandbox"] = name
+            let reply = run(arm, "evaluate", options)
+            XCTAssertEqual(reply["result"] as? String, "traced")
+            XCTAssertEqual(reply["origin"] as? String, baseURL)
+        }
+    }
+
+    func testOriginAndRealmFollowTheExecutingDocumentAcrossHistory() throws {
+        let arm = try arm(), seen = Seen()
+        let (handle, web) = mount(arm, seen)
+        defer { arm.destroy(handle) }
+        let second = try AutomationPages()
+        let other = "http://127.0.0.1:\(second.port)"
+        let first = run(arm, "evaluate", ["expression": "window.pageMarker = 17"])
+        let original = try XCTUnwrap(first["realm"] as? String)
+        XCTAssertEqual(first["origin"] as? String, baseURL)
+        let delegate = web.navigationDelegate
+        web.navigationDelegate = nil
+        defer { web.navigationDelegate = delegate; withExtendedLifetime(second) {} }
+
+        func checkOrigin(_ origin: String) {
+            for name in [nil, "approval"] as [String?] {
+                var options: [String: Any] = ["expression": "location.origin"]
+                options["sandbox"] = name
+                let response = run(arm, "evaluate", options)
+                XCTAssertEqual(response["result"] as? String, origin)
+                XCTAssertEqual(response["origin"] as? String, origin)
+            }
+        }
+        _ = try XCTUnwrap(web.load(URLRequest(url: URL(string: other + "/other")!)))
+        spin { !web.isLoading }
+        checkOrigin(other)
+        let target = ["target": ["realm": original], "expression": "window.pageMarker"] as [String: Any]
+        XCTAssertEqual(run(arm, "evaluate", target)["error"] as? String, "no such frame")
+        _ = try XCTUnwrap(web.goBack())
+        spin { !web.isLoading }
+        var restored: Any?
+        let read = expectation(description: "WebKit's restored document")
+        web.evaluateJavaScript("window.pageMarker") { value, _ in restored = value; read.fulfill() }
+        wait(for: [read], timeout: 5)
+        let reply = run(arm, "evaluate", target)
+        if restored as? Int == 17 {
+            XCTAssertEqual(reply["result"] as? Int, 17)
+            XCTAssertEqual(reply["origin"] as? String, baseURL)
+        } else { XCTAssertEqual(reply["error"] as? String, "no such frame") }
+        checkOrigin(baseURL)
     }
 
     /// A preload script runs at document start in each new document until

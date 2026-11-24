@@ -410,6 +410,10 @@ header, and a named scroller under an inline title's bar (LLP 1075.003
 §9.10). The Signal Clone's conversation header and photo viewer are the
 consumer. Unblocks them with no module. Take: none offered; waived by
 Charlie's approval. No new attribute, no title menu, no bar added by a route.
+**Clarified (James Ide, 2026-11-24, for Exact Chat's contact menu):** "no
+title menu" is UIKit's title pull-down. A pressable title's group keeps the
+`contextPopover` it has on the page when the bar draws it (LLP 1021 §5.1),
+with no new attribute.
 **Clarified (Charlie, 2026-10-12, ruling 11 for #393):** explicit
 `appearance="none"` on a header or root tablist keeps Pocket Budget's authored
 bar; a header button with it remains authored too (LLP 1075.003 §9.10).
@@ -1202,6 +1206,12 @@ reading. Nothing that isn't HTML is added by it.
   a permission broker, author-facing `srcdoc`, a bridge in a partitioned page's
   world, a picture of any element but an `iframe`, cookie import, and LLP
   1020.002 §13's other uses.
+- **Expanded (Charlie, 2026-11-24, "recs ok"; LLP 1020.002 D9):** script
+  results carry the document's realm and host-supplied origin. An evaluation
+  can target that realm. The execution world checks its document token before
+  running the script, so an approval cannot land in a replacement document.
+  The web keeps same-origin frame evaluation and reports realm targeting unsupported.
+  An Android provider without document-start injection keeps plain page-world results.
 - **Expanded (LLP 1096; admitted by the orchestrator under Charlie's
   2026-10-04 delegation, "make decisions without me"):** short sounds an
   action can schedule: a `sound` declaration (a WAV in `assets/`, at most 10
@@ -1859,8 +1869,12 @@ reading. Nothing that isn't HTML is added by it.
   under the agent both write a private pasteboard. Unblocks T3 Code's Copy
   image without app Swift. Take: `QUEUE.md`'s "Chrome conformance steps for
   Paste and Match Style and for a clipboard event with nothing focused"
-  moves to Later. Still out, each until a consumer asks: `read` and
-  `readText` outside a paste, `text/html` and RTF, custom formats, file
+  moves to Later.
+  **Clipboard reads (Charlie, 2026-11-24, "recs ok").** Float and Pocket Lab
+  need reads from a person's action. Charlie admits them on macOS, the web
+  and iOS (LLP 1133.006 D6). HTML writes and the iOS write options await
+  their implementation under the same ruling. Still out: Windows reads, `text/uri-list` until a
+  second consumer asks, RTF, custom formats, file
   promises, several items in one write, a Contract `write`, a
   clipboard-change event, and the Linux and Android cells.
   **Built (maintainers' agent, 2026-11-12, #196;

@@ -32,7 +32,7 @@ import { data, Resources, commit, R, Failed, nextTicket, say, clock, Clocked, Af
 import { reportTime } from "./navigation.js";
 import { packageViews } from "./views.js";
 import { packagePictures } from "./pictures.js";
-import { appGrantSet, coversPath } from "./admission.js";
+import { appGrantSet, coversPath, rawGrantText } from "./admission.js";
 import { samples, groupOf } from "./samples.js";
 import { wakes, REFUSED } from "./wakes.js";
 import { reach } from "./reach.js";
@@ -501,7 +501,7 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
   const instance = extension => {
     if (!bound[extension]) return null;
     if (!loaded.has(extension)) loaded.set(extension, chunk(extension).then(async m => {
-      const context = { changed: key => reask([...byKey.values()].filter(r => r.key.split("#")[0] === key && route(r) !== "substitute").map(r => r.key)), agent: clock.agent, config: m.config ?? {}, now: () => { time(); return clock.now; }, clocked: fn => { Clocked.push(fn); }, foreground: shown, log: say, tracks, files, audioSession,
+      const context = { changed: key => reask([...byKey.values()].filter(r => r.key.split("#")[0] === key && route(r) !== "substitute").map(r => r.key)), agent: clock.agent, ...(clock.agent && extension === "clipboard" && { clipboard: clock.clipboard }), config: m.config ?? {}, now: () => { time(); return clock.now; }, clocked: fn => { Clocked.push(fn); }, foreground: shown, log: say, tracks, files, audioSession,
         after: (ms, body) => hatchClock.after(ms, body),
         // The app's grant lines, and the host's auth session for an implementation (LLP 1133.014 D10 item 3).
         grants: data.grants ?? "", get authSession() { return globalThis.exact?.authSession; },
@@ -929,7 +929,11 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
     return null;
   };
   // Admitted, then what answers: `{now}`, `{hold}`, or `{forward}` (the implementation).
-  const admitted = (row, args, origin, send, timeout) => {
+  const admitted = (row, args, origin, send, timeout, startedByInput = false) => {
+    if (row.sub.origin === "input" && (!startedByInput || origin !== "app" || !shown())) {
+      say(`${row.key}: refused, person-required (${origin} origin)`);
+      return { now: { error: "NotAllowedError", message: "person-required" } };
+    }
     if (row.sub.origin === "person" && origin !== "app") {
       say(`${row.key}: refused, person-required (${origin} origin)`);
       return { now: { error: "PERMISSION_DENIED", message: "person-required" } };
@@ -1108,6 +1112,31 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
     value(filled(row, v), row.type, row.key);
     return v;
   };
+  // A call from data code (ts-data.js `__exact_module`): JSON, as the native runtime answers it.
+  // `kept`: whether the answer that made the call still wants its reply; a registration it no longer does is disposed of (D11).
+  function callData(body, kept, startedByInput, scope) {
+    const row = byKey.get(ownedKey(`${body.extension}.${body.source ?? body.send}`, body.owner));
+    if (!row || row.send !== !!body.send) return Promise.resolve({ error: "NotSupportedError" });
+    const args = sampled.clamp(row, { ...(body.args ?? {}) }, say);
+    sp.resolveOf(row, args);
+    const timeout = row.send ? timeoutOf(row, args) : null, reader = !row.send && sampled.sampled(row) ? `data ${groupOf(args)}` : null;
+    const origin = dataOrigin(body.origin);
+    if (row.sub.effect) return effect(row, args, origin);
+    let d = admitted(row, args, origin, row.send, timeout, startedByInput);
+    if (d.forward && row.sub.origin === "input" && row.sub.nameGrants?.length) {
+      const grants = rawGrantText(scope).split("\n").map(line => line.trim());
+      if (!row.sub.nameGrants.some(name => grants.includes(name))) return Promise.resolve({ error: "NotAllowedError" });
+    }
+    const spanned = sp.admitted(row, args, origin, d);
+    if (spanned) return spanned.then(json => complete(json, row.type));
+    if (reader) d = sampledAnswer(row, d, args, reader);
+    if (d.forward) return viaImplementation(row, args, null, { origin, kept }).then(json => { if (reader) sampled.answered(row, reader, json); return complete(kept() ? json : ceremonies.dropped(row, json), row.type); });
+    if (d.hold) return hold(row, d.hold, row.key, true, timeout, route(row) === "agent" ? sheet => viaImplementation(row, args, null, { origin, sheet }) : null, args, kept);
+    say(`native ${row.key} (${route(row) === "substitute" ? "substituted" : "refused"})`);
+    if (row.sub.ceremony || row.sub.records) ceremonies.record({ row, args }, errorCode(d.now) ?? "recorded");
+    return Promise.resolve(complete(d.now, row.type));
+  }
+  Origin.callData = callData;
   (globalThis.exact ??= {}).extensions = {
     // A polled source's ask in flight: what a jump waits for (agent.js).
     polling: () => [...asking.keys()].some(key => byKey.get(key).sub.poll),
@@ -1185,26 +1214,7 @@ export function modules(rows, bound = {}, views = {}, events = {}) {
       say(`launch --${req.launch}`);
       return activate(row, entry ?? {}, 0);
     },
-    // A call from data code (ts-data.js `__exact_module`): JSON, as the native runtime answers it.
-    // `kept`: whether the answer that made the call still wants its reply; a registration it no longer does is disposed of (D11).
-    call(body, kept = () => true) {
-      const row = byKey.get(ownedKey(`${body.extension}.${body.source ?? body.send}`, body.owner));
-      if (!row || row.send !== !!body.send) return Promise.resolve({ error: "NotSupportedError" });
-      const args = sampled.clamp(row, { ...(body.args ?? {}) }, say);
-      sp.resolveOf(row, args);
-      const timeout = row.send ? timeoutOf(row, args) : null, reader = !row.send && sampled.sampled(row) ? `data ${groupOf(args)}` : null;
-      const origin = dataOrigin(body.origin);
-      if (row.sub.effect) return effect(row, args, origin);
-      let d = admitted(row, args, origin, row.send, timeout);
-      const spanned = sp.admitted(row, args, origin, d);
-      if (spanned) return spanned.then(json => complete(json, row.type));
-      if (reader) d = sampledAnswer(row, d, args, reader);
-      if (d.forward) return viaImplementation(row, args, null, { origin, kept }).then(json => { if (reader) sampled.answered(row, reader, json); return complete(kept() ? json : ceremonies.dropped(row, json), row.type); });
-      if (d.hold) return hold(row, d.hold, row.key, true, timeout, route(row) === "agent" ? sheet => viaImplementation(row, args, null, { origin, sheet }) : null, args, kept);
-      say(`native ${row.key} (${route(row) === "substitute" ? "substituted" : "refused"})`);
-      if (row.sub.ceremony || row.sub.records) ceremonies.record({ row, args }, errorCode(d.now) ?? "recorded");
-      return Promise.resolve(complete(d.now, row.type));
-    },
+    call: (body, kept = () => true) => callData(body, kept, false),
     holds: () => [...held.filter(h => !h.queued).map(h => ({ name: h.name, ticket: h.ticket, device: { capability: capability(h),
       args: h.waits === "permission" ? { capability: h.permission, request: declaredOf(h.row), origin: "app" } : h.waits === "ceremony" ? ceremonies.args(h)
         : h.waits === "check" ? { request: declaredOf(h.row), origin: "app" }

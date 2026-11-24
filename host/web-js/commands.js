@@ -8,7 +8,7 @@
 // (emit.rs, LLP 1047.002 D1), so a command no action names is never linked.
 // The compiler reads this file's `export const` names as it is built.
 import { modalCommand, popoverCommand, appRootFontSize, liveById, declaredScheme, setFieldSelection, setFieldRangeText } from "./navigation.js";
-import { Kept, DEVELOPMENT_STORE, Hosts, KeyEvent, Propagating } from './rt.js';
+import { Kept, DEVELOPMENT_STORE, Hosts, KeyEvent, Propagating, clock } from './rt.js';
 // A launch service can install its handlers before app() links the commands (LLP 1172.011 E1).
 export const observe = say => Hosts.observe ?? (name => say(`observe ${name}`));
 export const observeAttributes = () => Hosts.observeAttributes ?? (() => {});
@@ -52,7 +52,9 @@ export const setScheme = say => {
   };
 };
 // Never the person's clipboard under the agent (LLP 1133.006 §7).
-export const copyText = (_say, agentMode) => t => { if (!agentMode()) navigator.clipboard?.writeText(t); };
+export const copyText = (_say, agentMode) => t => {
+  if (agentMode()) (clock.clipboard ??= {}).item = { "text/plain": t }; else navigator.clipboard?.writeText(t);
+};
 // LLP 1077 D14: vibration where the browser has it.
 export const haptic = () => k => navigator.vibrate?.(k === "selection" ? 5 : 12);
 // The field's own method, by its id (x2apps codeedit #2); commands run

@@ -1,6 +1,7 @@
 // A rendered page's checkpoint and what its reader did before the runtime ran (LLP 1048.000 D6, LLP 1048.001 D5):
 // linked by a page whose plan renders a document (build.mjs), as only such a page carries either.
 import { checkpointFaults } from '../web/faults.js';
+import { clickFromInput } from './navigation.js';
 import { documents } from './mount.js';
 import { say } from './rt.js';
 import { canonical } from './route-pattern.js';
@@ -54,6 +55,20 @@ const value_ = v =>
           : 'n' in v
             ? Number(v.n)
             : null;
+// The queue also carries edits across streamed documents. Only a browser event on this
+// control conveys a press. A copied record, a retargeted click or a boolean carries none.
+const eventTarget = Object.getOwnPropertyDescriptor(Event.prototype, 'target').get;
+const consumedPresses = new WeakSet();
+function capturedPress({ type, event, target }) {
+  if (type !== 'click' || !event?.isTrusted || consumedPresses.has(event)) return false;
+  try {
+    if (eventTarget.call(event)?.closest('[data-exact-on~="press"]') !== target) return false;
+    if (event.type !== 'click' && !(event.type === 'keydown' && (event.key === 'Enter' || event.key === ' '))) return false;
+    consumedPresses.add(event);
+    return true;
+  } catch { return false; }
+}
+
 /** What the reader did before the runtime ran (the capture script) and what each edited control showed then, taken
  * before the boot's commit writes the state's values over them; the returned replay runs once the boot stands. */
 function early(adoptAt) {
@@ -71,7 +86,7 @@ function early(adoptAt) {
       }
     for (const t of taps)
       if (!t.target.isConnected) say(`document: an early ${t.type} was dropped (its element is gone)`);
-      else if (t.type === 'click') t.target.click();
+      else if (t.type === 'click') clickFromInput(t.target, capturedPress(t));
       else t.target.dispatchEvent(new Event(t.type, { bubbles: true }));
   };
 }

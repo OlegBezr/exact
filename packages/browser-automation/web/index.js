@@ -7,7 +7,17 @@
 // NotSupportedError, as is any call to a cross-origin frame.
 const LIMIT = 64 * 1024;
 
-function frameWindow(id) {
+function frameWindow(id, target, sandbox) {
+  if (target != null) {
+    if (typeof target !== 'object' || id != null || sandbox != null ||
+        (target.context == null) === (target.realm == null) || (target.realm != null && target.sandbox != null) ||
+        ['context', 'sandbox', 'realm'].some(key => target[key] != null && typeof target[key] !== 'string')) {
+      return { error: 'invalid argument', message: 'use a context and optional sandbox, or a realm' };
+    }
+    if (target.realm != null) return { error: 'NotSupportedError', message: 'the web cannot target a script realm' };
+    id = target.context;
+  }
+  if (id == null) return { error: 'invalid argument', message: 'a script needs an iframe id or a target' };
   const frames = [...document.querySelectorAll('#exact-root iframe')].filter(e => e.id === id && !e.closest('[data-exiting]'));
   if (frames.length !== 1) return { error: 'NotFoundError', message: `no unique live iframe with id ${id}` };
   try {
@@ -38,16 +48,16 @@ const unsupported = what => async () => ({ error: 'NotSupportedError', message: 
 
 export function implementation() {
   return {
-    async evaluate({ id, expression, sandbox, awaitPromise }) {
-      const { win, ...refused } = frameWindow(id);
+    async evaluate({ id, target, expression, sandbox, awaitPromise }) {
+      const { win, ...refused } = frameWindow(id, target, sandbox);
       if (!win) return refused;
       // An expression, as on Apple: a script of statements goes in `callFunction`'s body.
-      return settle(() => win.eval(`(${String(expression)}\n)`), { sandbox, awaitPromise });
+      return settle(() => win.eval(`(${String(expression)}\n)`), { sandbox: target?.sandbox ?? sandbox, awaitPromise });
     },
-    async callFunction({ id, functionDeclaration, arguments: args = [], sandbox, awaitPromise }) {
-      const { win, ...refused } = frameWindow(id);
+    async callFunction({ id, target, functionDeclaration, arguments: args = [], sandbox, awaitPromise }) {
+      const { win, ...refused } = frameWindow(id, target, sandbox);
       if (!win) return refused;
-      return settle(() => win.eval(`(${functionDeclaration}\n)`)(...(args ?? [])), { sandbox, awaitPromise });
+      return settle(() => win.eval(`(${functionDeclaration}\n)`)(...(args ?? [])), { sandbox: target?.sandbox ?? sandbox, awaitPromise });
     },
     addPreloadScript: unsupported('a preload script'),
     removePreloadScript: unsupported('a preload script'),

@@ -158,7 +158,7 @@ function reply(t, name, source, held, f, next, gone) {
     recommit(() => {
       if (t.r) again(t);
     }, 'a failed request');
-  }));
+  }), t.input);
   return o => {
     if (!deferForReplacement(() => land(o))) return land(o);
   };
@@ -768,7 +768,7 @@ export function mut(name, slot, refreshes, type, mode) {
         if (p.req) {
           const req = { ...p.req, origin: t.req?.origin };
           if (o.more) {
-            const n = { id: ++Ticket, name, owner: m, invocation: t.invocation, askOrigin: t.askOrigin, source: t.source, args: t.args, req, write: t.write, send: t.send };
+            const n = { id: ++Ticket, name, owner: m, invocation: t.invocation, askOrigin: t.askOrigin, input: t.input, source: t.source, args: t.args, req, write: t.write, send: t.send };
             if (m.parallel) m.tickets = [...m.tickets.filter(x => x !== t), n];
             else m.ticket = n;
             send(n, land(n));
@@ -884,6 +884,7 @@ export function mut(name, slot, refreshes, type, mode) {
           owner: m,
           invocation: Invocation.id,
           askOrigin: Origin.now(),
+          input: Origin.input,
           source,
           args,
           req: a.req && { ...a.req, origin: Origin.now() },

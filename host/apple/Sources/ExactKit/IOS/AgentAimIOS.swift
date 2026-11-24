@@ -30,19 +30,20 @@ extension Agent {
     /// control, and that menu's rows have no identifier and can be scrolled
     /// out of view. Any other item is placed only where `ownedControl` finds
     /// its control, in the bar or beside it.
-    func barItem(_ node: NodeView) -> Result<(bar: UIView, item: CGRect), BarItemMissing>? {
-        let place = presenter.navigation.barItem(node)
+    func barItem(_ node: NodeView) -> Result<(bar: UIView, item: CGRect, control: UIView?), BarItemMissing>? {
+        let place = presenter.navigation.barItem(node)?.map { (bar: $0.bar, item: $0.item, control: nil as UIView?) }
         #if os(iOS)
-        guard case .success(let (_, frame))? = place, let (bar, item, navigationItem) = presenter.navigation.barButtonItem(node) else { return place }
+        guard case .success(let (_, frame, _))? = place, let (bar, item, navigationItem) = presenter.navigation.barButtonItem(node) else { return place }
         // A hidden item has no control, in the bar or beside it, whatever frame UIKit reports for it
         if item.isHidden { return .failure(BarItemMissing()) }
         let middle = CGPoint(x: frame.midX, y: frame.midY)
         if navigationItem.overflowPresentationSource?.frame(in: bar)?.contains(middle) == true { return .failure(BarItemMissing(overflowed: true)) }
         // A readout's view is its item's own
-        if let own = item.customView { return own.window != nil ? place : .failure(BarItemMissing()) }
+        if let own = item.customView { return own.window != nil ? .success((bar, frame, own)) : .failure(BarItemMissing()) }
         // Only a hit in the views that draw this bar's items is judged: what covers them is `drawnCovered`'s to name
         guard let hit = bar.window?.hitTest(bar.convert(middle, to: nil), with: nil), Self.itemHolders(of: bar).contains(where: { hit.isDescendant(of: $0) }) else { return place }
-        return ownedControl(item, of: navigationItem, frame: frame, hit: hit, in: bar) != nil ? place : .failure(BarItemMissing())
+        guard let control = ownedControl(item, of: navigationItem, frame: frame, hit: hit, in: bar) else { return .failure(BarItemMissing()) }
+        return .success((bar, frame, control))
         #else
         return place
         #endif
@@ -171,7 +172,7 @@ extension Agent {
             return .success((control, segment, presenter.navigation.barSegment(node) != nil, false))
         }
         switch barItem(node) {
-        case .success(let (bar, frame))?: return .success((bar, frame, true, true))
+        case .success(let place)?: return .success((place.bar, place.item, true, true))
         case .failure(let missing)?: return .failure(AimRefusal(why: missing.overflowed
             ? "its bar item is in the navigation bar's overflow menu (UIKit's More button), which the agent does not open; the bar has no room for it"
             : "its bar item is not placed in the navigation bar; `clock settle` first waits out a push or sheet still moving"))

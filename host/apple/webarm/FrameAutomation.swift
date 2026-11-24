@@ -70,6 +70,52 @@ enum Automations {
     /// A result's JSON, at most this many bytes (the clone's limit).
     static let limit = 64 * 1024
 
+    static let missingRealm = ["error": "no such frame", "message": "the script realm is no longer live"]
+
+    static func run(_ request: [String: Any], finish: @escaping ([String: Any]) -> Void) {
+        var options = request
+        let id: String
+        if let raw = request["target"], !(raw is NSNull) {
+            guard let target = raw as? [String: Any], ["realm", "context", "sandbox"].allSatisfy({
+                target[$0] == nil || target[$0] is NSNull || target[$0] is String
+            }) else { return finish(["error": "invalid argument", "message": "use a string context and optional sandbox, or a string realm"]) }
+            guard (request["id"] == nil || request["id"] is NSNull), (request["sandbox"] == nil || request["sandbox"] is NSNull),
+                  ["evaluate", "callFunction"].contains(request["op"] as? String ?? "") else {
+                return finish(["error": "invalid argument", "message": "use one script target"])
+            }
+            if let realm = target["realm"] as? String {
+                guard target["context"] as? String == nil, target["sandbox"] as? String == nil else {
+                    return finish(["error": "invalid argument", "message": "a realm selects its own context and sandbox"])
+                }
+                let owner = request["owner"] as? String ?? ""
+                for arm in arms.allObjects where !arm.invalidated && !owner.isEmpty && arm.owner == owner {
+                    if arm.pdf == nil, arm.browser != nil, arm.built != nil, let automation = arm.automation, let name = automation.name(of: realm) {
+                        options["sandbox"] = name.isEmpty ? nil : name
+                        return automation.run(options, reply: finish)
+                    }
+                }
+                return finish(missingRealm)
+            }
+            guard let context = target["context"] as? String else {
+                return finish(["error": "invalid argument", "message": "a script target needs context or realm"])
+            }
+            id = context
+            options["sandbox"] = target["sandbox"]
+        } else {
+            guard let context = request["id"] as? String else {
+                return finish(["error": "invalid argument", "message": "a script needs an iframe id or a target"])
+            }
+            id = context
+        }
+        let found = find(owner: request["owner"] as? String ?? "", id: id)
+        guard found.count == 1, let arm = found.first else {
+            return finish(["error": "NotFoundError", "message": "no unique live iframe with id \(id)"])
+        }
+        let automation = arm.automation ?? FrameAutomation(arm: arm)
+        arm.automation = automation
+        automation.run(options, reply: finish)
+    }
+
     static func find(owner: String, id: String) -> [WebArm] {
         arms.allObjects.filter { !$0.invalidated && !owner.isEmpty && $0.owner == owner && $0.element == id }
     }
@@ -80,9 +126,114 @@ final class FrameAutomation {
     /// The frame is the agent's (`controller: "agent"`) until a person's
     /// pointer or key input reaches it.
     private(set) var controlled = false
+    private var actingScripts = Set<Int>()
+
+    private func scriptActed(_ number: Int) {
+        if actingScripts.remove(number) != nil { take() }
+    }
+
+    private func stopWatchingAct(_ number: Int) {
+        actingScripts.remove(number)
+        if actingScripts.isEmpty && !controlled { unwatch() }
+    }
     private var preload: [(id: String, script: WKUserScript)] = []
     private var nextId = 0
+    private struct Realm {
+        let id: String, token: String, origin: String
+    }
+    private static let binding = "_exact" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    private var routes: [String: String] = [:]
+    private var identified: [String: Realm] = [:]
+
+    func name(of id: String) -> String? {
+        guard let separator = id.firstIndex(of: ".") else { return nil }
+        return routes.first { $0.value == id[..<separator] }?.key
+    }
+
+    // Capture the page's origin before any script on its final content controller runs.
+    private var pageSeed: String {
+        """
+        const \(Self.binding) = Object.freeze({ document, origin: this.origin,
+          token: Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('') });
+        """
+    }
+
+    func installPageSeed(_ controller: WKUserContentController) {
+        // WebKit can return a live array. Copy its elements before removing or adding scripts.
+        let source = pageSeed
+        if controller.userScripts.first?.source == source { return }
+        let scripts = controller.userScripts.filter { $0.source != source }
+        controller.removeAllUserScripts()
+        controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        scripts.forEach(controller.addUserScript)
+    }
+
+    // The initial empty document gets no document-start event. Seed it before the view is exposed.
+    func seedInitialDocument(_ web: WKWebView) {
+        web.evaluateJavaScript(pageSeed, in: nil, in: .page, completionHandler: nil)
+    }
+
+    /// The named world's post pairs its token with WebKit's origin in the same frame callback.
+    /// A configuration hatch may already have installed scripts in this world.
+    private final class Source: NSObject, WKScriptMessageHandlerWithReply {
+        weak var view: WKWebView?
+        var identity: (String, String)?
+        init(_ view: WKWebView) { self.view = view }
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
+                                   replyHandler: @escaping (Any?, String?) -> Void) {
+            if identity == nil, message.webView === view, message.frameInfo.isMainFrame,
+               let token = message.body as? String, UUID(uuidString: token) != nil {
+                identity = (token, WebArm.spelled(message.frameInfo.securityOrigin))
+            }
+            replyHandler(true, nil)
+        }
+    }
+
+    private func identify(_ name: String, _ world: WKContentWorld, _ web: WKWebView, _ number: Int, targeted: Bool, then: @escaping (Realm?) -> Void) {
+        if !targeted, let known = identified[name] { return then(known) }
+        let route = routes[name] ?? UUID().uuidString
+        routes[name] = route
+        func realm(_ token: String, _ origin: String) -> Realm {
+            let value = Realm(id: route + "." + token, token: token, origin: origin)
+            identified[name] = value
+            return value
+        }
+        let bound = "typeof \(Self.binding) !== 'undefined' && \(Self.binding).document === document"
+        if name.isEmpty {
+            web.evaluateJavaScript("\(bound) ? [\(Self.binding).token, \(Self.binding).origin] : null", in: nil, in: world) { result in
+                if case .success(let pair as [String]) = result, pair.count == 2 { then(realm(pair[0], pair[1])) }
+                else { then(nil) }
+            }
+            return
+        }
+        let controller = web.configuration.userContentController
+        let source = Source(web), handler = "_origin" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        controller.addScriptMessageHandler(source, contentWorld: world, name: handler)
+        originHandlers[number] = { controller.removeScriptMessageHandler(forName: handler, contentWorld: world) }
+        let token = UUID().uuidString
+        func inspect(_ maySeed: Bool) {
+            guard self.evaluations[number] != nil else { return }
+            let post = "if (!(\(bound))) return false; return await webkit.messageHandlers.\(handler).postMessage(\(Self.binding).token);"
+            web.callAsyncJavaScript(post, arguments: [:], in: nil, in: world) { result in
+                guard self.evaluations[number] != nil else { return }
+                if let (marker, origin) = source.identity {
+                    self.originHandlers.removeValue(forKey: number)?()
+                    then(realm(marker, origin))
+                } else if maySeed, case .success(let found as Bool) = result, !found {
+                    let seed = "const \(Self.binding) = { __proto__: null, document, token: '\(token)' }; true"
+                    web.evaluateJavaScript(seed, in: nil, in: world) { _ in inspect(false) }
+                } else {
+                    self.originHandlers.removeValue(forKey: number)?()
+                    then(nil)
+                }
+            }
+        }
+        inspect(!targeted)
+    }
+
     /// Evaluations in flight in the current document, by number.
+    private var originHandlers: [Int: () -> Void] = [:]
+    private var identifying = Set<Int>()
     private var evaluations: [Int: ([String: Any]) -> Void] = [:]
     /// `captureScreenshot` calls in flight, by number: they end with the
     /// frame, as evaluations do, and outlive a navigation.
@@ -121,7 +272,8 @@ final class FrameAutomation {
     /// was: the input that took the frame is then the dialog's to stop, not
     /// the page's.
     @discardableResult func personTook() -> Bool {
-        guard controlled, let arm else { return false }
+        actingScripts.removeAll()
+        guard controlled, let arm else { unwatch(); return false }
         controlled = false
         unwatch()
         acting?.end(["error": "AbortError", "message": "a person took the frame back"])
@@ -142,8 +294,8 @@ final class FrameAutomation {
     /// The frame unmounted or changed its web view: every call in flight ends.
     func end(_ why: String) {
         let answer: [String: Any] = ["error": "NotFoundError", "message": why]
-        let pending = Array(evaluations.values) + Array(captures.values)
-        evaluations = [:]
+        endEvaluations(answer)
+        let pending = captures.values
         captures = [:]
         pending.forEach { $0(answer) }
         acting?.end(answer)
@@ -160,16 +312,26 @@ final class FrameAutomation {
     /// A new document committed: an evaluation in the old one is aborted, as
     /// BiDi's realm is destroyed; input state is kept.
     func committed() {
-        let pending = evaluations.values
-        evaluations = [:]
-        pending.forEach { $0(["error": "AbortError", "message": "the document navigated away"]) }
+        endEvaluations(["error": "AbortError", "message": "the document navigated away"])
     }
 
     /// The web content process ended: its documents, and their evaluations, with it.
     func terminated() {
-        let pending = evaluations.values
+        endEvaluations(["error": "AbortError", "message": "the web content process ended"])
+    }
+
+    private func endEvaluations(_ answer: [String: Any]) {
+        identified.removeAll()
+        actingScripts.removeAll()
+        if !controlled { unwatch() }
+        let pending = evaluations
+        let checking = identifying
+        let remove = originHandlers.values
+        originHandlers = [:]
+        remove.forEach { $0() }
         evaluations = [:]
-        pending.forEach { $0(["error": "AbortError", "message": "the web content process ended"]) }
+        identifying.removeAll()
+        for (number, reply) in pending { reply(checking.contains(number) ? Automations.missingRealm : answer) }
     }
 
     /// A new web view for the same frame (a partition change): the preload scripts go with it.
@@ -261,9 +423,41 @@ final class FrameAutomation {
 
     /// `evaluate` takes an expression, `callFunction` a function and its
     /// arguments; the value comes back as its JSON, at most 64 KB.
-    private func script(_ op: String, _ request: [String: Any], _ web: WKWebView, _ reply: @escaping ([String: Any]) -> Void) {
+    private func script(_ op: String, _ request: [String: Any], _ web: WKWebView, _ reply: @escaping ([String: Any]) -> Void, retry: Bool = true) {
         guard let world = world(request, reply) else { return }
-        if request["userActivation"] as? Bool == true { take() }
+        let target = (request["target"] as? [String: Any])?["realm"] as? String
+        if target == nil && retry && request["userActivation"] as? Bool == true { take() }
+        nextId += 1
+        let number = nextId
+        if target != nil { identifying.insert(number) }
+        if target != nil && request["userActivation"] as? Bool == true {
+            actingScripts.insert(number)
+            watch(web)
+        }
+        evaluations[number] = { [weak self] answer in
+            self?.identifying.remove(number)
+            self?.stopWatchingAct(number)
+            reply(answer)
+        }
+        identify(request["sandbox"] as? String ?? "", world, web, number, targeted: target != nil) { [weak self, weak web] realm in
+            guard let self, let web, self.evaluations[number] != nil else { return }
+            guard let realm, target == nil || realm.id == target else {
+                let error = target == nil ? ["error": "InvalidStateError", "message": "the document's realm could not be identified"] : Automations.missingRealm
+                self.evaluations.removeValue(forKey: number)?(error)
+                return
+            }
+            if request["userActivation"] as? Bool != true { self.identifying.remove(number) }
+            self.execute(op, request, web, world, realm, number) { [weak self, weak web] in
+                guard let self, let web, let answer = self.evaluations.removeValue(forKey: number) else { return }
+                if target != nil { return answer(Automations.missingRealm) }
+                self.identified.removeValue(forKey: request["sandbox"] as? String ?? "")
+                if retry { self.script(op, request, web, answer, retry: false) }
+                else { answer(["error": "AbortError", "message": "the document navigated away"]) }
+            }
+        }
+    }
+
+    private func execute(_ op: String, _ request: [String: Any], _ web: WKWebView, _ world: WKContentWorld, _ realm: Realm, _ number: Int, stale: @escaping () -> Void) {
         let awaited = request["awaitPromise"] as? Bool ?? true
         let value = op == "evaluate"
             ? "(\n\(request["expression"] as? String ?? "")\n)"
@@ -273,17 +467,48 @@ final class FrameAutomation {
         // its name and message: WebKit's error for one names it only under a
         // key outside its headers. Text, as no object is, is never taken for a
         // thenable, and reading the exception may throw too.
-        let body = "try {\nconst __exactValue = \(value);\nconst __exactText = JSON.stringify(\(settle));\nreturn __exactText === undefined ? 'null' : __exactText;\n} catch (__exactError) {\ntry {\nreturn '!' + String(__exactError?.name ?? 'Error') + '\\n' + String(__exactError?.message ?? __exactError);\n} catch {\nreturn '!Error\\nan exception that cannot be read as text';\n}\n}"
-        nextId += 1
-        let number = nextId
-        evaluations[number] = reply
-        web.callAsyncJavaScript(body, arguments: ["__exactArguments": request["arguments"] as? [Any] ?? []], in: nil, in: world) { [weak self, weak web] result in
+        // Encode the value as a JavaScript string literal so the guard introduces no parameter in the guest's scope.
+        let token = String(decoding: try! JSONEncoder().encode(realm.token), as: UTF8.self)
+        let valid = "typeof \(Self.binding) !== 'undefined' && \(Self.binding).document === document && \(Self.binding).token === \(token)"
+        let body = "try {\nconst __exactValue = \(value);\nconst __exactText = JSON.stringify(\(settle));\nreturn typeof __exactText === 'string' ? __exactText : 'null';\n} catch (__exactError) {\ntry {\nreturn '!' + String(__exactError?.name ?? 'Error') + '\\n' + String(__exactError?.message ?? __exactError);\n} catch {\nreturn '!Error\\nan exception that cannot be read as text';\n}\n}"
+        let arguments = request["arguments"] as? [Any] ?? []
+        let acts = request["userActivation"] as? Bool == true
+        if acts, (request["target"] as? [String: Any])?["realm"] is String {
+            // A dialog cannot establish admission. Acknowledge the live world before taking control,
+            // then check it again on execution in case the document changed during the round trip.
+            // Parse the function during admission. Its arguments stay with the native call.
+            let prepare = "if (!(\(valid))) return false; void (async () => {\n\(body)\n}); return true"
+            web.callAsyncJavaScript(prepare, arguments: [:], in: nil, in: world) { [weak self, weak web] result in
+                guard let self, let web, self.evaluations[number] != nil else { return }
+                switch result {
+                case .success(let admitted as Bool) where admitted:
+                    self.identifying.remove(number)
+                    self.scriptActed(number)
+                    self.invoke("if (!(\(valid))) return true;\n" + body, arguments, web, world, realm, number, stale: stale)
+                case .failure(let error):
+                    self.stopWatchingAct(number)
+                    self.evaluations.removeValue(forKey: number)?(Self.failure(error))
+                default:
+                    self.stopWatchingAct(number)
+                    stale()
+                }
+            }
+        } else {
+            invoke("if (!(\(valid))) return false;\n" + body, arguments, web, world, realm, number, stale: stale)
+        }
+    }
+
+    private func invoke(_ body: String, _ arguments: [Any], _ web: WKWebView, _ world: WKContentWorld,
+                        _ realm: Realm, _ number: Int, stale: @escaping () -> Void) {
+        web.callAsyncJavaScript(body, arguments: ["__exactArguments": arguments], in: nil, in: world) { [weak self, weak web] result in
             guard let self, self.evaluations[number] != nil else { return }
             if case .failure(let error) = result, Self.unparsed(error), let web {
                 return self.parsed(body, web, world, number)
             }
+            if case .success(let ended as Bool) = result, !ended { return stale() }
             guard let reply = self.evaluations.removeValue(forKey: number) else { return }
             switch result {
+            case .success(let ended as Bool) where ended: reply(["error": "AbortError", "message": "the document navigated away"])
             case .success(let text as String) where text.hasPrefix("!"):
                 let thrown = text.dropFirst().split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
                 reply(Self.thrown(String(thrown[0]), thrown.count > 1 ? String(thrown[1]) : ""))
@@ -291,8 +516,8 @@ final class FrameAutomation {
                 guard text.utf8.count <= Automations.limit else {
                     return reply(["error": "QuotaExceededError", "message": "the result is \(text.utf8.count) bytes of JSON; at most \(Automations.limit)"])
                 }
-                reply(["result": (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed)) ?? NSNull()])
-            case .success: reply(["result": NSNull()])
+                reply(["realm": realm.id, "origin": realm.origin, "result": (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed)) ?? NSNull()])
+            case .success: reply(["realm": realm.id, "origin": realm.origin, "result": NSNull()])
             case .failure(let error): reply(Self.failure(error))
             }
         }

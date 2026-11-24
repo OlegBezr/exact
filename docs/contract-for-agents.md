@@ -5416,13 +5416,17 @@ pressed then. See [Keys](contract-grammar.md#keys).
 
 A long-press or right-click menu is a `popover` the node names with
 `contextPopover="<id>"`: its `button` rows (with `popovertarget="<id>"
-popovertargetaction="hide"`), `hr` separators and `role="group"` sections of rows
+popovertargetaction="hide"`), `link` rows, which follow their link (Call as
+`link href="tel:…"`), `hr` separators and `role="group"` sections of rows
 (`contract vocab menu`) are the menu, and one row with
 `contextPreview=true` is the preview, whose `press` is what tapping the preview
 does (open the conversation). iOS presents UIKit's context menu, with the row
 lifting and the preview popping into the screen its press pushes; macOS an
 `NSMenu` without the preview; the web and the default agent open the popover anchored to
-the node. The menu needs the popover menu-shaped (LLP 1021
+the node. On iOS a header's pressable title (a group with a `press` around the
+heading, a `button` or a `row`) with a `contextPopover` opens its menu from the navigation bar's title; the
+title's avatar, if it has one, lifts alone when the popover is written with no preview
+row, which is read as the press begins, before the group's `contextmenu` runs. The menu needs the popover menu-shaped (LLP 1021
 D3): each row its text and at most one `image`, with `aria-checked` for a checkmark;
 a row with anything else beside its label (an icon box) makes macOS open the
 painted popover anchored to the node instead. The node's own `contextmenu` action runs first, so one popover can

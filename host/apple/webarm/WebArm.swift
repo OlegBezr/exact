@@ -510,14 +510,18 @@ final class WebArm: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
             guard let self, let web = self.built else { return }
             self.ui?.confirmExternal(url, from: web, byApp: true)
         }
+        let driver = automation ?? FrameAutomation(arm: self)
+        automation = driver
         browser.install(on: controller)
         self.browser = browser
         configuring(configuration)
+        driver.installPageSeed(configuration.userContentController)
         #if os(macOS)
         let webView: WKWebView = ExactWebView(frame: .zero, configuration: configuration)
         #else
         let webView = WKWebView(frame: .zero, configuration: configuration)
         #endif
+        driver.seedInitialDocument(webView)
         browser.attach(webView)
         return webView
     }
@@ -1201,8 +1205,9 @@ final class WebArm: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         ui?.committed(webView)
-        guard !invalidated, !isBlank(navigation) else { return }
+        guard !invalidated, webView === built else { return }
         automation?.committed()
+        guard !isBlank(navigation) else { return }
         browser?.committed(navigation)
     }
 
@@ -1463,14 +1468,7 @@ public func exactWebAutomation(_ bytes: UnsafePointer<UInt8>?, _ length: UInt32,
         let data = (try? JSONSerialization.data(withJSONObject: answer)) ?? Data("{}".utf8)
         data.withUnsafeBytes { done?(context, $0.bindMemory(to: UInt8.self).baseAddress, UInt32(data.count)) }
     }
-    let run = {
-        let id = request["id"] as? String ?? ""
-        let found = Automations.find(owner: request["owner"] as? String ?? "", id: id)
-        guard found.count == 1, let arm = found.first else { return finish(["error": "NotFoundError", "message": "no unique live iframe with id \(id)"]) }
-        let automation = arm.automation ?? FrameAutomation(arm: arm)
-        arm.automation = automation
-        automation.run(request, reply: finish)
-    }
+    let run = { Automations.run(request, finish: finish) }
     if Thread.isMainThread { run() } else { DispatchQueue.main.async(execute: run) }
 }
 

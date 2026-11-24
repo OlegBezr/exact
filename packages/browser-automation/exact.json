@@ -9,7 +9,9 @@
   "shapes": {
     "EmptyResult": {},
     "ScriptResult": {
-      "result": "json<ScriptValue>"
+      "result": "json<ScriptValue>",
+      "realm": "option<string>",
+      "origin": "option<string>"
     },
     "PreloadScript": {
       "script": "string"
@@ -24,6 +26,11 @@
       "path": "string",
       "width": "number",
       "height": "number"
+    },
+    "ScriptTarget": {
+      "realm": "option<string>",
+      "context": "option<string>",
+      "sandbox": "option<string>"
     }
   },
   "names": [
@@ -35,7 +42,8 @@
         "browser.automation"
       ],
       "options": {
-        "id": "string",
+        "id": "option<string>",
+        "target": "option<ScriptTarget>",
         "expression": "string",
         "sandbox": "option<string>",
         "awaitPromise": "option<bool>",
@@ -51,7 +59,8 @@
         "browser.automation"
       ],
       "options": {
-        "id": "string",
+        "id": "option<string>",
+        "target": "option<ScriptTarget>",
         "functionDeclaration": "string",
         "arguments": "option<json<ScriptValue>[]>",
         "sandbox": "option<string>",

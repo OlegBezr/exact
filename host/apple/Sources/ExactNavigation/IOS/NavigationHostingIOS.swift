@@ -197,6 +197,10 @@ extension NavigationHost: NavigationHosting {
         arrangementScrollers(in: route, top: true) + arrangementScrollers(in: route, top: false)
     }
 
+    #if os(iOS)
+    func titleSurface(for node: NodeView) -> (any UIView & TitleMenuSurface)? { projectedTitle(for: node) }
+    #endif
+
     /// The navigation bar item a shown route's bar draws for `node`, and
     /// the route it is in; nil when no shown bar stands for it, or something
     /// is presented over its route.
@@ -259,6 +263,51 @@ extension NavigationHost: NavigationHosting {
     }
 
     #if EXACT_AGENT
+    func headerLayout(itemBox: (NodeView) -> BarLayoutBox?) -> [UInt32: BarLayoutBox] {
+        var boxes: [UInt32: BarLayoutBox] = [:]
+        #if os(iOS)
+        guard !ExactEnv.authoredChrome else { return boxes }
+        func read(_ source: BarSource?, items: [UInt32], controller: UIViewController, nav: UINavigationController) {
+            guard let source, source.bar == .header, let header = source.header, nav.topViewController === controller,
+                  controller.viewIfLoaded?.window != nil else { return }
+            let bar = shownBar(of: nav), item = controller.navigationItem
+            let owner = bar.delegate as? UINavigationController ?? nav
+            guard !owner.isNavigationBarHidden, RouteGeometry.shownBar(bar) != nil else { return }
+            if let route = controller as? RouteController, let node = route.search?.field,
+               let field = drawnSearch(node), RouteGeometry.shownBar(field) != nil {
+                boxes[node.id] = BarLayoutBox(field, nil, "UISearchTextField")
+            }
+            boxes[header] = BarLayoutBox(bar, nil, "UINavigationBar")
+            if let heading = source.heading {
+                if let title = item.titleView, title !== (controller as? RouteController)?.titleSegments?.control,
+                   RouteGeometry.shownBar(title) != nil {
+                    boxes[heading] = BarLayoutBox(title, nil, "UINavigationItem title")
+                }
+            }
+            if controller is RouteController, source.canGoBack, !item.hidesBackButton, bar.backItem != nil,
+               let name = container?.props["navigationBack"], let back = source.placed.first(where: { presenter.views[$0]?.props["id"] == name }),
+               let control = bar.drawnBackControl() {
+                boxes[back] = BarLayoutBox(control, nil, "UINavigationBar back button")
+            }
+            for id in items where boxes[id] == nil {
+                guard let node = presenter.views[id] else { continue }
+                boxes[id] = itemBox(node)
+            }
+        }
+        for route in controllers.values {
+            if let nav = route.navigationController, barShows(nav) {
+                read(route.projectedSource, items: Array(route.barItemsMade.keys), controller: route, nav: nav)
+            }
+        }
+        for dialog in shownDialogBars {
+            if let controller = dialog.controller, let nav = dialog.navigationController {
+                read(dialog.source, items: Array(dialog.barItemsMade.keys), controller: controller, nav: nav)
+            }
+        }
+        #endif
+        return boxes
+    }
+
     /// The search field a shown route projects into UIKit's search bar.
     func drawnSearch(_ node: NodeView) -> UITextField? {
         #if os(iOS)

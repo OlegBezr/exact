@@ -94,6 +94,9 @@ mod http;
 pub struct Request {
     /// The producing module generation. Kept in process; never part of the wire request.
     pub module: Option<crate::ModuleInstance>,
+    /// Runner ticket for a native call from a mutation. The runner assigns it when the
+    /// request leaves the source so admission can consult the originating action.
+    pub mutation_ticket: Option<u64>,
     /// Native HTTP scheduling; storage and continuations must remain ordered.
     pub http: HttpScheduling,
     /// Executor-local continuation token, not an HTTP request. The browser
@@ -322,6 +325,7 @@ impl Request {
             prefetch: false,
             held: false,
             reach: Default::default(),
+            mutation_ticket: None,
             listen: None,
             due_ms: None,
             wake_ms: None,
@@ -425,6 +429,7 @@ impl Request {
             prefetch: false,
             held: false,
             reach: Default::default(),
+            mutation_ticket: None,
             listen: None,
             due_ms: None,
             wake_ms: None,
@@ -472,6 +477,7 @@ impl Request {
             prefetch: false,
             held: false,
             reach: Default::default(),
+            mutation_ticket: None,
             listen: None,
             due_ms: None,
             wake_ms: None,

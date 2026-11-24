@@ -3,6 +3,7 @@
   "name": "@exact/clipboard",
   "version": "1.0.0",
   "substitute": "implementation",
+  "grants": ["clipboard.read"],
   "shapes": {
     "ClipboardItem": {
       "record": {
@@ -20,6 +21,30 @@
     }
   },
   "names": [
+    {
+      "send": "read",
+      "contract": false,
+      "params": [],
+      "options": {},
+      "answers": "ClipboardItem[]",
+      "origin": "input",
+      "grants": ["clipboard.read"],
+      "substitute": {
+        "unsupported": ["android", "ios", "linux", "tvos", "windows"]
+      }
+    },
+    {
+      "send": "readText",
+      "contract": false,
+      "params": [],
+      "options": {},
+      "answers": "string",
+      "origin": "input",
+      "grants": ["clipboard.read"],
+      "substitute": {
+        "unsupported": ["android", "ios", "linux", "tvos", "windows"]
+      }
+    },
     {
       "send": "write",
       "contract": false,
