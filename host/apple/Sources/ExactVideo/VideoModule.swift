@@ -408,7 +408,8 @@ final class VideoView: VideoPlaying, VisibilityRefreshing {
             if was && !autoplay.armed { DispatchQueue.main.async { [weak self] in self?.update() } }
         }
         guard let event = message["event"] as? String, owner.handlers.contains(event) else { return }
-        let payload = message["payload"] as? String ?? ""
+        // A remote command's `play` or `pause` is the person's act on that control, not the app's.
+        let payload = message["byRemote"] as? Bool == true ? "remote" : message["payload"] as? String ?? ""
         DispatchQueue.main.async { [weak self, weak owner] in
             guard let self, let owner, owner.video === self, let session = owner.presenter?.session else { return }
             session.apply(session.runtime.media(owner.id, event: event, payload: payload, now: session.now()))

@@ -1021,6 +1021,13 @@ impl<D: DataSource> Runner<D> {
                 return self.as_cause(cause, |r| r.arrived(|r| r.dispatch_event(view, event)));
             }
         }
+        // A remote Play or Pause the host carried out for the element.
+        if let Event::Media(EventKind::Play | EventKind::Pause, how) = &event {
+            if how == REMOTE {
+                let cause = super::provenance::Cause::remote_control();
+                return self.as_cause(cause, |r| r.arrived(|r| r.dispatch_event(view, event)));
+            }
+        }
         // The person's act in the app's own UI is an `app` cause. What the
         // host observes of the page and a package view's message are the
         // person's while the page shows (`as_shown`).
@@ -1439,6 +1446,10 @@ impl<D: DataSource> Runner<D> {
 mod retained_binding_tests;
 
 mod projection;
+
+/// A `play` or `pause` event's payload when a remote command (the lock
+/// screen, headphones, media keys) made it: host kind 19's `play\nremote`.
+const REMOTE: &str = "remote";
 
 /// Whether `event` is the host's observation of the page rather than the
 /// person's act: a load, a resize, an intersection, a media element's

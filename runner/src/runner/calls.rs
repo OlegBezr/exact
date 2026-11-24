@@ -366,6 +366,35 @@ impl<D: DataSource> Runner<D> {
 /// The tool seam, linked: the calls above.
 pub(crate) struct LinkedTools;
 
+impl<D: DataSource> Runner<D> {
+    /// Take off this commit's commands from `first` that a call does not
+    /// run, when the commit is a call's work (LLP 1111 D4a), after the call
+    /// too (LLP 1133.023 D7a). Not the tool seam's: a remote Play and a
+    /// world's marked message keep these rules in an app with no tool.
+    pub(in crate::runner) fn skip_in_call(&mut self, first: usize) {
+        let cause = self.cause();
+        if !cause.is_call() {
+            return;
+        }
+        let mut i = first;
+        while i < self.commands.len() {
+            let name = self.commands[i].name.clone();
+            if RUN.contains(&name.as_str()) {
+                i += 1;
+                continue;
+            }
+            self.commands.remove(i);
+            if SKIPPED.contains(&name.as_str()) {
+                let t = self.seams.tools;
+                t.call_skipped(self, cause, &name);
+                self.log(format!("{name}: skipped in a tool call"));
+            } else {
+                self.log(format!("{name}: refused: in a tool call"));
+            }
+        }
+    }
+}
+
 impl<D: DataSource> Tools<D> for LinkedTools {
     /// A door's call of `tool` with `args`, a JSON object: queued, and its
     /// invocation id answered. `Err` for a tool the plan does not name.
@@ -557,32 +586,11 @@ impl<D: DataSource> Tools<D> for LinkedTools {
         }
     }
 
-    /// Take off this commit's commands from `first` that a call does not
-    /// run, when the commit is a call's work (LLP 1111 D4a), after the call
-    /// too (LLP 1133.023 D7a).
-    fn skip_in_call(&self, r: &mut Runner<D>, first: usize) {
-        let cause = r.cause();
-        if !cause.is_call() {
-            return;
-        }
-        let mut i = first;
-        while i < r.commands.len() {
-            let name = r.commands[i].name.clone();
-            if RUN.contains(&name.as_str()) {
-                i += 1;
-                continue;
-            }
-            r.commands.remove(i);
-            if SKIPPED.contains(&name.as_str()) {
-                // The running call's record says what it skipped.
-                let ours = |c: &&mut Call| c.id == cause.invocation() || c.id == cause.owner();
-                if let Some(call) = (r.calls.current.as_mut()).filter(ours) {
-                    call.skipped.push(name.clone());
-                }
-                r.log(format!("{name}: skipped in a tool call"));
-            } else {
-                r.log(format!("{name}: refused: in a tool call"));
-            }
+    /// The running call's record says what its work skipped.
+    fn call_skipped(&self, r: &mut Runner<D>, cause: Cause, name: &str) {
+        let ours = |c: &&mut Call| c.id == cause.invocation() || c.id == cause.owner();
+        if let Some(call) = (r.calls.current.as_mut()).filter(ours) {
+            call.skipped.push(name.to_owned());
         }
     }
 

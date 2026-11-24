@@ -1,6 +1,6 @@
 //! LLP 1133.023 D7a: what the host observes of the page and a drag handle's
-//! release are the app's, and a world's message under a tool's mark keeps
-//! D4a's command rules.
+//! release are the app's, and a world's message under a tool's mark and a
+//! remote Play keep D4a's command rules.
 
 use crate::request::Request;
 use crate::{Answer, CallOrigin, DataError, DataSource, Event, Outcome, Runner, Store, Value};
@@ -247,4 +247,23 @@ fn what_a_hidden_page_arms_or_loads_is_no_ones() {
     for s in sent {
         assert_eq!(s.request.reach.origin, CallOrigin::Device);
     }
+}
+
+/// A remote Play is the person's act on one declared control outside the
+/// app's UI: an `action`, as a control's press is, whose command rules
+/// hold. The element's own `play` while the page shows stays the app's.
+#[test]
+fn a_remote_play_is_an_action() {
+    const PLAYER: &str = "component App\n  mutation m as shape number\n  action started\n    send m = save(1)\n    focus(\"v\")\n  view\n    audio \"https://example.com/a.mp3\" play=started testId=\"v\"\n";
+    let (mut r, audio) = boot_with(PLAYER, "v");
+    r.take_requests();
+    let play = |how: &str| Event::Media(exact_plan::EventKind::Play, how.into());
+    r.dispatch(audio, play("remote")).unwrap();
+    let sent = r.take_requests();
+    assert_eq!(sent[0].request.reach.origin, CallOrigin::Action);
+    let skipped = |r: &Runner<Later>| r.journal().filter(|l| l.contains("focus: skipped")).count();
+    assert_eq!(skipped(&r), 1, "{:?}", r.journal().collect::<Vec<_>>());
+    r.dispatch(audio, play("")).unwrap();
+    assert_eq!(r.take_requests()[0].request.reach.origin, CallOrigin::App);
+    assert_eq!(skipped(&r), 1);
 }
