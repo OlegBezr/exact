@@ -196,7 +196,7 @@ impl<D: DataSource> Presenter<D> {
         fields.clear();
         *field_history = Default::default();
         *field_drag = None;
-        *drag_in = Default::default();
+        drag_in.reset();
         *mouse_selection = Default::default();
         #[cfg(any(target_os = "android", test))]
         {

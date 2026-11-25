@@ -31,47 +31,61 @@ pub(super) struct DragIn {
     held: KeyModifiers,
     /// The drops released whose items have yet to arrive (`drop_released`).
     pending: Vec<Pending>,
-    /// The last pending drop's number.
+    /// The last pending drop's number, kept across a new plan so that no
+    /// copy that arrives late lands on a drop of the new one.
     last: u32,
 }
 
-/// A drop released before its items arrived: its target, its record's
-/// offsets and modifiers as they were at the release, and the chain it
-/// was over, which hears a leave if the drop is not delivered.
+impl DragIn {
+    /// A new plan's tracker: its views are new, so no drop or drag is over
+    /// them yet.
+    pub(super) fn reset(&mut self) {
+        *self = DragIn {
+            last: self.last,
+            ..Default::default()
+        };
+    }
+}
+
+/// A drop released before its items arrived: its target (none once the
+/// target is a new mount, LLP 1078), its record as at the release, and the
+/// chain it was over, which hears a leave if the drop is not delivered.
 struct Pending {
     id: u32,
-    target: NodeKey,
+    target: Option<NodeKey>,
     offsets: (f64, f64),
-    held: KeyModifiers,
     point: (f32, f32),
+    held: KeyModifiers,
     chain: Vec<NodeKey>,
 }
 
 impl<D: DataSource> Presenter<D> {
-    /// Update the drag's entered elements and tell the shell whether this point accepts a drop.
+    /// The drag is at `point`: the nodes under it hear their enters and
+    /// leaves, and the innermost node that takes a drop there, if any.
     pub fn drag_over(&mut self, point: (f32, f32), held: KeyModifiers) -> Option<ViewId> {
         self.drag_in.point = point;
         self.drag_in.held = held;
-        let mut chain = Vec::new();
-        let mut at = self.drag_hit(point);
-        while let Some(node) =
-            at.and_then(|id| self.pointer_node(id, &[EventKind::Dragenter, EventKind::Dragleave]))
-        {
-            let kernel = self.host.kernel();
-            let Some(key) = kernel.node(node).map(|n| n.key) else {
-                break;
-            };
-            chain.push(key);
-            at = self.listener_parent(kernel, node);
-        }
+        let chain = self.drag_chain(point);
         self.drag_crossings(chain);
         let hit = self.drag_hit(point)?;
         self.pointer_node(hit, &[EventKind::Drop])
     }
 
-    /// Cancel the drag, including when it leaves the window.
+    /// Cancel the drag, including when it leaves the window: the nodes under
+    /// it hear their leave, and the enters it waited for are not sent.
     pub fn drag_left(&mut self) {
         self.drag_crossings(Vec::new());
+    }
+
+    /// The drag dropped where no node takes it, or a field took it: the
+    /// enters it waited for are heard first, then every node under it hears
+    /// its leave (LLP 1094.001 D2).
+    pub fn drag_dropped(&mut self) {
+        let (point, held) = (self.drag_in.point, self.drag_in.held);
+        let waiting = std::mem::take(&mut self.drag_in.waiting);
+        self.chain_event(&waiting, EventKind::Dragenter, point, held);
+        self.drag_in.entered.extend(waiting);
+        self.drag_left();
     }
 
     /// Deliver what a drag drops once, its files in platform order, to the
@@ -92,8 +106,8 @@ impl<D: DataSource> Presenter<D> {
     /// copies do (LLP 1094.001 D2): the innermost node that takes a drop
     /// there, its record and the chain under the drag become the drop's,
     /// which `drop_landed` delivers. The enters this drag waited for are
-    /// heard first. The drop's number, or None, and a leave, when nothing
-    /// takes it.
+    /// heard first. The drop's number, or None, and the drag ends, when
+    /// nothing takes it.
     pub fn drop_released(&mut self, point: (f32, f32), held: KeyModifiers) -> Option<u32> {
         let target = self.drag_over(point, held);
         let found = target.and_then(|t| {
@@ -102,21 +116,22 @@ impl<D: DataSource> Presenter<D> {
             Some((key, (record.offset_x, record.offset_y)))
         });
         let Some((target, offsets)) = found else {
-            self.drag_left();
+            self.drag_dropped();
             return None;
         };
         let waiting = std::mem::take(&mut self.drag_in.waiting);
-        self.chain_event(&waiting, EventKind::Dragenter, point);
+        self.chain_event(&waiting, EventKind::Dragenter, point, held);
         let mut chain = std::mem::take(&mut self.drag_in.entered);
         chain.extend(waiting);
         self.drag_in.last += 1;
         let id = self.drag_in.last;
+        let target = Some(target);
         self.drag_in.pending.push(Pending {
             id,
             target,
             offsets,
-            held,
             point,
+            held,
             chain,
         });
         Some(id)
@@ -126,8 +141,8 @@ impl<D: DataSource> Presenter<D> {
     /// handles, its text and its link go to its target if that is still the
     /// same node and still takes a drop, which ends the drag with no leave;
     /// otherwise, or when nothing arrived, the chain it was over hears a
-    /// leave. Either way a node a newer drag waited on for this drop hears
-    /// that drag's enter. The target, when delivered.
+    /// leave. A drag still under way then hears the enters it waited for at
+    /// the nodes under it now. The target, when delivered.
     pub fn drop_landed(&mut self, id: u32, dropped: &Dropped) -> Option<ViewId> {
         let at = self.drag_in.pending.iter().position(|p| p.id == id)?;
         let pending = self.drag_in.pending.remove(at);
@@ -137,11 +152,9 @@ impl<D: DataSource> Presenter<D> {
             .filter(|path| path.is_absolute() && path.exists())
             .filter_map(|path| exact_data::documents::mint(path, 0))
             .collect();
-        let target = self
-            .host
-            .kernel()
-            .node_by_key(pending.target)
-            .map(|n| n.id)
+        let target = pending
+            .target
+            .and_then(|key| self.host.kernel().node_by_key(key).map(|n| n.id))
             .filter(|&t| {
                 self.pointer_node(t, &[EventKind::Drop]) == Some(t)
                     && !self.brush.region_blocks_action(t)
@@ -158,17 +171,17 @@ impl<D: DataSource> Presenter<D> {
                 )
         });
         if delivered.is_none() {
-            self.chain_event(&pending.chain, EventKind::Dragleave, pending.point);
+            self.chain_event(
+                &pending.chain,
+                EventKind::Dragleave,
+                pending.point,
+                pending.held,
+            );
         }
-        let still =
-            |key: &NodeKey, pending: &[Pending]| pending.iter().any(|p| p.chain.contains(key));
-        let (released, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.drag_in.waiting)
-            .into_iter()
-            .partition(|key| !still(key, &self.drag_in.pending));
-        self.drag_in.waiting = waiting;
-        let point = self.drag_in.point;
-        self.chain_event(&released, EventKind::Dragenter, point);
-        self.drag_in.entered.extend(released);
+        if !self.drag_in.entered.is_empty() || !self.drag_in.waiting.is_empty() {
+            let chain = self.drag_chain(self.drag_in.point);
+            self.drag_crossings(chain);
+        }
         delivered
     }
 
@@ -179,6 +192,29 @@ impl<D: DataSource> Presenter<D> {
             None => 0,
             Some(n) if n == id => 1,
             Some(_) => 2,
+        }
+    }
+
+    /// Views a commit renewed (LLP 1078) are new mounts: a pending drop's
+    /// target among them is not its target, and none of them heard a
+    /// drag's enter.
+    pub(super) fn drag_renewed(&mut self, renewed: &[ViewId]) {
+        let kernel = self.host.kernel();
+        let keys: Vec<NodeKey> = renewed
+            .iter()
+            .filter_map(|id| kernel.node(*id).map(|n| n.key))
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        let drag = &mut self.drag_in;
+        drag.entered.retain(|k| !keys.contains(k));
+        drag.waiting.retain(|k| !keys.contains(k));
+        for pending in &mut drag.pending {
+            pending.chain.retain(|k| !keys.contains(k));
+            if pending.target.is_some_and(|k| keys.contains(&k)) {
+                pending.target = None;
+            }
         }
     }
 
@@ -229,6 +265,12 @@ impl<D: DataSource> Presenter<D> {
                 .and_then(KeyModifiers::held)
                 .ok_or("invalid drag modifiers")?,
         };
+        if let Some(path) = (kind == "drop" && cfg!(target_os = "android"))
+            .then(|| dropped.paths.iter().find(|p| !p.exists()))
+            .flatten()
+        {
+            return Err(format!("{} is not on the device: the reader's carrier puts a drop's files there, and the headless one does not", path.display()));
+        }
         if kind == "drop" && cfg!(target_os = "android") && self.field_keeps(point, &dropped) {
             return Err(format!("view {id} is under a field, which keeps a drop of text or a link on Android when its own node takes none (LLP 1094.001 D2), and the driver inserts nothing: drop a file with it, or drop on a node that is not a field"));
         }
@@ -262,6 +304,24 @@ impl<D: DataSource> Presenter<D> {
             .filter(|id| !self.brush.region_blocks_action(*id))
     }
 
+    /// The nodes under `point` that hear `dragenter` or `dragleave`,
+    /// innermost first.
+    fn drag_chain(&mut self, point: (f32, f32)) -> Vec<NodeKey> {
+        let mut chain = Vec::new();
+        let mut at = self.drag_hit(point);
+        while let Some(node) =
+            at.and_then(|id| self.pointer_node(id, &[EventKind::Dragenter, EventKind::Dragleave]))
+        {
+            let kernel = self.host.kernel();
+            let Some(key) = kernel.node(node).map(|n| n.key) else {
+                break;
+            };
+            chain.push(key);
+            at = self.listener_parent(kernel, node);
+        }
+        chain
+    }
+
     /// The drag is over `chain`, innermost first: a node it left hears a
     /// leave, and one it came over an enter, unless a pending drop is over
     /// that node, whose enter then waits for the drop to land (LLP 1094.001
@@ -272,7 +332,7 @@ impl<D: DataSource> Presenter<D> {
             .into_iter()
             .partition(|key| pending.iter().any(|p| p.chain.contains(key)));
         let previous = std::mem::take(&mut self.drag_in.entered);
-        let point = self.drag_in.point;
+        let (point, held) = (self.drag_in.point, self.drag_in.held);
         let came: Vec<_> = entered
             .iter()
             .filter(|k| !previous.contains(k))
@@ -283,21 +343,44 @@ impl<D: DataSource> Presenter<D> {
             .filter(|k| !entered.contains(k))
             .copied()
             .collect();
-        self.chain_event(&came, EventKind::Dragenter, point);
-        self.chain_event(&went, EventKind::Dragleave, point);
+        self.chain_event(&came, EventKind::Dragenter, point, held);
+        self.chain_event(&went, EventKind::Dragleave, point, held);
         self.drag_in.entered = entered;
         self.drag_in.waiting = waiting;
     }
 
-    /// Send an enter or a leave to each of `keys` that is still a node, its record at `point`.
-    fn chain_event(&mut self, keys: &[NodeKey], kind: EventKind, point: (f32, f32)) {
-        let now = std::mem::replace(&mut self.drag_in.point, point);
+    /// Send an enter or a leave, which carry no data (LLP 1094.001 D1), to
+    /// each of `keys` that is still a node, its record at `point` with `held`.
+    fn chain_event(
+        &mut self,
+        keys: &[NodeKey],
+        kind: EventKind,
+        point: (f32, f32),
+        held: KeyModifiers,
+    ) {
         for key in keys {
-            if let Some(id) = self.host.kernel().node_by_key(*key).map(|n| n.id) {
-                self.drag_event(id, kind);
+            let Some(id) = self.host.kernel().node_by_key(*key).map(|n| n.id) else {
+                continue;
+            };
+            let Some(record) = self.pointer_record(id, point.0, point.1, -1, 0) else {
+                continue;
+            };
+            let data = DropEvent {
+                offset_x: record.offset_x,
+                offset_y: record.offset_y,
+                held,
+                files: Vec::new(),
+                text: String::new(),
+                url: String::new(),
+            };
+            let event = match kind {
+                EventKind::Dragenter => Event::Dragenter(data),
+                _ => Event::Dragleave(data),
+            };
+            if let Some(error) = self.pointer_dispatch(id, kind, event, self.pointer_now()) {
+                self.host.log(error);
             }
         }
-        self.drag_in.point = now;
     }
 
     /// Send pending drop `drop` to `target` with what arrived, at the record it had at its release.
@@ -327,30 +410,6 @@ impl<D: DataSource> Presenter<D> {
             return false;
         }
         true
-    }
-
-    /// Send an enter or a leave to `id`, its record at the drag's point,
-    /// which carry no data (LLP 1094.001 D1).
-    fn drag_event(&mut self, id: ViewId, kind: EventKind) {
-        let (x, y) = self.drag_in.point;
-        let Some(point) = self.pointer_record(id, x, y, -1, 0) else {
-            return;
-        };
-        let data = DropEvent {
-            offset_x: point.offset_x,
-            offset_y: point.offset_y,
-            held: self.drag_in.held,
-            files: Vec::new(),
-            text: String::new(),
-            url: String::new(),
-        };
-        let event = match kind {
-            EventKind::Dragenter => Event::Dragenter(data),
-            _ => Event::Dragleave(data),
-        };
-        if let Some(error) = self.pointer_dispatch(id, kind, event, self.pointer_now()) {
-            self.host.log(error);
-        }
     }
 }
 
@@ -626,5 +685,124 @@ mod tests {
             !p.field_keeps((250., 150.), &text("Fuji")),
             "no field there"
         );
+    }
+
+    /// A zone that logs each event it hears: its kind, whether Shift was
+    /// held, and a drop's offsets and text.
+    fn logging_zone() -> (Presenter<()>, (f32, f32)) {
+        let source = r#"component App
+  state log = ""
+  action received(e: DragEvent)
+    log = `${log}drop ${e.shiftKey ? "S" : "-"} ${e.offsetX} ${e.offsetY} ${e.text};`
+  action entered(e: DragEvent)
+    log = `${log}enter ${e.shiftKey ? "S" : "-"};`
+  action left(e: DragEvent)
+    log = `${log}leave ${e.shiftKey ? "S" : "-"};`
+  view
+    column width=300 height=200 testId="zone" drop=received dragenter=entered dragleave=left
+"#;
+        let (mut p, error) = Presenter::boot_with_fixture_fonts(
+            &crate::test_plan(source),
+            (),
+            (300., 200.),
+            1.,
+            PathBuf::new(),
+            PainterChoice::Cpu,
+        )
+        .unwrap();
+        assert!(error.is_none(), "{error:?}");
+        p.frame();
+        (p, (100., 50.))
+    }
+
+    fn log(p: &Presenter<()>) -> String {
+        p.host
+            .runner()
+            .slot("log")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    const SHIFT: KeyModifiers = KeyModifiers {
+        shift: true,
+        ctrl: false,
+        alt: false,
+        meta: false,
+    };
+
+    #[test]
+    fn a_failed_drop_leaves_with_its_own_record_before_the_newer_drag_enters() {
+        let (mut p, point) = logging_zone();
+        p.drag_over(point, SHIFT);
+        let id = p.drop_released(point, SHIFT).unwrap();
+        p.drag_over((150., 60.), KeyModifiers::default());
+        assert_eq!(log(&p), "enter S;", "the newer drag's enter waits");
+        p.drop_landed(id, &Dropped::default());
+        assert_eq!(
+            log(&p),
+            "enter S;leave S;enter -;",
+            "the failed drop's leave, with its Shift, then the newer enter"
+        );
+    }
+
+    #[test]
+    fn a_drop_hears_the_record_it_had_at_its_release() {
+        let (mut p, point) = logging_zone();
+        p.drag_over(point, SHIFT);
+        let id = p.drop_released(point, SHIFT).unwrap();
+        p.drag_over((150., 60.), KeyModifiers::default());
+        p.drop_landed(id, &text("Fuji"));
+        assert_eq!(log(&p), "enter S;drop S 100 50 Fuji;enter -;");
+    }
+
+    #[test]
+    fn a_newer_drag_a_field_takes_hears_its_waiting_enter_then_its_leave() {
+        let (mut p, point) = logging_zone();
+        p.drag_over(point, KeyModifiers::default());
+        let id = p.drop_released(point, KeyModifiers::default()).unwrap();
+        p.drag_over(point, SHIFT);
+        p.drag_dropped();
+        assert_eq!(log(&p), "enter -;enter S;leave S;");
+        p.drop_landed(id, &text("Fuji"));
+        assert_eq!(
+            log(&p),
+            "enter -;enter S;leave S;drop - 100 50 Fuji;",
+            "the drag is over: no enter after the drop"
+        );
+    }
+
+    #[test]
+    fn a_drop_whose_target_was_renewed_leaves_instead() {
+        let (mut p, point) = logging_zone();
+        p.drag_over(point, KeyModifiers::default());
+        let id = p.drop_released(point, KeyModifiers::default()).unwrap();
+        let kernel = p.host.kernel();
+        let zone = kernel
+            .node_by_key(kernel.find_by_test_id("zone")[0])
+            .unwrap()
+            .id;
+        p.drag_renewed(&[zone]);
+        assert_eq!(p.drop_landed(id, &text("Fuji")), None);
+        assert_eq!(
+            log(&p),
+            "enter -;",
+            "a new mount heard no enter, so it hears no leave either"
+        );
+    }
+
+    #[test]
+    fn a_new_plan_numbers_its_drops_after_the_old_ones() {
+        let (mut p, point) = logging_zone();
+        let old = p.drop_released(point, KeyModifiers::default()).unwrap();
+        p.drag_in.reset();
+        let new = p.drop_released(point, KeyModifiers::default()).unwrap();
+        assert_ne!(old, new);
+        assert_eq!(
+            p.drop_landed(old, &text("late")),
+            None,
+            "the old plan's copy lands nowhere"
+        );
+        assert!(p.drop_landed(new, &text("Fuji")).is_some());
     }
 }

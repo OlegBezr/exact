@@ -1,29 +1,34 @@
 // What the reader carrier does with a driver's request beside relaying it to the app (`agent-android.mjs`'s `relay`).
 
+import { statSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
-/** Each of a drag in's files (`tap <target> drop|dragenter <path…>`, LLP 1094.001 D6), this Mac's, to a folder of its
- * own under [base] on the device, where the app reads it: the request as the app is to get it, and each push as
- * `[local, remote]`. */
+/** Each of a drop's files (`tap <target> drop <path…>`, LLP 1094.001 D6), this Mac's, to a folder of its own under
+ * [base] on the device, where the app reads it: the request as the app is to get it, and each push as
+ * `[local, remote]`. An enter's files are not read, so they stay where they are. */
 export function dropPushes(request, base) {
-  const kind = ['drop', 'dragenter'].find((k) => Array.isArray(request?.[k]) && request[k].length);
-  if (request?.op !== 'tap' || !kind) return { request, pushes: [] };
-  const pushes = request[kind].map((path, i) => [path, `${base}/${dropPushes.next++}-${i}/${basename(path)}`]);
-  return { request: { ...request, [kind]: pushes.map(([, remote]) => remote) }, pushes };
+  if (request?.op !== 'tap' || !Array.isArray(request.drop) || !request.drop.length) return { request, pushes: [] };
+  const pushes = request.drop.map((path, i) => [path, `${base}/${dropPushes.next++}-${i}/${basename(path)}`]);
+  return { request: { ...request, drop: pushes.map(([, remote]) => remote) }, pushes };
 }
 dropPushes.next = 0;
 
-/** Puts [request]'s files on the device through [sh] (adb's words): the request naming them there, none when it
- * names no file, or an error naming the file that could not be put there. */
+/** Puts [request]'s files on the device through [sh] (adb's words, a `spawnSync` result back): the request naming
+ * them there, none when it names no file, or an error that names what could not be put there. A folder is refused,
+ * since Android's drops take files alone (LLP 1094.001 D5). */
 export function pushDrops(request, base, sh) {
   const { request: moved, pushes } = dropPushes(request, base);
+  const failed = (r) => r.status !== 0 && (r.stderr || r.stdout || r.error?.message || `exit ${r.status}`).trim();
+  for (const [local] of pushes) {
+    if (statSync(local, { throwIfNoEntry: false })?.isDirectory()) return { error: `${local} is a folder: a drop on Android takes files alone` };
+  }
   for (const [local, remote] of pushes) {
-    const made = sh('shell', 'mkdir', '-p', `'${dirname(remote)}'`);
-    const pushed = made.status === 0 ? sh('push', local, remote) : made;
-    if (pushed.status !== 0) return { error: `the drop's file ${local} could not be put on the device: ${(pushed.stderr || pushed.stdout).trim()}` };
+    const why = failed(sh('shell', 'mkdir', '-p', `'${dirname(remote)}'`)) || failed(sh('push', local, remote));
+    if (why) return { error: `the drop's file ${local} could not be put on the device: ${why}` };
   }
   if (!pushes.length) return {};
-  sh('shell', 'chmod', '-R', 'a+rX', base);
+  const why = failed(sh('shell', 'chmod', '-R', 'a+rX', `'${base}'`));
+  if (why) return { error: `the drop's files could not be made readable on the device: ${why}` };
   return { request: moved };
 }
 

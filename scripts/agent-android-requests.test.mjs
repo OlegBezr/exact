@@ -1,4 +1,7 @@
 import { test, expect } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { dropPushes, pushDrops, readerReply } from './agent-android-requests.mjs';
 
 test('the Android carrier waits for the hold duration acknowledged by the host', async () => {
@@ -20,15 +23,26 @@ test('the Android carrier waits for the hold duration acknowledged by the host',
   }
 });
 
-test("a drag in's files go to the device, each in a folder of its own, and the request names them there", () => {
+test("a drop's files go to the device, each in a folder of its own, and the request names them there; an enter's stay", () => {
   const base = '/data/local/tmp/exact/app/drops-1';
   const { request, pushes } = dropPushes({ op: 'tap', id: 7, drop: ['/a/notes.pdf', '/b/notes.pdf'], text: 'Fuji' }, base);
   expect(pushes.map(([local]) => local)).toEqual(['/a/notes.pdf', '/b/notes.pdf']);
   expect(new Set(pushes.map(([, remote]) => remote.split('/').slice(0, -1).join('/'))).size).toBe(2);
   expect(request).toEqual({ op: 'tap', id: 7, drop: pushes.map(([, remote]) => remote), text: 'Fuji' });
   expect(pushes.every(([, remote]) => remote.startsWith(`${base}/`) && remote.endsWith('/notes.pdf'))).toBe(true);
-  for (const unchanged of [{ op: 'tap', id: 7, drop: [], text: 'Fuji' }, { op: 'tap', id: 7, dragleave: true }, { op: 'tree' }])
+  for (const unchanged of [{ op: 'tap', id: 7, drop: [], text: 'Fuji' }, { op: 'tap', id: 7, dragenter: ['/a/notes.pdf'] }, { op: 'tap', id: 7, dragleave: true }, { op: 'tree' }])
     expect(dropPushes(unchanged, base)).toEqual({ request: unchanged, pushes: [] });
+});
+
+test("a folder, a failed push and a failed chmod are each refused by name, and no request goes on", () => {
+  const folder = mkdtempSync(join(tmpdir(), 'exact-drop-folder-'));
+  try {
+    const sh = () => ({ status: 0 });
+    expect(pushDrops({ op: 'tap', id: 7, drop: [folder] }, '/base', sh).error).toBe(`${folder} is a folder: a drop on Android takes files alone`);
+  } finally { rmSync(folder, { recursive: true }); }
+  const chmodFails = (...args) => (args[1] === 'chmod' ? { status: null, stderr: null, stdout: null, error: new Error('adb went away') } : { status: 0 });
+  expect(pushDrops({ op: 'tap', id: 7, drop: ['/a/notes.pdf'] }, '/base', chmodFails).error)
+    .toBe("the drop's files could not be made readable on the device: adb went away");
 });
 
 test("a file that cannot be put on the device is named, and no request goes on", () => {

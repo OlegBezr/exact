@@ -6226,11 +6226,11 @@ column dragenter=entered dragleave=left drop=took
 | iOS | yes: files, text and links from another app or this one, each file a copy, no folders; a field keeps text, links, text files and the text of a drag that also carries files, as UIKit's text views do, unless the field declares `drop` | file URLs, else the pasteboard's image as `image.png` |
 | tvOS | none | empty: tvOS has no pasteboard |
 | Windows | yes, files and folders in Explorer selection order, `CF_UNICODETEXT` and the shell's URL, including over an editable field | empty (text only) |
-| Android | yes: files, text and links from another app or this one, each file a copy made under the drop's read permission, no folders; a text item that is one web link is the `url`; a field keeps text, links and text files, as Android's text views do, gives the `drop` above it a drag of another type and a dropped `content:` file, and gives its own node every drag when the field declares `drop` | empty (text only) |
+| Android | yes: files, text and links from another app or this one, each file a copy of a `content:` item made under the drop's read permission, no folders and no `file:` paths; a text item whose last line is one web link, as Chrome sends a link after its title, gives that link as the `url`; a field keeps text, links and text files, as Android's text views do, unless it declares `drop`, and gives a file to the `drop` above it | empty (text only) |
 | Linux, terminal | none | empty (text only) |
 
 The driver: `tap <target> drop [<path…>] [--text "…"] [--url "…"]` (files,
-folders, text and a link), `tap <target> dragenter …` and `tap <target>
+folders except on iOS and Android, text and a link), `tap <target> dragenter …` and `tap <target>
 dragleave`, `type <target> paste --file <path…>` and `type <target> paste
 --image <png>`. A test drops with `tap "zone" drop file "a.pdf" text "…" url
 "…"`, with at least one of those parts.

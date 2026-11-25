@@ -831,10 +831,8 @@ internal class Root(context: Context) : FrameLayout(context) {
         if (!access.heard(event)) super.sendAccessibilityEventUnchecked(event)
     }
 
-    /** Drags from other apps ([DragIn], LLP 1094.001 D5). The root hears every drag, since Android tells a view of a
-     * drag's end only where the view took its start, so it is also offered to services as a drop target
-     * (`View.canAcceptAccessibilityDrop`). */
-    val drags = DragIn(this).also { setOnDragListener(it) }
+    /** Drags into the window ([DragIn], LLP 1094.001 D5). */
+    val drags = DragIn(this)
 
     /**
      * Whether the window has heard a drag start and not yet its end. Exact begins no drag while this holds
@@ -842,6 +840,8 @@ internal class Root(context: Context) : FrameLayout(context) {
      * drag began would take the later one's (`ViewRootImpl.handleDragEvent`).
      */
     val dragging: Boolean get() = drags.dragging
+
+    override fun onDragEvent(event: android.view.DragEvent): Boolean = drags.heard(event)
 
     override fun dispatchHoverEvent(event: MotionEvent): Boolean = (accessible && access.hover(event)) || super.dispatchHoverEvent(event)
 }

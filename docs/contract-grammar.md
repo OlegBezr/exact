@@ -2567,13 +2567,13 @@ UIKit's drop interaction, a file as a copy and no folder; a field there
 keeps text, links and text files, and the text of a drag that also carries
 files, as UIKit's text views do. Android takes one from another app or
 from the same one, a file as a copy and no folder; a field there keeps
-text, links and text files, as Android's text views do, and gives a drag
-that carries a file to the `drop` above it. A text item whose last line is
+text, links and text files, as Android's text views do, and gives a file
+to the `drop` above it. A text item whose last line is
 one web link, as Chrome sends a link after its title, gives that link as
 `url` and the lines before it as `text`. tvOS, Linux and the terminal take
 no drop. The driver's
 `tap <target> drop [<path…>] [--text "…"] [--url "…"]` drops files,
-folders (not on iOS), text and a link, at least one of them, as a test's
+folders (not on iOS or Android), text and a link, at least one of them, as a test's
 `tap "zone" drop …` step does.
 
 `dragenter` and `dragleave` are DOM's, as a node hears them when it ignores

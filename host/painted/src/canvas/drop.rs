@@ -1,24 +1,27 @@
-//! Drags from other apps into the reader's window (LLP 1094.001 D5): the
-//! reader's root and its hosted fields hear Android's drag events and ask
-//! here at the view's pixels, as a touch does.
+//! Drags into the reader's window, from another app or from this one
+//! (LLP 1094.001 D5): the reader's root and its hosted fields hear Android's
+//! drag events and tell them here at the view's pixels, as a touch is told.
 
 use super::CanvasHost;
 use crate::presenter::Dropped;
 use exact_runner::DataSource;
 
 impl<D: DataSource + Default> CanvasHost<D> {
-    /// The drag is at pixels (`x`, `y`): its enters and leaves, and whether
-    /// a node takes a drop there.
-    pub fn drag_over(&mut self, x: f32, y: f32) -> bool {
+    /// The drag is at pixels (`x`, `y`): the nodes under it hear their
+    /// enters and leaves.
+    pub fn drag_over(&mut self, x: f32, y: f32) {
         let held = self.p.modifiers();
-        self.p
-            .drag_over((x / self.scale, y / self.scale), held)
-            .is_some()
+        self.p.drag_over((x / self.scale, y / self.scale), held);
     }
 
-    /// The drag left the window, was cancelled, or a field took it.
+    /// The drag left the window or was cancelled.
     pub fn drag_left(&mut self) {
         self.p.drag_left();
+    }
+
+    /// A field took the drop.
+    pub fn drag_dropped(&mut self) {
+        self.p.drag_dropped();
     }
 
     /// The drag was released at pixels (`x`, `y`) before its items are
@@ -31,23 +34,15 @@ impl<D: DataSource + Default> CanvasHost<D> {
     }
 
     /// Drop `id`'s items arrived, as the reader's JSON
-    /// `{"paths": […], "text": "…", "url": "…"}`: whether its target took them.
-    pub fn drop_landed(&mut self, id: u32, items: &str) -> bool {
+    /// `{"paths": […], "text": "…", "url": "…"}`.
+    pub fn drop_landed(&mut self, id: u32, items: &str) {
         let dropped = parse(items);
         if dropped.is_none() {
             self.p
                 .host_mut()
                 .log(format!("drop: the reader's items were not JSON: {items}"));
         }
-        self.p
-            .drop_landed(id, &dropped.unwrap_or_default())
-            .is_some()
-    }
-
-    /// Which node takes a drop over node `id`: 0 none, 1 the node itself,
-    /// 2 one above it.
-    pub fn drop_owner(&self, id: u32) -> i32 {
-        self.p.drop_owner(id)
+        self.p.drop_landed(id, &dropped.unwrap_or_default());
     }
 }
 

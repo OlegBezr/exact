@@ -1171,6 +1171,7 @@ impl<D: DataSource> Presenter<D> {
             self.dirty |= self.scroll.remove(id).is_some();
         }
         self.renew_scroll_anchors(&renewed);
+        self.drag_renewed(&renewed);
         self.hosted_renewed(&renewed);
         self.hatches.renewed.extend(&renewed);
         let reports = self.images.renew(self.host.kernel(), &renewed);

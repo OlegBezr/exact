@@ -898,23 +898,24 @@ internal object Exact {
         return if (o != null) { o.input(); o.sync { Native.accessAct(id, action, value, target) } } else Native.accessAct(id, action, value, target).also { mainThreadTurned() }
     }
 
-    /** A drag from another app is at ([x], [y]) px, or left ([DragIn], LLP 1094.001 D5): on exact2's thread, which
-     * sends the nodes under it their enters and leaves and publishes what they changed. */
-    fun dragOver(x: Float, y: Float) { val o = owner; if (o != null) o.call { Native.dragOver(x, y) } else { Native.dragOver(x, y); mainThreadTurned() } }
-    fun dragLeft() { val o = owner; if (o != null) o.call { Native.dragLeft() } else { Native.dragLeft(); mainThreadTurned() } }
+    /** A drag is at ([x], [y]) px, left, or a field took its drop ([DragIn], LLP 1094.001 D5): on exact2's thread,
+     * which sends the nodes under it their enters and leaves and publishes what they changed. */
+    fun dragOver(x: Float, y: Float) = dragged { Native.dragOver(x, y) }
+    fun dragLeft() = dragged { Native.dragLeft() }
+    fun dragDropped() = dragged { Native.dragDropped() }
 
     /** The drag was released at ([x], [y]) px: the drop's number, 0 when nothing there takes it. Waited for, since
-     * Android is answered with whether the window took the drop. */
+     * Android is answered with whether the window took the drop, and published after the answer. */
     fun dropReleased(x: Float, y: Float): Int {
-        val o = owner
-        return if (o != null) { o.input(); o.sync { Native.dropReleased(x, y) } } else Native.dropReleased(x, y).also { mainThreadTurned() }
+        val o = owner ?: return Native.dropReleased(x, y).also { mainThreadTurned() }
+        o.input()
+        return o.sync(publish = false) { Native.dropReleased(x, y) }.also { o.call {} }
     }
 
     /** Drop [id]'s items arrived ([DropItems.json]). */
-    fun dropLanded(id: Int, items: String) { val o = owner; if (o != null) o.call { Native.dropLanded(id, items) } else { Native.dropLanded(id, items); mainThreadTurned() } }
+    fun dropLanded(id: Int, items: String) = dragged { Native.dropLanded(id, items) }
 
-    /** Which node takes a drop over node [id] (0 none, 1 it, 2 one above it), asked as a hosted field hears a drag. */
-    fun dropOwner(id: Int): Int = owner?.ask { Native.dropOwner(id) } ?: Native.dropOwner(id)
+    private fun dragged(f: () -> Unit) { val o = owner; if (o != null) o.call(f) else { f(); mainThreadTurned() } }
 
     /** What a hatch's handle asks of node [node] ([ExactElement]): on exact2's thread, waited for, as an
      * accessibility service's act is; exact2 runs it between its turns and publishes what it changed. */
