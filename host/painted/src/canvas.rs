@@ -184,6 +184,9 @@ pub use colors::colors;
 #[path = "canvas/device.rs"]
 mod device;
 #[cfg(target_os = "android")]
+#[path = "canvas/drop.rs"]
+mod drop;
+#[cfg(target_os = "android")]
 #[path = "canvas/field.rs"]
 pub mod field;
 #[cfg(target_os = "android")]

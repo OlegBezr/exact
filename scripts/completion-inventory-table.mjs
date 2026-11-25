@@ -116,7 +116,11 @@ export const classifications = [
     ["apple:host/apple/src/abi/exports.rs", "exact_dispatch"],
     ["painted:host/painted/src/canvas/access.rs", "CanvasHost::access CanvasHost::access_act CanvasHost::access_custom_action CanvasHost::access_off"],
     ["painted:host/painted/src/canvas/field.rs", "CanvasHost::field_action CanvasHost::field_composing CanvasHost::field_edited CanvasHost::field_focused CanvasHost::field_input CanvasHost::field_scrolled CanvasHost::field_selected"],
+    ["painted:host/painted/src/canvas/drop.rs", "CanvasHost::drag_left CanvasHost::drag_over CanvasHost::drop_landed CanvasHost::drop_owner CanvasHost::drop_released"],
     ["painted:host/painted/src/canvas/input.rs", "CanvasHost::finger CanvasHost::reader_selection CanvasHost::scroll CanvasHost::touch CanvasHost::touching"],
+    ["painted:host/painted/src/canvas/jni_drop.rs",
+      "Java_dev_exact_canvas_Native_dragLeft Java_dev_exact_canvas_Native_dragOver Java_dev_exact_canvas_Native_dropLanded " +
+      "Java_dev_exact_canvas_Native_dropOwner Java_dev_exact_canvas_Native_dropReleased"],
     ["painted:host/painted/src/canvas/jni.rs",
       "Java_dev_exact_canvas_Native_readerSelection " +
       "Java_dev_exact_canvas_Native_accessAct Java_dev_exact_canvas_Native_fieldAction Java_dev_exact_canvas_Native_fieldComposing " +
@@ -171,7 +175,8 @@ export const classifications = [
     ["painted:host/painted/src/presenter/picker.rs", "Presenter::open_document"],
     ["painted:host/painted/src/presenter/pan_release.rs", "Presenter::release_pan"],
     ["painted:host/painted/src/presenter/file_drop.rs",
-      "Presenter::drag_crossings Presenter::drag_event Presenter::drag_left Presenter::drag_over Presenter::dropped"],
+      "Presenter::chain_event Presenter::deliver_drop Presenter::drag_crossings Presenter::drag_event Presenter::drag_left Presenter::drag_over " +
+      "Presenter::drop_landed Presenter::drop_owner Presenter::drop_released Presenter::dropped Presenter::field_keeps"],
     ["painted:host/painted/src/presenter/pointer.rs", "Presenter::pointer_dispatch"],
     ["painted:host/painted/src/presenter/radio.rs", "Presenter::activate_radio"],
     ["painted:host/painted/src/presenter/replacement.rs", "Presenter::buttons_released Presenter::pointer_released Presenter::reader_touch Presenter::set_touching"],

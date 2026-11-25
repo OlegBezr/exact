@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { pollUntil } from './agent-launch.mjs';
-import { androidJavaEnv, androidSdk, androidSdkPackages, androidScreenState, androidPermissionPrompt, gradleApp, readerReply, reverseRoot } from './agent-android.mjs';
+import { androidJavaEnv, androidSdk, androidSdkPackages, androidScreenState, androidPermissionPrompt, gradleApp, reverseRoot } from './agent-android.mjs';
 
 const focusCommand = "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'";
 const screenFixtures = resolve(import.meta.dir, 'fixtures/android-screen');
@@ -339,25 +339,6 @@ for (const [api, controller] of [[29, 'com.android.permissioncontroller'], [30, 
   } finally {
     if (child?.exitCode === null) { const closed = once(child, 'close'); child.kill(); await closed; }
     fixture.dispose();
-  }
-});
-
-test('the Android carrier waits for the hold duration acknowledged by the host', async () => {
-  const request = { op: 'tap', phase: 'hold', ms: 250 };
-  const accepted = '{"phase":"hold","waitMs":250}';
-  const waiting = Promise.withResolvers(), elapsed = Promise.withResolvers();
-  let delivered = false;
-  const reply = readerReply(request, () => accepted, ms => {
-    waiting.resolve(ms);
-    return elapsed.promise;
-  }).then(line => { delivered = true; return line; });
-  expect(await Promise.race([waiting.promise, reply])).toBe(250);
-  await new Promise(resolve => setImmediate(resolve));
-  expect(delivered).toBe(false);
-  elapsed.resolve();
-  expect(await reply).toBe(accepted);
-  for (const line of ['{"phase":"hold","clock":250}', '{"error":"no contact is down"}']) {
-    expect(await readerReply(request, () => line, () => { throw new Error('unexpected wait'); })).toBe(line);
   }
 });
 

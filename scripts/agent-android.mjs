@@ -22,6 +22,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
 import { createConnection } from 'node:net';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
+import { pushDrops, readerReply } from './agent-android-requests.mjs';
 import { within } from './paths.mjs';
 import { parseColour, schemeColours } from './scheme-colours.mjs';
 import { missingDependencies } from './package-libraries.mjs';
@@ -633,16 +634,6 @@ async function prepareAndroidScreen(tool, serial) {
   }
 }
 
-export async function readerReply(request, ask, wait = Bun.sleep) {
-  const reply = await ask();
-  if (request?.op === 'tap' && request.phase === 'hold') {
-    // The host owns this decision, including while a capture borrows a seekable drive's clock.
-    const { waitMs } = JSON.parse(reply);
-    if (waitMs > 0) await wait(waitMs);
-  }
-  return reply;
-}
-
 /** The reader carrier's process: launch the app with a driver's socket (the shell's `agent=<name>` extra), have
  * adb forward it, and carry the protocol's lines between this process's stdio and the app. Every line is the app's
  * to answer but `screenshot`, whose picture is the device's (`screencap`), tagged as the app tags a reply. The
@@ -650,12 +641,14 @@ export async function readerReply(request, ask, wait = Bun.sleep) {
 async function relay([serial, id, vars, encodedLease]) {
   const tool = adb(), sh = (...args) => spawnSync(tool, ['-s', serial, ...args], { encoding: 'utf8' });
   const name = `exact-agent-${process.pid}`, lease = JSON.parse(encodedLease);
+  const drops = `/data/local/tmp/exact/${id}/drops-${process.pid}`; // a drag in's files, where the app reads a plan
   let port, logs, cleaned = false, released = true, connected = false, turn = Promise.resolve(), buffered = '';
   let input = data => { buffered += data; };
   const cleanup = () => {
     if (cleaned) return released;
     cleaned = true;
     logs?.kill();
+    sh('shell', 'rm', '-rf', drops);
     if (port && sh('forward', '--remove', `tcp:${port}`).status !== 0) released = false;
     sh('shell', 'am', 'force-stop', id);
     if (!releaseReverse(tool, serial, lease)) released = false;
@@ -710,6 +703,9 @@ async function relay([serial, id, vars, encodedLease]) {
       let req = null;
       try { req = JSON.parse(line); } catch {}
       if (req?.op === 'quit') return done(0);
+      const dropped = pushDrops(req, drops, sh);
+      if (dropped.error) return say(JSON.stringify(dropped));
+      if (dropped.request) line = JSON.stringify(dropped.request);
       if (req?.op !== 'screenshot') return say(await readerReply(req, () => {
         socket.write(line + '\n');
         return answer();

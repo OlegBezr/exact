@@ -6932,7 +6932,7 @@ application, so its local event monitors see them). Other carriers answer
 `delivery: "unsupported"` for forms they cannot carry; Firefox and WebKit carry
 clicks and wheels at a point, including wheels with modifiers. A word a form does
 not use is refused by name. `tap stage wheel 0 -20 modifiers Control`
-is a pinch's wheel; `tap world drop a.board` drags a file in (web, macOS, Windows). Plain canvas taps and held contacts are
+is a pinch's wheel; `tap world drop a.board` drags a file in (web, macOS, Windows, Android). Plain canvas taps and held contacts are
 fingers, so their platform pointer identity and retained press history can differ
 from a mouse's; use the intended physical input when comparing game saves.
 

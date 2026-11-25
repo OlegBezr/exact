@@ -42,6 +42,19 @@ internal class FieldText(context: Context) : EditText(unadjusted(context)) {
     var selected: ((Int, Int) -> Unit)? = null
     var scrolled: ((Int, Int) -> Unit)? = null
 
+    /** The node the field is ([Fields.make]). */
+    var node = 0
+
+    /** A drag over the field (LLP 1094.001 D2): the root's listener tells exact2 where it is and may take it
+     * ([DragIn.field]); a drop the field takes itself sends the nodes under the drag their leave. */
+    override fun onDragEvent(event: android.view.DragEvent): Boolean {
+        val drags = generateSequence(parent) { it.parent }.firstNotNullOfOrNull { (it as? Root)?.drags } ?: return super.onDragEvent(event)
+        drags.field(node, this, event)?.let { return it }
+        val took = super.onDragEvent(event)
+        if (event.action == android.view.DragEvent.ACTION_DROP) drags.fieldDropped()
+        return took
+    }
+
     override fun onScrollChanged(x: Int, y: Int, oldX: Int, oldY: Int) {
         super.onScrollChanged(x, y, oldX, oldY)
         scrolled?.invoke(x, y)
@@ -322,6 +335,7 @@ internal class Fields(context: Context) : FrameLayout(context) {
 
     private fun make(id: Int, generation: Int): Field {
         val text = bare(FieldText(context))
+        text.node = id
         if (log) text.heard = { Log.i(TAG, "field $id keyboard: $it") }
         val port = Port(context)
         port.addView(text, LayoutParams(1, 1, Gravity.TOP or Gravity.LEFT))
@@ -607,11 +621,18 @@ internal class Fields(context: Context) : FrameLayout(context) {
         val g = if (f.group != 0) view?.group(f.group) else null
         f.atX = (f.x + (g?.translationX ?: 0f)).roundToInt().toFloat()
         f.atY = (f.y + (g?.translationY ?: 0f)).roundToInt().toFloat()
-        val clipped = f.clipW >= 0f
-        val px = if (clipped) f.clipX.roundToInt() else 0
-        val py = if (clipped) f.clipY.roundToInt() else 0
-        val pw = if (clipped) max(1, f.clipW.roundToInt()) else LayoutParams.MATCH_PARENT
-        val ph = if (clipped) max(1, f.clipH.roundToInt()) else LayoutParams.MATCH_PARENT
+        // The port is the field's box, within its clip where it has one, so no field's port lies over another field:
+        // Android gives a drag to the frontmost view under it that takes drags, and looks no further than that view's
+        // children (LLP 1094.001 D5)
+        var left = f.atX; var top = f.atY; var right = f.atX + f.w; var bottom = f.atY + f.h
+        if (f.clipW >= 0f) {
+            left = max(left, f.clipX); top = max(top, f.clipY)
+            right = min(right, f.clipX + f.clipW); bottom = min(bottom, f.clipY + f.clipH)
+        }
+        val px = left.roundToInt()
+        val py = top.roundToInt()
+        val pw = max(1, (right - left).roundToInt())
+        val ph = max(1, (bottom - top).roundToInt())
         val lp = f.port.layoutParams
         if (lp.width != pw || lp.height != ph) f.port.layoutParams = LayoutParams(pw, ph, Gravity.TOP or Gravity.LEFT)
         f.port.translationX = px.toFloat(); f.port.translationY = py.toFloat()

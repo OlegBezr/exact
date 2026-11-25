@@ -20,6 +20,8 @@ pub use byte_arrays::{bytes, utf8};
 
 #[path = "jni_frames.rs"]
 mod frames;
+#[path = "jni_drop.rs"]
+mod jni_drop;
 #[path = "jni_extensions.rs"]
 pub mod jni_extensions;
 #[path = "jni_keys.rs"]
@@ -700,7 +702,7 @@ macro_rules! canvas_jni {
                 with(|h| h.media(id as u32, key, session as u64, &event, &payload, &state));
             }
 
-            $crate::canvas_jni_scroll!();
+            $crate::canvas_jni_scroll!(); $crate::canvas_jni_drop!();
 
             /// The producer's scale and its scroller statement
             /// (`CanvasHost::scrollers`), or null when unchanged.

@@ -64,9 +64,10 @@ class FieldsTest {
                 fields.measure(android.view.View.MeasureSpec.makeMeasureSpec(400, android.view.View.MeasureSpec.EXACTLY),
                     android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY))
                 fields.layout(0, 0, 400, 200)
-                val text = (fields.getChildAt(0) as FrameLayout).getChildAt(0) as EditText
-                assertEquals(24f, text.x, 0.01f)
-                assertEquals(16f, text.y, 0.01f)
+                val port = fields.getChildAt(0) as FrameLayout
+                val text = port.getChildAt(0) as EditText
+                // Where it stands among the fields: its port is its box (`Fields.position`)
+                assertEquals(listOf(24f, 16f, 24f, 16f), listOf(port.x + text.x, port.y + text.y, port.x, port.y))
                 assertEquals(if (rtl) android.view.View.LAYOUT_DIRECTION_RTL else android.view.View.LAYOUT_DIRECTION_LTR, text.layoutDirection)
                 assertEquals(if (rtl) android.view.View.TEXT_DIRECTION_RTL else android.view.View.TEXT_DIRECTION_LTR, text.textDirection)
                 assertEquals(if (align == 2) android.view.Gravity.RIGHT else android.view.Gravity.LEFT,

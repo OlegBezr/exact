@@ -172,6 +172,17 @@ object Native {
     /** The reader moved scroller [id] by ([dx], [dy]) px, knowing revision [rev] of it. exact2 clamps the move to
      * the scroller's travel, and drops one sent under a revision the app's own scroll has moved on from. */
     @JvmStatic external fun scrolled(id: Int, dx: Float, dy: Float, rev: Int)
+    /** A drag from another app is at ([x], [y]) px (LLP 1094.001 D5): whether a node takes a drop there. exact2 sends
+     * the nodes under it their `dragenter` and `dragleave`. */
+    @JvmStatic external fun dragOver(x: Float, y: Float): Boolean
+    /** The drag left the window, was cancelled, or a field took it: the nodes under it hear their leave. */
+    @JvmStatic external fun dragLeft()
+    /** The drag was released at ([x], [y]) px before its items arrive: the drop's number, 0 when nothing takes it. */
+    @JvmStatic external fun dropReleased(x: Float, y: Float): Int
+    /** Drop [id]'s items arrived, as JSON (`{"paths": […], "text": "…", "url": "…"}`): whether its target took them. */
+    @JvmStatic external fun dropLanded(id: Int, items: String): Boolean
+    /** Which node takes a drop over node [id]: 0 none, 1 the node, 2 one above it. */
+    @JvmStatic external fun dropOwner(id: Int): Int
     /** A finger began dragging scroller [id] (its `scrolldragstart`), or ([ended]) let go of it (its
      * `scrolldragend`): at ([vx], [vy]) px/s, positive as its offset grows, and, with [rest], to come to rest at
      * ([restX], [restY]) px; [flings] when it threw a fling. From the start until the lift, or the fling's end
