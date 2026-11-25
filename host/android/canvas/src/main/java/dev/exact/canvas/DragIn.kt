@@ -64,8 +64,8 @@ internal class DragIn(private val root: View) {
      * that takes no touch (disabled, or covered) takes no drag. It gives the root a drag at its start when its own node
      * takes drops, or when a node above it does and the drag carries a file's type. A URI list may be a link or a
      * file, so the field keeps it, and gives the root at the drop a `content:` item that is no text, as a file, under
-     * a node that takes it. Exact2 tells each field who takes a drop over it with every frame, so this reads no answer
-     * from exact2's thread.
+     * a node that takes it. Exact2 tells each field who takes a drop over it with every frame, so only a drop asks
+     * exact2's thread, once, whether the field is what is painted where it lands.
      */
     fun field(field: FieldText, event: DragEvent): Boolean? {
         val at = IntArray(2).also(field::getLocationInWindow)
@@ -76,8 +76,10 @@ internal class DragIn(private val root: View) {
             DragEvent.ACTION_DRAG_STARTED -> if (field.inert || givenAway(field.dropOwner, event.clipDescription)) false else null
             DragEvent.ACTION_DRAG_LOCATION -> { over(x, y); null }
             DragEvent.ACTION_DRAG_EXITED -> { exited(); null }
+            // A node painted over part of the field takes a drop there, as it takes a touch
             DragEvent.ACTION_DROP ->
-                if (gives || field.dropOwner == 2 && event.clipData?.let { holdsFile(it, field.context.contentResolver) } == true) drop(event, x, y)
+                if (gives || field.dropOwner == 2 && event.clipData?.let { holdsFile(it, field.context.contentResolver) } == true ||
+                    !Exact.fieldUnder(field.node, x, y)) drop(event, x, y)
                 else null
             else -> null
         }

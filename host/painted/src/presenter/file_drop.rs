@@ -185,6 +185,13 @@ impl<D: DataSource> Presenter<D> {
         delivered
     }
 
+    /// Whether field `id` is what is painted at `point`, so a drag Android
+    /// gives the field's view there is the field's: a node painted over part
+    /// of it takes that part (LLP 1094.001 D5).
+    pub fn field_under(&mut self, id: ViewId, point: (f32, f32)) -> bool {
+        self.drag_hit(point) == Some(id)
+    }
+
     /// Which node takes a drop over `id`: 0 none, 1 `id` itself, 2 one above
     /// it, so a hosted field knows whether to give a drag away (LLP 1094.001 D5).
     pub fn drop_owner(&self, id: ViewId) -> i32 {
@@ -684,6 +691,11 @@ mod tests {
         assert!(
             !p.field_keeps((250., 150.), &text("Fuji")),
             "no field there"
+        );
+        assert!(p.field_under(field, over));
+        assert!(
+            !p.field_under(field, (250., 150.)),
+            "the zone is painted there"
         );
     }
 

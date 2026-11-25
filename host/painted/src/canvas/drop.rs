@@ -33,6 +33,11 @@ impl<D: DataSource + Default> CanvasHost<D> {
             .unwrap_or(0)
     }
 
+    /// Whether field `id` is what is painted at pixels (`x`, `y`).
+    pub fn field_under(&mut self, id: u32, x: f32, y: f32) -> bool {
+        self.p.field_under(id, (x / self.scale, y / self.scale))
+    }
+
     /// Drop `id`'s items arrived, as the reader's JSON
     /// `{"paths": […], "text": "…", "url": "…"}`.
     pub fn drop_landed(&mut self, id: u32, items: &str) {

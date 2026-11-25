@@ -46,6 +46,19 @@ macro_rules! canvas_jni_drop {
             with(|h| h.drop_released(x, y)).unwrap_or(0) as $crate::canvas::jni_sys::jint
         }
 
+        /// Whether field `id` is what is painted at (`x`, `y`) px
+        /// (`CanvasHost::field_under`).
+        #[no_mangle]
+        pub unsafe extern "system" fn Java_dev_exact_canvas_Native_fieldUnder(
+            _env: *mut $crate::canvas::jni_sys::JNIEnv,
+            _class: $crate::canvas::jni_sys::jclass,
+            id: $crate::canvas::jni_sys::jint,
+            x: $crate::canvas::jni_sys::jfloat,
+            y: $crate::canvas::jni_sys::jfloat,
+        ) -> $crate::canvas::jni_sys::jboolean {
+            flag(with(|h| h.field_under(id as u32, x, y)).unwrap_or(false))
+        }
+
         /// Drop `id`'s items arrived, as JSON (`CanvasHost::drop_landed`).
         #[no_mangle]
         pub unsafe extern "system" fn Java_dev_exact_canvas_Native_dropLanded(

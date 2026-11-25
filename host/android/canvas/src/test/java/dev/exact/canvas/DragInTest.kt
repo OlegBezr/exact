@@ -43,6 +43,8 @@ class DragInTest {
             @JvmStatic @Implementation fun dragDropped() { drags += "ended" }
             @JvmStatic @Implementation fun dropReleased(x: Float, y: Float): Int { drags += "released ${x.toInt()} ${y.toInt()}"; return 0 }
             @JvmStatic @Implementation fun dropLanded(id: Int, items: String) { drags += "landed $id $items" }
+            /** Whether a field is painted where a drop lands; the tests' fields always are. */
+            @JvmStatic @Implementation fun fieldUnder(id: Int, x: Float, y: Float): Boolean = true
         }
     }
 

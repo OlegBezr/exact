@@ -181,6 +181,8 @@ object Native {
     @JvmStatic external fun dragDropped()
     /** The drag was released at ([x], [y]) px before its items arrive: the drop's number, 0 when nothing takes it. */
     @JvmStatic external fun dropReleased(x: Float, y: Float): Int
+    /** Whether field [id] is what is painted at ([x], [y]) px. */
+    @JvmStatic external fun fieldUnder(id: Int, x: Float, y: Float): Boolean
     /** Drop [id]'s items arrived, as JSON (`{"paths": […], "text": "…", "url": "…"}`). */
     @JvmStatic external fun dropLanded(id: Int, items: String)
     /** A finger began dragging scroller [id] (its `scrolldragstart`), or ([ended]) let go of it (its

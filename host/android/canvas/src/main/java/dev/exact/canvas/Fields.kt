@@ -42,6 +42,8 @@ internal class FieldText(context: Context) : EditText(unadjusted(context)) {
     var selected: ((Int, Int) -> Unit)? = null
     var scrolled: ((Int, Int) -> Unit)? = null
 
+    /** The node the field is ([Fields.make]). */
+    var node = 0
     /** Who takes a drop over the field, as exact2 last told it: 0 none, 1 its own node, 2 one above it. */
     var dropOwner = 0
     /** Whether it takes no touch and no focus (disabled, or covered), as exact2 last told it. */
@@ -339,6 +341,7 @@ internal class Fields(context: Context) : FrameLayout(context) {
 
     private fun make(id: Int, generation: Int): Field {
         val text = bare(FieldText(context))
+        text.node = id
         if (log) text.heard = { Log.i(TAG, "field $id keyboard: $it") }
         val port = Port(context)
         port.addView(text, LayoutParams(1, 1, Gravity.TOP or Gravity.LEFT))

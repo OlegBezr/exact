@@ -912,6 +912,9 @@ internal object Exact {
         return o.sync(publish = false) { Native.dropReleased(x, y) }.also { o.call {} }
     }
 
+    /** Whether field [id] is what is painted at ([x], [y]) px, asked once as a drop lands on its view. */
+    fun fieldUnder(id: Int, x: Float, y: Float): Boolean = owner?.ask { Native.fieldUnder(id, x, y) } ?: Native.fieldUnder(id, x, y)
+
     /** Drop [id]'s items arrived ([DropItems.json]). */
     fun dropLanded(id: Int, items: String) = dragged { Native.dropLanded(id, items) }
 
