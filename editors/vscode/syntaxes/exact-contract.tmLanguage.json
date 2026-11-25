@@ -181,7 +181,7 @@
           }
         },
         {
-          "match": "^\\s+(state|derive|resource|mutation|let)\\s+([A-Za-z_](?:[A-Za-z0-9_]|-[A-Za-z])*)",
+          "match": "^\\s+(state|derive|resource|refreshGroup|mutation|let)\\s+([A-Za-z_](?:[A-Za-z0-9_]|-[A-Za-z])*)",
           "captures": {
             "1": {
               "name": "keyword.declaration.exact-contract"

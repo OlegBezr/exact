@@ -562,3 +562,25 @@ component App
     );
     contract::compile_path(&app.write("app.contract", root)).unwrap();
 }
+
+#[test]
+fn refresh_group_resolves_resources_and_mutations_across_members_files() {
+    let app = App::new("refresh-group");
+    let root = app.write(
+        "app.contract",
+        r#"component App
+  resource inbox = inbox() as shape number
+  members "./writes.contract"
+  members "./lists.contract"
+  view
+    text inbox.toString()
+"#,
+    );
+    app.write(
+        "writes.contract",
+        "members App\n  mutation read as shape bool refreshes activity\n",
+    );
+    app.write("lists.contract", "members App\n  refreshGroup activity = inbox, feed\n  resource feed = feed() as shape number\n");
+    let plan = contract::compile_path(&root).unwrap();
+    assert_eq!(plan.mutation_refreshes.len(), 2);
+}

@@ -293,6 +293,10 @@ impl Loader<'_> {
                 let at = c.members.lines[part.line].at;
                 splice(c, at, block);
             }
+            let c = &mut self.units[host].file.components[component];
+            if let Err(error) = contract_syntax::members::expand_refresh_groups(c) {
+                self.refused.errors.push(self.sources.resolve(error.into()));
+            }
         }
         // Decide each deferred refusal with the actions from every file of a
         // component: a call in a block, its component's; any other call in a

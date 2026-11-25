@@ -54,9 +54,22 @@ impl Splice {
     }
 }
 
+/// A flat list of resource names used by a mutation's `refreshes` clause.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefreshGroup {
+    /// Name used in a mutation's refresh list.
+    pub name: String,
+    /// Location of the declaration.
+    pub span: Span,
+    /// Resource names and their source locations, in declaration order.
+    pub resources: Vec<(String, Span)>,
+}
+
 /// A component's members files and the names they share (D5).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Members {
+    /// Refresh groups waiting for all the component's resources to be in scope.
+    pub refresh_groups: Vec<RefreshGroup>,
     /// Its `members` lines, in order.
     pub lines: Vec<MembersLine>,
     /// For a members block, the component's props and injects.
@@ -109,6 +122,9 @@ pub fn splice(host: &mut Component, at: Splice, block: Component) {
     fn put<T>(into: &mut Vec<T>, at: usize, items: Vec<T>) {
         into.splice(at..at, items);
     }
+    host.members
+        .refresh_groups
+        .extend(block.members.refresh_groups);
     put(&mut host.states, at.states, block.states);
     put(&mut host.persist, at.persist, block.persist);
     put(&mut host.derives, at.derives, block.derives);
@@ -117,4 +133,59 @@ pub fn splice(host: &mut Component, at: Splice, block: Component) {
     put(&mut host.actions, at.actions, block.actions);
     put(&mut host.tasks, at.tasks, block.tasks);
     put(&mut host.sequences, at.sequences, block.sequences);
+}
+
+/// Resolve the groups once the component includes all its members files.
+pub fn expand_refresh_groups(c: &mut Component) -> Result<(), SyntaxError> {
+    use std::collections::{HashMap, HashSet};
+
+    if c.members.refresh_groups.is_empty() {
+        return Ok(());
+    }
+    let resources: HashSet<_> = c.resources.iter().map(|r| r.name.as_str()).collect();
+    let mut groups = HashMap::new();
+    for group in &c.members.refresh_groups {
+        if resources.contains(group.name.as_str())
+            || groups.insert(&group.name, &group.resources).is_some()
+        {
+            return Err(SyntaxError {
+                id: "syntax-refresh-group-name",
+                message: format!("refresh group `{}` needs a name distinct from this component's resources and refresh groups", group.name),
+                span: group.span,
+            });
+        }
+        let mut seen = HashSet::new();
+        for (name, span) in &group.resources {
+            if !resources.contains(name.as_str()) {
+                return Err(SyntaxError {
+                    id: "type-refreshes-not-resource",
+                    message: format!(
+                        "refresh group `{}` names `{name}`: expected a resource of this component",
+                        group.name
+                    ),
+                    span: *span,
+                });
+            }
+            if !seen.insert(name) {
+                return Err(SyntaxError {
+                    id: "type-refreshes-duplicate",
+                    message: format!("refresh group `{}` names `{name}` twice", group.name),
+                    span: *span,
+                });
+            }
+        }
+    }
+    for mutation in &mut c.mutations {
+        let mut expanded = Vec::new();
+        for (name, span) in std::mem::take(&mut mutation.refreshes) {
+            if let Some(resources) = groups.get(&name) {
+                expanded.extend(resources.iter().map(|(name, _)| (name.clone(), span)));
+            } else {
+                expanded.push((name, span));
+            }
+        }
+        mutation.refreshes = expanded;
+    }
+    c.members.refresh_groups.clear();
+    Ok(())
 }

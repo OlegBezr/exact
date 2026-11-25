@@ -607,6 +607,18 @@ component Items
       text notice testId="notice"
 ```
 
+A component can name a fixed list of resources once and use it in several mutations:
+
+```text
+  refreshGroup issueViews = issueDetail, openIssues, unitIssues
+  mutation closed as shape SaveResult refreshes issueViews
+  mutation reopened as shape SaveResult refreshes issueViews
+```
+
+The compiler expands each group in place. Every member must name a resource in the same
+component, including its members files. Groups cannot nest or share a name with a resource.
+A mutation may mix groups and individual resources if each resource occurs only once.
+
 The `refreshes items` clause asks `items` again when the reply lands. To show the
 save before then, the data module exports an `overlay` for `loadItems` (the [agent
 guide](contract-for-agents.md#optimistic-writes-the-overlay) has the pattern).

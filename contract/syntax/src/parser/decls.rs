@@ -6,6 +6,14 @@
 use super::*;
 
 impl Parser {
+    pub(super) fn refresh_names(&mut self) -> R<Vec<(String, Span)>> {
+        let mut names = vec![self.ident()?];
+        while self.eat_punct(",") {
+            names.push(self.ident()?);
+        }
+        Ok(names)
+    }
+
     /// `mutation NAME as shape T [queue | parallel] [refreshes a, b] [then action]`.
     /// The clauses after the shape may continue on deeper-indented lines, in
     /// the same order (the codeedit diary: `then` on the next line was
@@ -32,12 +40,7 @@ impl Parser {
         let mut refreshes = Vec::new();
         if self.clause_ahead("refreshes", &mut continued) {
             self.next();
-            loop {
-                refreshes.push(self.ident()?);
-                if !self.eat_punct(",") {
-                    break;
-                }
-            }
+            refreshes = self.refresh_names()?;
         }
         if !refreshes.is_empty()
             && matches!(self.peek_kind(), TokenKind::Ident(word)

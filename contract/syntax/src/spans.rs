@@ -1,7 +1,7 @@
 //! Exhaustive source-range traversal for compiler-owned AST transformations.
 
 use crate::anatomy::{Anatomy, Mark, PartDecl};
-use crate::members::{Deferred, Members, MembersLine};
+use crate::members::{Deferred, Members, MembersLine, RefreshGroup};
 use crate::params::{ComponentParam, ParamAttr, ParamValue, Params};
 use crate::parser::SyntaxError;
 use crate::tool::{Consequence, Tool};
@@ -148,7 +148,8 @@ structs! {
         mutations, actions, tools, tasks, sequences, view, params, anatomy, members, span }
     Tool { name, consequence, additive, idempotent, closed, description, action, returns, fails,
         available, span }
-    Members { lines, props, outer }
+    Members { lines, props, outer, refresh_groups }
+    RefreshGroup { name, span, resources }
     Deferred { name, if_action, in_block, error }
     SyntaxError { id, message, span }
     MembersLine { path, at, span }

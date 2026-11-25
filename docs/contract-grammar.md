@@ -346,18 +346,19 @@ section       = "props" block(field)
               | "slot" NL
               | "state" IDENT [ ":" type ] "=" expr [ "persist" ] NL
               | "derive" IDENT "=" expr NL
-              | resource | mutation | action | task | sequence
+              | resource | refresh-group | mutation | action | task | sequence
               | "members" STRING NL
               | "view" block(node) ;
 members-block = "members" IDENT block(member) ;
 member        = "state" IDENT [ ":" type ] "=" expr [ "persist" ] NL
               | "derive" IDENT "=" expr NL
-              | resource | mutation | action | task | sequence ;
+              | resource | refresh-group | mutation | action | task | sequence ;
 provider      = FIELD [ "=" expr ] NL ;
 resource      = "resource" IDENT "=" source-call
                 [ "for" IDENT "in" expr [ "key" "=" expr ] ]
                 [ "with" expr { "," expr } ] [ "when" expr ] "as" "shape" type
                 [ "else" source-call ] [ "transient" | "keep" ] NL ;
+refresh-group = "refreshGroup" IDENT "=" IDENT { "," IDENT } NL ;
 mutation      = "mutation" IDENT "as" "shape" type [ "queue" | "parallel" ]
                 [ "refreshes" IDENT { "," IDENT } ]
                 [ "then" IDENT ] NL ;

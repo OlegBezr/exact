@@ -153,7 +153,11 @@ fn ok() -> Outcome {
 }
 
 fn boot() -> Runner<Source> {
-    let baked = contract::bake(contract::compile(SRC).unwrap(), boxed(Chat::default())).unwrap();
+    boot_source(SRC)
+}
+
+fn boot_source(src: &str) -> Runner<Source> {
+    let baked = contract::bake(contract::compile(src).unwrap(), boxed(Chat::default())).unwrap();
     let data = Chat {
         live: true,
         ..Chat::default()
@@ -362,5 +366,91 @@ component App
     assert!(
         r.timer_due_ms().is_some(),
         "the gate turned true in this commit"
+    );
+}
+
+#[test]
+fn refresh_group_compiles_to_the_explicit_plan_and_refreshes_after_the_overlay() {
+    let explicit = SRC
+        .replace("refreshes chats", "refreshes chats, feed")
+        .replace(
+            "mutation like as shape Msg",
+            "mutation like as shape Msg refreshes chats, feed",
+        );
+    let grouped = explicit
+        .replace("refreshes chats, feed", "refreshes activity")
+        .replace("  view", "  refreshGroup activity = chats, feed\n  view");
+    assert_eq!(
+        contract::compile(&explicit).unwrap().encode(),
+        contract::compile(&grouped).unwrap().encode()
+    );
+
+    let mut r = boot_source(&grouped);
+    let before = r.source::<Chat>().chat_asks;
+    r.act("say", vec![Value::str("hi")]).unwrap();
+    assert_eq!(text(&r, "chats"), "1");
+    assert_eq!(r.source::<Chat>().chat_asks, before);
+    let requests = r.take_requests();
+    assert_eq!(requests.len(), 1);
+    r.fulfill(requests[0].ticket, ok()).unwrap();
+    assert_eq!(r.source::<Chat>().chat_asks, before + 1);
+    let after = r.take_requests();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].target, "feed");
+    assert!(after[0].forced);
+}
+
+#[test]
+fn refresh_groups_check_unused_declarations_and_mixed_refresh_lists() {
+    for (declarations, names, expected) in [
+        (
+            "refreshGroup g = absent",
+            "chats",
+            "type-refreshes-not-resource",
+        ),
+        (
+            "refreshGroup g = page",
+            "chats",
+            "type-refreshes-not-resource",
+        ),
+        (
+            "refreshGroup g = chats, chats",
+            "chats",
+            "type-refreshes-duplicate",
+        ),
+        (
+            "refreshGroup chats = feed",
+            "chats",
+            "syntax-refresh-group-name",
+        ),
+        (
+            "refreshGroup g = chats\n  refreshGroup g = feed",
+            "chats",
+            "syntax-refresh-group-name",
+        ),
+        (
+            "refreshGroup g = chats\n  refreshGroup h = g",
+            "chats",
+            "type-refreshes-not-resource",
+        ),
+        (
+            "refreshGroup g = chats",
+            "g, chats",
+            "type-refreshes-duplicate",
+        ),
+    ] {
+        let src = SRC
+            .replace("  view", &format!("  {declarations}\n  view"))
+            .replace("refreshes chats", &format!("refreshes {names}"));
+        assert_eq!(contract::compile(&src).unwrap_err().id, expected);
+    }
+    let src = SRC
+        .replace("  view", "  refreshGroup g = chats\n  view")
+        .replace("refreshes chats", "refreshes g, feed");
+    assert_eq!(
+        contract::compile(&src).unwrap().encode(),
+        contract::compile(&SRC.replace("refreshes chats", "refreshes chats, feed"))
+            .unwrap()
+            .encode()
     );
 }

@@ -11,10 +11,11 @@ use crate::members::MembersLine;
 impl Parser {
     pub(super) fn component(&mut self) -> R<Component> {
         let from = self.hidden.len();
-        let c = self.component_body("component")?;
+        let mut c = self.component_body("component")?;
         // A component whose `members` lines name other files has members
         // read there too, so its refused members' names are not scoped.
         if c.members.lines.is_empty() {
+            crate::members::expand_refresh_groups(&mut c)?;
             let last = self.tokens[..self.pos]
                 .iter()
                 .rev()
@@ -90,7 +91,7 @@ impl Parser {
                         return self.err(
                             "syntax-members-section",
                             format!(
-                                "a `members` block holds `state`, `derive`, `resource`, \
+                                "a `members` block holds `state`, `derive`, `resource`, `refreshGroup`, \
                                  `mutation`, `action`, `task` and `sequence`; write `{w}` in \
                                  the component's own body (LLP 1091.002 D3)"
                             ),
@@ -188,8 +189,8 @@ impl Parser {
                             // `part=` is the anatomy's, never a node's (LLP 1139 D2).
                             c.anatomy.marks = crate::anatomy::take_marks(&mut c.view);
                         }
-                        "state" | "derive" | "resource" | "mutation" | "action" | "task"
-                        | "sequence" | "tool" => {
+                        "state" | "derive" | "resource" | "refreshGroup" | "mutation"
+                        | "action" | "task" | "sequence" | "tool" => {
                             let (start, actions) = (self.pos, c.actions.len());
                             if let Err(e) = self.member(&mut c, &w) {
                                 if !self.recover {
@@ -317,6 +318,18 @@ impl Parser {
                 }
             }
             "resource" => c.resources.push(self.resource()?),
+            "refreshGroup" => {
+                let span = self.next().span;
+                let name = self.named_ident(span)?;
+                self.expect_punct("=")?;
+                let resources = self.refresh_names()?;
+                self.newline()?;
+                c.members.refresh_groups.push(crate::members::RefreshGroup {
+                    name,
+                    span,
+                    resources,
+                });
+            }
             "mutation" => c.mutations.push(self.mutation()?),
             // A body refused after its line parsed leaves the action declared,
             // so what names it is checked against its signature, not against
